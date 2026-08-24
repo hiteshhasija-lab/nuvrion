@@ -1,0 +1,15 @@
+{
+  "name": "nuvrion",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "dependencies": { "@aws-sdk/client-ec2": "^3.0.0", "@azure/arm-compute": "^25.1.1", "@azure/identity": "^4.0.0", "amqplib": "^0.10.9", "pg": "^8.16.3" },
+  "scripts": {
+    "dev": "node apps/api/src/server.js",
+    "start": "node apps/api/src/server.js",
+    "test": "node --test",
+    "check": "node --check apps/api/src/server.js && node --check apps/worker/src/worker.js && node --check apps/workstation-agent/src/agent-runtime.js && node --check apps/workstation-agent/src/atomic-updater.js && node --check modules/platform/src/runtime-configuration.js && node --check modules/platform/src/readiness-service.js && node --check modules/agents/src/agent-registry.js && node --check modules/agents/src/postgres-agent-registry.js && node --check modules/agents/src/agent-compatibility.js && node --check modules/agents/src/agent-maintenance-scheduler.js && node --check modules/agents/src/agent-upgrade-service.js && node --check modules/agents/src/postgres-agent-upgrade-service.js && node --check modules/inventory/src/resource-capabilities.js && node --check modules/tasks/src/verification-reconciler.js && node --check modules/tasks/src/task-store.js && node --check modules/tasks/src/postgres-task-store.js && node --check modules/messaging/src/task-broker.js && node --check modules/identity/src/postgres-identity-service.js && node --check modules/connections/src/postgres-connection-service.js && node --check modules/inventory/src/inventory-service.js && node --check modules/inventory/src/postgres-inventory-service.js && node --check providers/provider-router.js && node --check providers/vmware-vsphere/src/vsphere-provider.js && node --check providers/vmware-workstation/src/workstation-provider.js && node --check providers/vmware-workstation-agent/src/workstation-agent-provider.js && node --check providers/vmware-esxi/src/esxi-provider.js && node --check providers/aws-ec2/src/aws-ec2-provider.js && node --check providers/azure-vm/src/azure-vm-provider.js",
+    "migrate:check": "node tools/check-migrations.js"
+  }
+}

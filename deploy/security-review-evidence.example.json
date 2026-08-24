@@ -1,0 +1,26 @@
+{
+  "format": "nuvrion-security-review/v1",
+  "sourceRevision": "<immutable-source-commit>",
+  "completedAt": "<ISO-8601-time>",
+  "checks": {
+    "threatModelApproved": false,
+    "sastPassed": false,
+    "dependencyScanPassed": false,
+    "secretScanPassed": false,
+    "authenticationReviewed": false,
+    "rbacReviewed": false,
+    "cryptographyReviewed": false,
+    "sessionAndCsrfReviewed": false,
+    "providerPermissionsReviewed": false,
+    "apiAbuseReviewed": false,
+    "loggingRedactionReviewed": false,
+    "backupSecurityReviewed": false,
+    "agentTrustReviewed": false,
+    "penetrationTestPassed": false,
+    "findingsRemediated": false
+  },
+  "openFindings": [],
+  "reviewer": { "name": null, "organization": null },
+  "approvalReference": null,
+  "evidenceReference": null
+}

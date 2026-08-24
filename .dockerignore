@@ -1,0 +1,14 @@
+.git
+.github
+.nuvrion
+.env*
+!.env.example
+coverage
+docs
+node_modules
+outputs
+tests
+work
+*.log
+deploy/*.env
+deploy/*.env.*

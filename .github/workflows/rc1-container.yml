@@ -1,0 +1,66 @@
+name: rc1-container
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release candidate version
+        required: true
+        default: 0.1.0-rc.1
+      node_image:
+        description: Approved Node 24 base image including @sha256 digest
+        required: true
+      publish:
+        description: Push the image to GHCR after a successful build
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: Validate immutable inputs
+        env:
+          RC_VERSION: ${{ inputs.version }}
+          NODE_IMAGE: ${{ inputs.node_image }}
+        run: |
+          [[ "$RC_VERSION" =~ ^0\.1\.[0-9]+-rc\.[0-9]+$ ]]
+          [[ "$NODE_IMAGE" =~ @sha256:[a-f0-9]{64}$ ]]
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check && pnpm run migrate:check && pnpm test
+      - run: node tools/scan-repository-secrets.js
+      - name: Generate build evidence
+        env:
+          NUVRION_BUILD_VERSION: ${{ inputs.version }}
+          NUVRION_SOURCE_REVISION: ${{ github.sha }}
+          NUVRION_NODE_BASE_IMAGE: ${{ inputs.node_image }}
+        run: |
+          mkdir -p dist/evidence
+          node tools/create-build-provenance.js create dist/evidence/build-provenance.json
+          node tools/create-build-provenance.js verify dist/evidence/build-provenance.json
+          node tools/generate-sbom.js create dist/evidence/application-sbom.cdx.json
+          node tools/generate-sbom.js verify dist/evidence/application-sbom.cdx.json
+      - name: Build application image
+        env:
+          NODE_IMAGE: ${{ inputs.node_image }}
+          RC_VERSION: ${{ inputs.version }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$RC_VERSION"
+          docker build --build-arg NODE_IMAGE="$NODE_IMAGE" --file deploy/Dockerfile --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$RC_VERSION" --tag "$image" .
+          docker inspect "$image" --format '{{json .Config.User}}' | grep -q 'node'
+      - name: Publish application image
+        if: ${{ inputs.publish }}
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          RC_VERSION: ${{ inputs.version }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$RC_VERSION"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          docker logout ghcr.io

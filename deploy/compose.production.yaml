@@ -1,0 +1,48 @@
+services:
+  api:
+    image: ${NUVRION_IMAGE:?Set NUVRION_IMAGE to an immutable image digest}
+    env_file: [../.env.production]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp:size=64m,noexec,nosuid,nodev]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 45s
+    ports: ["127.0.0.1:${NUVRION_EDGE_PORT:-4100}:4100"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4100/api/v1/readiness').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 1G}
+        reservations: {memory: 256M}
+    networks: [edge, backend]
+  postgres:
+    image: ${NUVRION_POSTGRES_IMAGE:?Set NUVRION_POSTGRES_IMAGE to an approved immutable digest}
+    env_file: [../.env.production]
+    restart: unless-stopped
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 10s, timeout: 5s, retries: 10}
+    stop_grace_period: 60s
+    networks: [backend]
+  rabbitmq:
+    image: ${NUVRION_RABBITMQ_IMAGE:?Set NUVRION_RABBITMQ_IMAGE to an approved immutable digest}
+    env_file: [../.env.production]
+    restart: unless-stopped
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    healthcheck: {test: [CMD, rabbitmq-diagnostics, -q, ping], interval: 10s, timeout: 5s, retries: 12}
+    stop_grace_period: 60s
+    networks: [backend]
+networks:
+  edge: {}
+  backend: {internal: true}
+volumes:
+  postgres-data: {}
+  rabbitmq-data: {}

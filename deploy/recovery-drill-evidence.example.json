@@ -1,0 +1,26 @@
+{
+  "format": "nuvrion-recovery-drill/v1",
+  "environment": "<isolated-staging-recovery-environment>",
+  "sourceBackupId": "<authenticated-backup-identifier>",
+  "recoveryTargetId": "<new-empty-database-identifier>",
+  "completedAt": "<ISO-8601-time>",
+  "rtoSeconds": null,
+  "rpoSeconds": null,
+  "lostTasks": null,
+  "duplicateOperations": null,
+  "evidenceReference": null,
+  "checks": {
+    "manifestAuthenticated": false,
+    "checksumVerified": false,
+    "schemaCompatible": false,
+    "emptyTargetVerified": false,
+    "restoreCompleted": false,
+    "migrationsApplied": false,
+    "readinessPassed": false,
+    "discoveryCompleted": false,
+    "verificationTasksReconciled": false,
+    "auditTrailVerified": false,
+    "secretsIndependentlyRestored": false,
+    "productionIsolated": false
+  }
+}

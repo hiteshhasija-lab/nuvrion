@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.production
+.env.staging
+deploy/staging.env
+.DS_Store
+coverage/
+dist/
+*.log
+.nuvrion/
+work/

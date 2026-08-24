@@ -1,0 +1,15 @@
+{
+  "format": "nuvrion-release-qualification/v1",
+  "commit": "<immutable-source-commit>",
+  "environment": "<isolated-staging-environment>",
+  "completedAt": "<ISO-8601-time>",
+  "scenarios": {
+    "api_load": { "status": "pending", "p95LatencyMs": null, "errorRate": null, "throughputPerSecond": null, "evidenceReference": null },
+    "task_load": { "status": "pending", "p95CompletionMs": null, "throughputPerSecond": null, "duplicateOperations": null, "evidenceReference": null },
+    "provider_outage": { "status": "pending", "recovered": null, "lostTasks": null, "duplicateOperations": null, "credentialsExposed": null, "evidenceReference": null },
+    "broker_outage": { "status": "pending", "recovered": null, "lostTasks": null, "duplicateOperations": null, "outboxRetained": null, "evidenceReference": null },
+    "database_outage": { "status": "pending", "recovered": null, "lostTasks": null, "duplicateOperations": null, "readinessRejectedTraffic": null, "evidenceReference": null },
+    "process_restart": { "status": "pending", "recovered": null, "lostTasks": null, "duplicateOperations": null, "evidenceReference": null },
+    "ambiguous_operation": { "status": "pending", "commandReissued": null, "enteredVerificationRequired": null, "readOnlyReconciliation": null, "evidenceReference": null }
+  }
+}

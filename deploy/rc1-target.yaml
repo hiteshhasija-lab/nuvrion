@@ -1,0 +1,21 @@
+release:
+  product: Nuvrion
+  version: 0.1.0-rc.1
+  registry: ghcr.io
+  repository: hiteshhasija-lab/nuvrion
+  immutableSourceCommit: pending
+staging:
+  platform: vmware
+  hostname: nuvrion.lab.sps
+  tlsRequired: true
+  productionIsolated: true
+  providerAccountSecretReferences:
+    endpoint: NUVRION_VMWARE_ENDPOINT
+    username: NUVRION_VMWARE_USERNAME
+    password: NUVRION_VMWARE_PASSWORD
+ownership:
+  secretsAndSigning: Hitesh Hasija
+  productApproval: Hitesh Hasija
+  documentationApproval: Hitesh Hasija
+  operationsApproval: Hitesh Hasija
+  securityApproval: Hitesh Hasija

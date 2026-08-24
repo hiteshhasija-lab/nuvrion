@@ -1,0 +1,23 @@
+{
+  "format": "nuvrion-agent-release-evidence/v1",
+  "version": "0.1.0-rc.1",
+  "architecture": "x64",
+  "completedAt": "<ISO-8601-time>",
+  "executable": { "reference": "<signed-executable-reference>", "sha256": "<64-hex-digest>", "sizeBytes": null },
+  "package": { "reference": "<signed-nuvpkg-reference>", "sha256": "<64-hex-digest>", "sizeBytes": null },
+  "authenticode": { "status": "pending", "subject": null, "issuer": null, "thumbprint": null, "timestampVerified": false, "timestampAuthority": null, "chainVerified": false },
+  "packageVerification": { "verified": false, "version": null, "architecture": null, "sha256": null, "signingKeyId": null },
+  "malwareScan": { "status": "pending", "engine": null, "definitionsVersion": null, "artifactSha256": null },
+  "tests": {
+    "cleanInstallPassed": false,
+    "serviceIdentityVerified": false,
+    "healthCheckPassed": false,
+    "enrollmentPassed": false,
+    "upgradePassed": false,
+    "rollbackPassed": false,
+    "uninstallPassed": false,
+    "secretRemovalVerified": false,
+    "productionIsolated": false
+  },
+  "evidenceReference": null
+}

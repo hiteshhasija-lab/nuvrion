@@ -1,0 +1,5 @@
+import {argon2Sync,randomBytes,scryptSync,timingSafeEqual} from 'node:crypto';
+const memory=19456,passes=2,parallelism=1,tagLength=32;
+export function hashPassword(password,salt=randomBytes(16)){const hash=argon2Sync('argon2id',{message:String(password),nonce:salt,parallelism,tagLength,memory,passes});return `argon2id$${memory}$${passes}$${parallelism}$${salt.toString('base64url')}$${hash.toString('base64url')}`;}
+export function passwordMatches(password,encoded){try{const [algorithm,a,b,c,salt,expected]=String(encoded??'').split('$'),nonce=Buffer.from(salt,'base64url'),target=Buffer.from(expected,'base64url');let actual;if(algorithm==='argon2id')actual=argon2Sync('argon2id',{message:String(password),nonce,parallelism:Number(c),tagLength:target.length,memory:Number(a),passes:Number(b)});else if(algorithm==='scrypt')actual=scryptSync(String(password),nonce,target.length,{N:Number(a),r:Number(b),p:Number(c)});else return false;return actual.length===target.length&&timingSafeEqual(actual,target);}catch{return false;}}
+export function needsPasswordRehash(encoded){return !String(encoded??'').startsWith(`argon2id$${memory}$${passes}$${parallelism}$`);}

@@ -1,0 +1,22 @@
+{
+  "format": "nuvrion-supply-chain-evidence/v1",
+  "imageDigest": "registry.example.invalid/nuvrion@sha256:<64-hex-digest>",
+  "sourceRevision": "<immutable-git-commit>",
+  "completedAt": "<ISO-8601-time>",
+  "applicationSbom": { "reference": "<attestation-reference>", "sha256": "sha256:<64-hex-digest>" },
+  "baseImageSbom": { "reference": "<attestation-reference>", "sha256": "sha256:<64-hex-digest>" },
+  "findings": [],
+  "exceptions": [],
+  "signature": {
+    "verified": false,
+    "imageDigest": "<same-image-digest>",
+    "certificateIdentity": "<approved-signing-identity>",
+    "transparencyLogReference": "<transparency-entry>"
+  },
+  "provenance": {
+    "verified": false,
+    "imageDigest": "<same-image-digest>",
+    "sourceRevision": "<same-source-revision>",
+    "reference": "<provenance-attestation>"
+  }
+}
