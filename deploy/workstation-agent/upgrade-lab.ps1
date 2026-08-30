@@ -13,12 +13,17 @@ schtasks.exe /End /TN $TaskName 2>$null|Out-Null
 Start-Sleep -Seconds 2
 Copy-Item -Force -LiteralPath $target -Destination $backup
 try{
+  $bootstrapPath=Join-Path $InstallDirectory 'bootstrap.json'
+  $bootstrap=Get-Content -Raw -LiteralPath $bootstrapPath|ConvertFrom-Json
+  if($null -eq $bootstrap.autoConfigureConsole){$bootstrap|Add-Member -NotePropertyName autoConfigureConsole -NotePropertyValue $true}
+  if($null -eq $bootstrap.consolePortRange){$bootstrap|Add-Member -NotePropertyName consolePortRange -NotePropertyValue ([pscustomobject]@{start=5900;end=5999})}
+  $bootstrap|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $bootstrapPath -Encoding UTF8
   Copy-Item -Force -LiteralPath $source -Destination $target
   $task=Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
   Start-ScheduledTask -InputObject $task
   Start-Sleep -Seconds 3
   if((Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult -notin 0,267009){throw 'The upgraded agent task did not start successfully.'}
-  Write-Output "Upgraded and restarted $TaskName. Existing enrollment and configuration were preserved."
+  Write-Output "Upgraded and restarted $TaskName. Automatic console configuration is enabled for ports 5900 through 5999. Running VMs were not changed."
 }catch{
   Copy-Item -Force -LiteralPath $backup -Destination $target
   Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
