@@ -52,7 +52,7 @@ const agentUpgrades=production?new PostgresAgentUpgradeService(store.pool,signin
 const provider = new ProviderRouter({connections,agents,mock:mockProvider});
 const worker = new Worker({ store, provider, broker, onCompleted:async(task,result)=>{if(task.target.type==='virtual_machine'&&await inventory.get(task.target.id))await inventory.applyOperation(task.target.id,task.operation,result);} });
 await worker.start();
-const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:'0018'});
+const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:'0019'});
 const verificationReconciler=new VerificationReconciler({store,connections,inventory,provider});
 const discoveryScheduler=new DiscoveryScheduler({connections,inventory,provider,reconciler:verificationReconciler,intervalMs:Number(process.env.NUVRION_DISCOVERY_INTERVAL_MS??300000),onError:(error,connection)=>console.error(JSON.stringify({level:'error',event:'discovery.failed',connectionId:connection.id,error:error.message}))});
 const loginLimiter=new LoginRateLimiter({limit:Number(process.env.NUVRION_LOGIN_ATTEMPT_LIMIT??5),windowMs:Number(process.env.NUVRION_LOGIN_WINDOW_MS??300000),...(process.env.NUVRION_MASTER_KEY?{keySecret:process.env.NUVRION_MASTER_KEY}:{})});
