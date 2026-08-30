@@ -1,0 +1,46 @@
+{
+  "format": "nuvrion-final-validation/v1",
+  "product": "Nuvrion",
+  "targetVersion": "0.1.0",
+  "environment": "RHEL9 lab",
+  "validatedAt": "2026-08-30T05:32:35Z",
+  "validatedSource": {
+    "mainMergeRevision": "0b850d3bc58059465ef0181d7c5ec24d7cb64b36",
+    "qualifiedApplicationRevision": "610b3f1948163f220554cb9c24472299bbff1ff0",
+    "deployedReleaseCandidate": "0.1.0-rc.2",
+    "deployedDigest": "sha256:a70460e432d9be83660f65de111759741da6f5f8eeca63b8732d2945d9247951"
+  },
+  "verification": {
+    "automatedTestsPassed": 131,
+    "migrationFilesValidated": 18,
+    "secretScanFindings": 0,
+    "rhelRebootCompleted": true,
+    "postRebootBootTime": "2026-08-30T01:18:49-05:00",
+    "podmanRestartService": "active",
+    "httpsUiStatus": 200,
+    "apiReadiness": "ready",
+    "apiHealth": "healthy",
+    "database": "healthy",
+    "broker": "healthy",
+    "worker": "healthy",
+    "agentMaintenance": "healthy",
+    "migrations": "current",
+    "esxiCertificateTrust": "verified",
+    "esxiConnectionTest": "healthy",
+    "esxiResourcesDiscovered": 2,
+    "persistedCounts": {
+      "connections": 2,
+      "resources": 27,
+      "tasks": 25,
+      "workstationAgents": 1
+    },
+    "taskFailures": 0
+  },
+  "recoveryFinding": {
+    "finding": "Stopped rollback containers inherited restart=always and started during the reboot test.",
+    "resolution": "The two rollback containers and their unused images were removed at the environment owner's request. Only the active trusted RC2 API container remains configured to restart.",
+    "reclaimedImageStorageBytesApproximate": 542400000,
+    "status": "resolved"
+  },
+  "releasePosition": "Passed for lab release promotion. This evidence does not constitute production approval."
+}

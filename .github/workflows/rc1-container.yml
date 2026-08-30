@@ -1,11 +1,11 @@
-name: rc1-container
+name: release-container
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release candidate version
+        description: Semantic release or release candidate version
         required: true
-        default: 0.1.0-rc.1
+        default: 0.1.0
       node_image:
         description: Approved Node 24 base image including @sha256 digest
         required: true
@@ -29,7 +29,7 @@ jobs:
           RC_VERSION: ${{ inputs.version }}
           NODE_IMAGE: ${{ inputs.node_image }}
         run: |
-          [[ "$RC_VERSION" =~ ^0\.1\.[0-9]+-rc\.[0-9]+$ ]]
+          [[ "$RC_VERSION" =~ ^0\.1\.[0-9]+(-rc\.[0-9]+)?$ ]]
           [[ "$NODE_IMAGE" =~ @sha256:[a-f0-9]{64}$ ]]
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
