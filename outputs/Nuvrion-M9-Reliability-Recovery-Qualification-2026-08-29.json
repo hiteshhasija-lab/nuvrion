@@ -1,0 +1,92 @@
+{
+  "format": "nuvrion-lab-reliability-qualification/v1",
+  "product": "Nuvrion",
+  "milestone": "M9 Reliability and Recovery Qualification",
+  "environment": "RHEL9 lab at 10.0.0.15",
+  "status": "passed",
+  "completedAt": "2026-08-30T04:09:12Z",
+  "sourceRevision": "610b3f1b4f371814f88c98d2adf76a40f2c706a4",
+  "sourceWorkingTreeModified": false,
+  "isolatedRestore": {
+    "status": "passed",
+    "schemaVersion": "0018",
+    "manifestAuthenticated": true,
+    "checksumVerified": true,
+    "emptyTargetVerified": true,
+    "restoreCompleted": true,
+    "rtoSeconds": 2,
+    "countsMatched": true,
+    "sourceCounts": {
+      "tasks": 24,
+      "auditEvents": 141,
+      "connections": 2,
+      "resources": 27,
+      "users": 2
+    },
+    "recoveryCounts": {
+      "tasks": 24,
+      "auditEvents": 141,
+      "connections": 2,
+      "resources": 27,
+      "users": 2
+    },
+    "encryptedSecretRecordsRetained": true,
+    "disposableRecoveryDatabaseRemoved": true
+  },
+  "processRestart": {
+    "status": "passed",
+    "recoverySeconds": 2,
+    "containerRestartPolicy": "always",
+    "containerState": "running",
+    "readinessAfterRestart": "ready",
+    "lostTasks": 0,
+    "duplicateOperations": 0
+  },
+  "brokerOutage": {
+    "status": "passed_after_remediation",
+    "initialFinding": "Readiness incorrectly remained ready and the RabbitMQ client did not reconnect.",
+    "remediation": [
+      "Broker connection close and error events now mark the component unhealthy.",
+      "The broker reconnects automatically and restores its consumer.",
+      "Outbox publishing failures remain pending and no longer create unhandled interval rejections."
+    ],
+    "readinessDuringOutageHttpStatus": 503,
+    "readinessDuringOutage": "not_ready",
+    "readinessAfterRecoveryHttpStatus": 200,
+    "readinessAfterRecovery": "ready",
+    "apiRestartRequiredForRecovery": false,
+    "pendingOutboxAfterRecovery": 0,
+    "lostTasks": 0,
+    "duplicateOperations": 0
+  },
+  "providerAndTaskFailureControls": {
+    "status": "passed_by_automated_fault_harness",
+    "providerErrorsRedacted": true,
+    "transientFailuresRetriedWithinBounds": true,
+    "acceptedAmbiguousOperationsNotReissued": true,
+    "verificationReconciliationReadOnly": true,
+    "expiredLeasesRecovered": true
+  },
+  "verification": {
+    "syntaxChecks": "passed",
+    "migrationFilesValidated": 18,
+    "repositorySecretScanFiles": 95,
+    "repositorySecretScanFindings": 0,
+    "testsPassed": 131,
+    "testsFailed": 0,
+    "testDurationMilliseconds": 53751.12575
+  },
+  "currentLabState": {
+    "readiness": "ready",
+    "tasksCompleted": 24,
+    "pendingOutbox": 0,
+    "realVmLifecycleOperationsPerformed": false
+  },
+  "scopeStatement": "Controlled lab reliability qualification with an isolated disposable restore target, live service restart, and live RabbitMQ interruption. No real VM lifecycle operation was issued.",
+  "limitations": [
+    "This is lab evidence, not a formal production release-gate approval.",
+    "The recovered database was validated through schema, integrity, and exact record-count checks; a second recovered application stack was not connected to providers to avoid duplicate control-plane activity.",
+    "Database-outage rejection, full recovered-stack provider discovery, independent secret-restoration ceremony, and external operations approval remain production release prerequisites.",
+    "Formal production qualification still requires approval of the immutable Release Candidate image and its supply-chain evidence."
+  ]
+}

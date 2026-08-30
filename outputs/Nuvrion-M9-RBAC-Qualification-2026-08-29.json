@@ -1,0 +1,55 @@
+{
+  "format": "nuvrion-m9-rbac-qualification/v1",
+  "environment": "nuvrion.lab.sps",
+  "profile": "lab",
+  "verifiedAt": "2026-08-30T03:44:46.658Z",
+  "sourceCommit": "610b3f1b4f371814f88c98d2adf76a40f2c706a4",
+  "frontendAsset": "app.js?v=20260829-rbac1",
+  "status": "passed",
+  "roles": {
+    "platform_admin": {
+      "resources": 200,
+      "connections": 200,
+      "tasks": 200,
+      "audit": 200,
+      "users": 200,
+      "platformMetrics": 200,
+      "resourceOperationAuthorization": "allowed"
+    },
+    "operator": {
+      "resources": 200,
+      "connections": 200,
+      "tasks": 200,
+      "audit": 403,
+      "users": 403,
+      "platformMetrics": 403,
+      "resourceOperationAuthorization": "allowed"
+    },
+    "auditor": {
+      "resources": 200,
+      "connections": 200,
+      "tasks": 200,
+      "audit": 200,
+      "users": 403,
+      "platformMetrics": 403,
+      "resourceOperationAuthorization": "denied_403"
+    }
+  },
+  "consoleChecks": {
+    "unauthorizedDataRequestsSuppressed": true,
+    "auditNavigationPermissionAware": true,
+    "lifecycleAndConsoleActionsPermissionAware": true,
+    "connectionManagementActionsPermissionAware": true,
+    "hostTerminalRequiresPlatformManage": true,
+    "taskRecoveryActionsRequireResourceOperate": true
+  },
+  "automatedTests": {
+    "passed": 130,
+    "failed": 0
+  },
+  "notes": [
+    "Temporary Operator and Auditor accounts were created, approved, exercised, and removed.",
+    "A 404 result for an authorized operation against a nonexistent resource proves authorization passed before resource lookup.",
+    "This is lab qualification evidence and is not an independent production security approval."
+  ]
+}

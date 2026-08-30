@@ -1,0 +1,39 @@
+{
+  "format": "nuvrion-lab-security-qualification/v1",
+  "product": "Nuvrion",
+  "milestone": "M9 Security Qualification",
+  "environment": "RHEL9 lab at 10.0.0.15",
+  "status": "passed",
+  "qualifiedAt": "2026-08-30T03:51:54.776Z",
+  "sourceRevision": "610b3f1b4f371814f88c98d2adf76a40f2c706a4",
+  "sourceWorkingTreeModified": false,
+  "liveChecks": {
+    "securityHeaders": true,
+    "requestValidation": true,
+    "secureCookies": true,
+    "csrfProtection": true,
+    "providerCredentialRedaction": true,
+    "hostTerminalAuthorizationAndExplicitCredentials": true,
+    "recoveryCodeRotation": true,
+    "sessionInvalidation": true,
+    "loginThrottling": true,
+    "identityAuditCoverage": true
+  },
+  "automatedVerification": {
+    "syntaxChecks": "passed",
+    "testsPassed": 130,
+    "testsFailed": 0,
+    "durationMilliseconds": 55389.345542
+  },
+  "testData": {
+    "temporaryAccountsRemoved": true,
+    "secretsRetainedInEvidence": false,
+    "infrastructureLifecycleOperationsPerformed": false
+  },
+  "scopeStatement": "Controlled lab qualification of implemented application security controls. This evidence is not an independent penetration test, production security approval, or formal release-gate approval.",
+  "limitations": [
+    "The qualified source included uncommitted working-tree changes and must be committed before immutable release qualification.",
+    "The lab-only weak-password and recovery-code features are intentionally enabled in this environment.",
+    "Independent security review and production hardening remain required before a production release."
+  ]
+}

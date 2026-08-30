@@ -1,0 +1,77 @@
+{
+  "format": "nuvrion-lab-performance-qualification/v1",
+  "product": "Nuvrion",
+  "milestone": "M9 Performance and Load Qualification",
+  "environment": "RHEL9 lab at 10.0.0.15",
+  "status": "passed",
+  "completedAt": "2026-08-30T04:16:00Z",
+  "sourceRevision": "610b3f1b4f371814f88c98d2adf76a40f2c706a4",
+  "sourceWorkingTreeModified": false,
+  "thresholds": {
+    "apiP95LatencyMillisecondsMaximum": 500,
+    "apiThroughputPerSecondMinimum": 50,
+    "apiErrorRateMaximum": 0.01,
+    "taskP95CompletionMillisecondsMaximum": 5000,
+    "taskThroughputPerSecondMinimum": 10,
+    "duplicateOperationsMaximum": 0,
+    "lostTasksMaximum": 0
+  },
+  "apiLoad": {
+    "status": "passed",
+    "method": "Three consecutive read-only health-endpoint waves from inside the application container",
+    "requests": 3000,
+    "waves": 3,
+    "concurrency": 25,
+    "successfulResponses": 3000,
+    "errorRate": 0,
+    "p95LatencyMilliseconds": 80.286,
+    "maximumLatencyMilliseconds": 123.307,
+    "minimumThroughputPerSecond": 621.448,
+    "averageThroughputPerSecond": 704.914
+  },
+  "isolatedTaskLoad": {
+    "status": "passed",
+    "method": "In-memory task store and deterministic mock provider inside the application container; no production database or infrastructure provider mutations",
+    "tasks": 2000,
+    "concurrency": 32,
+    "durationMilliseconds": 451.163,
+    "throughputPerSecond": 4432.984,
+    "p50CompletionMilliseconds": 188,
+    "p95CompletionMilliseconds": 381,
+    "maximumCompletionMilliseconds": 411,
+    "duplicateOperations": 0,
+    "lostTasks": 0
+  },
+  "resourceObservations": {
+    "containerMemoryLimitMegabytes": 536.9,
+    "memoryBeforeApiLoadMegabytes": 43.51,
+    "memoryAfterApiLoadMegabytes": 53.23,
+    "memoryAfterTaskLoadMegabytes": 53.23,
+    "sampledCpuBeforeApiLoadPercent": 2.03,
+    "sampledCpuAfterApiLoadPercent": 3.47,
+    "sampledCpuAfterTaskLoadPercent": 3.81,
+    "oomKilled": false,
+    "unexpectedContainerRestarts": 0
+  },
+  "postLoadStability": {
+    "containerState": "running",
+    "readiness": "ready",
+    "broker": "healthy",
+    "worker": "healthy",
+    "database": "healthy",
+    "errorLogsLastTenMinutes": 0,
+    "pendingOutboxMessages": 0
+  },
+  "safety": {
+    "realVmLifecycleOperationsPerformed": false,
+    "providerCredentialsUsedByLoadHarness": false,
+    "productionTaskRecordsCreatedByTaskHarness": false
+  },
+  "scopeStatement": "Controlled lab performance qualification. API results represent read-only localhost traffic; task-engine results use an isolated deterministic provider and in-memory store.",
+  "limitations": [
+    "This is not an internet-scale, multi-node, or independent production load test.",
+    "CPU and memory values are point-in-time container samples, not high-frequency peak telemetry.",
+    "A future release candidate still requires production-like authenticated inventory-query load, durable PostgreSQL/RabbitMQ task load using disposable provider targets, and longer soak testing.",
+    "Formal production qualification still requires approval of the immutable Release Candidate image and its supply-chain evidence."
+  ]
+}
