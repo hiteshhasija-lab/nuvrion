@@ -1,0 +1,65 @@
+{
+  "format": "nuvrion-rc-deployment/v1",
+  "product": "Nuvrion",
+  "releaseCandidate": "0.1.0-rc.2",
+  "environment": "RHEL9 lab",
+  "deployedAt": "2026-08-30T04:42:39Z",
+  "source": {
+    "branch": "codex/rc1-preparation",
+    "revision": "cc1f06d5e50b52fe1140d38a65c24683e4db676e",
+    "qualifiedApplicationRevision": "610b3f1948163f220554cb9c24472299bbff1ff0",
+    "githubActionsRunId": "33292616707",
+    "githubActionsJobId": "99206788940"
+  },
+  "image": {
+    "repository": "ghcr.io/hiteshhasija-lab/nuvrion",
+    "tag": "0.1.0-rc.2",
+    "digest": "sha256:a70460e432d9be83660f65de111759741da6f5f8eeca63b8732d2945d9247951",
+    "imageId": "sha256:1ca6b0baef605627a65a2af6b27fcc29f45e4905c3a22b1300a83affcbf52ee6",
+    "baseImage": "docker.io/library/node@sha256:6642ef280aebc09c4541bee0b15c9f89f0f3f3c247ddee79ae1d37eddfdcbbaa",
+    "verifiedLabels": {
+      "org.opencontainers.image.revision": "cc1f06d5e50b52fe1140d38a65c24683e4db676e",
+      "org.opencontainers.image.version": "0.1.0-rc.2"
+    }
+  },
+  "deployment": {
+    "container": "nuvrion-api",
+    "imagePinnedByDigest": true,
+    "restartPolicy": "always",
+    "containerStatus": "running_and_healthy",
+    "readinessStatus": "ready",
+    "readinessComponents": {
+      "database": "healthy",
+      "broker": "healthy",
+      "worker": "healthy",
+      "agentMaintenance": "healthy",
+      "migrations": "current"
+    },
+    "healthStatus": "healthy",
+    "databaseCounts": {
+      "connections": 2,
+      "resources": 27,
+      "tasks": 25
+    },
+    "healthMetrics": {
+      "resourcesActive": 26,
+      "resourcesMissing": 1,
+      "tasksCompleted": 25,
+      "tasksFailed": 0
+    }
+  },
+  "rollback": {
+    "retained": true,
+    "container": "nuvrion-api-rc1-rollback",
+    "image": "ghcr.io/hiteshhasija-lab/nuvrion:0.1.0-rc.1",
+    "status": "stopped"
+  },
+  "credentialHandling": {
+    "scope": "read:packages",
+    "expirationDays": 30,
+    "storedInConversation": false,
+    "temporaryTransferFilesRemoved": true,
+    "persistentPodmanAuthFileMode": "0600"
+  },
+  "result": "passed_for_lab"
+}

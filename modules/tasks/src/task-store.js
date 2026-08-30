@@ -14,6 +14,7 @@ export class TaskStore {
     this.#tasks.set(task.id, task); this.#keys.set(hash, task.id); this.#outbox.push({id:randomUUID(),topic:'task.queued',key:task.id,payload:{taskId:task.id},occurredAt:now,publishedAt:null,attempts:0});this.#auditEvent('task.create','succeeded',task,{operation,targetId});this.#persist();return { task: structuredClone(task), created: true };
   }
   list() { return [...this.#tasks.values()].map(value => structuredClone(value)).sort((a,b) => b.queuedAt.localeCompare(a.queuedAt)); }
+  listVerificationRequired(){return this.list().filter(task=>task.status==='verification_required');}
   get(id) { const v = this.#tasks.get(id); return v ? structuredClone(v) : null; }
   getByIdempotencyKey(idempotencyKey) { const hash=createHash('sha256').update(idempotencyKey).digest('hex');const id=this.#keys.get(hash);return id?this.get(id):null; }
   activeForTarget(targetId) { const task=[...this.#tasks.values()].find(value=>value.target.id===targetId&&['queued','running'].includes(value.status));return task?structuredClone(task):null; }
@@ -27,6 +28,7 @@ export class TaskStore {
   manualRetry(id,requestedBy=null){const t=this.#tasks.get(id);if(!t)return {ok:false,code:'NUV_TASK_NOT_FOUND'};if(t.status!=='failed')return {ok:false,code:'NUV_TASK_RETRY_UNSAFE',detail:`A ${t.status} task cannot be manually retried.`};t.status='queued';t.completedAt=null;t.startedAt=null;t.retryAt=null;t.error=null;t.progress={current:0,total:1,messageCode:'NUV_TASK_MANUAL_RETRY'};t.manualRetryBy=requestedBy;const now=new Date().toISOString();this.#outbox.push({id:randomUUID(),topic:'task.queued',key:t.id,payload:{taskId:t.id},occurredAt:now,publishedAt:null,attempts:0});this.#auditEvent('task.retry','requested',t,{requestedBy:requestedBy?.id});this.#persist();return {ok:true,task:structuredClone(t)};}
   recoverExpired(now=Date.now()){let count=0;for(const t of this.#tasks.values()){if(t.status==='running'&&t.lease&&Date.parse(t.lease.expiresAt)<=now){t.status='queued';delete t.lease;t.progress={current:0,total:1,messageCode:'NUV_TASK_RECOVERED'};count++;}}if(count)this.#persist();return count;}
   audit({action,outcome,limit=100}={}){return this.#audit.filter(x=>(!action||x.action===action)&&(!outcome||x.outcome===outcome)).slice(-limit).reverse().map(value => structuredClone(value));}
+  recordAudit(event){this.#audit.push({id:randomUUID(),occurredAt:new Date().toISOString(),actorType:event.actorType??'user',actorId:event.actorId??null,actorName:event.actorName??null,action:event.action,targetType:event.targetType,targetId:event.targetId,taskId:null,correlationId:event.correlationId,outcome:event.outcome??'succeeded',detail:event.detail??{}});this.#persist();}
   outbox(){return this.#outbox.map(value => structuredClone(value));}
   pendingOutbox(limit=50){return this.#outbox.filter(value=>!value.publishedAt&&Date.parse(value.occurredAt)<=Date.now()).slice(0,limit).map(value=>structuredClone(value));}
   markOutboxPublished(id){const message=this.#outbox.find(value=>value.id===id);if(message){message.publishedAt=new Date().toISOString();message.attempts++;this.#persist();}}

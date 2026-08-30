@@ -1,0 +1,26 @@
+{
+  "format": "nuvrion-m9-qualification-summary/v1",
+  "product": "Nuvrion",
+  "milestone": "M9",
+  "status": "passed_for_lab",
+  "qualifiedSourceRevision": "610b3f1b4f371814f88c98d2adf76a40f2c706a4",
+  "completedAt": "2026-08-30T04:16:00Z",
+  "evidence": {
+    "rbac": "outputs/Nuvrion-M9-RBAC-Qualification-2026-08-29.json",
+    "security": "outputs/Nuvrion-M9-Security-Qualification-2026-08-29.json",
+    "reliabilityAndRecovery": "outputs/Nuvrion-M9-Reliability-Recovery-Qualification-2026-08-29.json",
+    "performanceAndLoad": "outputs/Nuvrion-M9-Performance-Load-Qualification-2026-08-29.json"
+  },
+  "verification": {
+    "automatedTestsPassed": 131,
+    "automatedTestsFailed": 0,
+    "migrationFilesValidated": 18,
+    "secretScanFindings": 0,
+    "apiLoadRequests": 3000,
+    "apiLoadErrors": 0,
+    "isolatedTaskLoadTasks": 2000,
+    "isolatedTaskLoadLostTasks": 0,
+    "isolatedTaskLoadDuplicateOperations": 0
+  },
+  "releasePosition": "Ready to build and deploy a commit-bound Release Candidate image for formal qualification. Lab evidence does not constitute production approval."
+}
