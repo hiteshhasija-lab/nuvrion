@@ -1,0 +1,56 @@
+name: workstation-agent-lab-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Lab agent bundle version
+        required: true
+        default: 0.1.1
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-agent:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install production dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Build unsigned Windows x64 agent
+        shell: pwsh
+        run: |
+          npx --yes @yao-pkg/pkg@5.12.1 apps/workstation-agent/src/agent-service.cjs --targets node18-win-x64 --output nuvrion-workstation-agent.exe
+      - name: Assemble lab upgrade bundle
+        shell: pwsh
+        env:
+          BUNDLE_VERSION: ${{ inputs.version }}
+        run: |
+          $stage = Join-Path $PWD "Nuvrion-Workstation-Agent-Lab-$env:BUNDLE_VERSION"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item .\nuvrion-workstation-agent.exe $stage
+          Copy-Item .\deploy\workstation-agent\upgrade-lab.ps1 $stage
+          Copy-Item .\deploy\workstation-agent\enable-console.ps1 $stage
+          @"
+          Nuvrion Workstation Agent $env:BUNDLE_VERSION (unsigned lab build)
+
+          1. Run PowerShell as Administrator.
+          2. Run upgrade-lab.ps1 with the new executable path.
+          3. Power off each VM before running enable-console.ps1.
+          Existing bootstrap.json and identity.json files are preserved.
+          "@ | Set-Content -Path (Join-Path $stage "README.txt") -Encoding UTF8
+          Compress-Archive -Path "$stage\*" -DestinationPath "$stage.zip" -Force
+          Get-FileHash "$stage.zip" -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nuvrion-Workstation-Agent-Lab-${{ inputs.version }}-x64
+          path: Nuvrion-Workstation-Agent-Lab-${{ inputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 14
