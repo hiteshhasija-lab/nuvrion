@@ -16,6 +16,7 @@ COPY --chown=node:node modules ./modules
 COPY --chown=node:node providers ./providers
 COPY --chown=node:node contracts ./contracts
 COPY --chown=node:node database ./database
+COPY --chown=node:node tools ./tools
 USER node
 EXPOSE 4100
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 CMD ["node","-e","fetch('http://127.0.0.1:4100/api/v1/readiness').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
