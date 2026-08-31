@@ -2,7 +2,7 @@ export class LocalTaskBroker {
   #handler=null;
   status='healthy';
   async subscribe(handler){this.#handler=handler;}
-  async publishTaskQueued(){queueMicrotask(()=>this.#handler?.());}
+  async publishTaskQueued(taskId){queueMicrotask(()=>this.#handler?.({taskId}));}
   async close(){this.#handler=null;this.status='stopped';}
 }
 

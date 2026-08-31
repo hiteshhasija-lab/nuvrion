@@ -1,9 +1,9 @@
 export class Worker {
   constructor({ store, provider, broker = null, onCompleted = null, maxAttempts=3, retryBaseMs=250 }) { this.store = store; this.provider = provider; this.broker = broker; this.onCompleted = onCompleted; this.maxAttempts=maxAttempts;this.retryBaseMs=retryBaseMs;this.status = 'starting'; this.timer = null; }
-  async start() { this.status = 'healthy';if(this.broker)await this.broker.subscribe(()=>this.tick());else{this.timer=setInterval(()=>this.tick(),50);this.timer.unref?.();} }
+  async start() { this.status = 'healthy';if(this.broker)await this.broker.subscribe(message=>this.tick(message?.taskId));else{this.timer=setInterval(()=>this.tick(),50);this.timer.unref?.();} }
   async notify(taskId) { if(this.broker)await this.broker.publishTaskQueued(taskId);else queueMicrotask(() => this.tick()); }
-  async tick() {
-    const task = await this.store.claim(); if (!task) return;
+  async tick(taskId=null) {
+    const task = await this.store.claim('worker',taskId); if (!task) return;
     let accepted=null;try {
       accepted = await this.provider.execute(task.operation, task.providerNativeId ?? task.target.id, task);
       await this.store.running(task.id, accepted.providerReference);
