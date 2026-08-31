@@ -9,3 +9,12 @@ test('task creation does not check out a nested pool connection',async()=>{
   assert.doesNotMatch(createBody,/await this\.get\(/);
   assert.match(createBody,/taskFrom\(inserted\.rows\[0\]\)/);
 });
+
+test('transactional task completion and recovery paths use their existing client',async()=>{
+  const source=await readFile(new URL('../modules/tasks/src/postgres-task-store.js',import.meta.url),'utf8');
+  for(const [start,end] of [['async #finish(','complete(id,result)'],['async retry(','async verificationRequired('],['async verificationRequired(','async cancel(']]){
+    const body=source.slice(source.indexOf(start),source.indexOf(end));
+    assert.doesNotMatch(body,/await this\.get\(/);
+    assert.match(body,/client\.query\('SELECT \* FROM operations\.tasks WHERE task_id=\$1'/);
+  }
+});
