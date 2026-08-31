@@ -18,3 +18,10 @@ test('transactional task completion and recovery paths use their existing client
     assert.match(body,/client\.query\('SELECT \* FROM operations\.tasks WHERE task_id=\$1'/);
   }
 });
+
+test('task claim returns through its existing transaction client',async()=>{
+  const source=await readFile(new URL('../modules/tasks/src/postgres-task-store.js',import.meta.url),'utf8');
+  const body=source.slice(source.indexOf('async claim('),source.indexOf('async running('));
+  assert.doesNotMatch(body,/await this\.get\(/);
+  assert.match(body,/const claimed=taskFrom\(\(await client\.query/);
+});
