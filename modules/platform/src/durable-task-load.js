@@ -13,7 +13,7 @@ export async function runDurableTaskLoad({store,count=200,concurrency=25,timeout
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>300000||!Number.isSafeInteger(pollIntervalMs)||pollIntervalMs<1||pollIntervalMs>1000)throw new DurableTaskLoadError('Timeout or poll interval is outside safe bounds.');
 
   const startedAt=clock(),tasks=new Array(count),queue=Array.from({length:count},(_,index)=>index);
-  async function creator(){while(queue.length){const index=queue.shift(),targetId=`qualification:${runId}:${index}`,result=await store.create({operation:'start',targetId,targetType:'qualification_synthetic',providerNativeId:targetId,connectionId:null,correlationId:randomUUID(),idempotencyKey:`qualification:${runId}:${index}`});if(!result.created)throw new DurableTaskLoadError('A qualification idempotency key was unexpectedly reused.');tasks[index]=result.task;}}
+  async function creator(){while(queue.length){const index=queue.shift(),targetId=randomUUID(),providerNativeId=`qualification:${runId}:${index}`,result=await store.create({operation:'start',targetId,targetType:'qualification_synthetic',providerNativeId,connectionId:null,correlationId:randomUUID(),idempotencyKey:providerNativeId});if(!result.created)throw new DurableTaskLoadError('A qualification idempotency key was unexpectedly reused.');tasks[index]=result.task;}}
   await Promise.all(Array.from({length:concurrency},()=>creator()));
 
   const deadline=startedAt+timeoutMs;let current=[];
