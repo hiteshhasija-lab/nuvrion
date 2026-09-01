@@ -211,6 +211,10 @@ export async function handler(req, res) {
       const css = await readFile(resolve(webRoot, 'styles.css'));
       res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
     }
+    if (req.method === 'GET' && url.pathname === '/vm-workspace.css') {
+      const css = await readFile(resolve(webRoot, 'vm-workspace.css'));
+      res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
+    }
     if (req.method === 'GET' && url.pathname === '/visibility.css') {
       const css = await readFile(resolve(webRoot, 'visibility.css'));
       res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);

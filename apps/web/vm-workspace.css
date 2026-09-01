@@ -1,0 +1,48 @@
+/* Compact ESXi-style VM navigator and dual-mode workspace. */
+#view-inventory:not(.detail-mode) .vm-action-toolbar,
+#view-inventory:not(.detail-mode) .vm-detail { display: none; }
+#view-inventory.detail-mode .vm-filter-toolbar,
+#view-inventory.detail-mode .vm-list-card { display: none; }
+#view-inventory.detail-mode .vm-workspace-head { justify-content: flex-start; }
+.vm-filter-toolbar { display:grid;grid-template-columns:minmax(150px,220px) 120px 90px;gap:7px;justify-content:end;flex:1; }
+.vm-filter-toolbar .search { width:auto;max-width:none; }
+.vm-filter-toolbar input,.vm-filter-toolbar select,.vm-filter-toolbar button { width:100%;height:32px;padding-top:6px;padding-bottom:6px; }
+.vm-filter-toolbar .search span { top:6px; }
+.vm-list-scroll { max-height:calc(100vh - 210px); }
+.vm-list-scroll table { min-width:980px;table-layout:fixed; }
+.vm-list-scroll th,.vm-list-scroll td { padding-left:8px;padding-right:8px; }
+.vm-list-scroll th { height:36px;font-size:9px; }
+.vm-list-scroll td { padding-top:9px;padding-bottom:9px;font-size:10px; }
+.vm-list-scroll th:nth-child(1) { width:150px; }
+.vm-list-scroll th:nth-child(2) { width:80px; }
+.vm-list-scroll th:nth-child(3) { width:130px; }
+.vm-list-scroll th:nth-child(4) { width:105px; }
+.vm-list-scroll th:nth-child(5) { width:55px; }
+.vm-list-scroll th:nth-child(6) { width:85px; }
+.vm-list-scroll th:nth-child(n+7) { width:75px; }
+.compact-cell { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.vm-status { display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-weight:650;text-transform:capitalize; }
+.vm-status>span { display:grid;place-items:center;width:16px;height:16px;border-radius:50%;color:#fff;font-size:10px;font-weight:900; }
+.vm-status.normal>span { background:#2caf5d;box-shadow:inset 0 -1px 0 #18743d; }
+.vm-status.normal { color:#31433e; }
+.vm-status.attention>span { background:#9ba8ab; }
+.vm-status.attention { color:#657478; }
+.sidebar-vm-list { max-height:calc(100vh - 430px);padding-left:18px; }
+.sidebar-vm-list button { align-items:flex-start;padding:6px 8px;font-size:10px;line-height:1.25; }
+.sidebar-vm-list button>span:last-child { white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere; }
+.sidebar-power { margin-top:3px; }
+.vm-detail { display:block;margin-top:0;padding:0;min-height:0; }
+.vm-detail-hero { display:grid;grid-template-columns:210px minmax(270px,1fr) minmax(130px,190px);gap:16px;align-items:stretch;padding:14px;min-height:180px; }
+.vm-detail-hero .vm-preview { min-height:150px; }
+.vm-detail-hero .vm-facts h2 { margin-top:0; }
+.vm-detail-panels { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px; }
+.vm-info-panel { padding:0;overflow:hidden; }
+.vm-info-panel h3 { margin:0;padding:8px 11px;background:#edf1f2;border-bottom:1px solid var(--line);font-size:11px; }
+.vm-info-panel dl { display:grid;grid-template-columns:125px 1fr;margin:0;font-size:10px; }
+.vm-info-panel dt,.vm-info-panel dd { margin:0;padding:8px 11px;border-top:1px solid #edf0f1; }
+.vm-info-panel dt { background:#edf6f8;color:#42565b; }
+.vm-info-panel dd { overflow-wrap:anywhere; }
+.vm-toolbar-action { height:31px;padding:0 10px;font-size:11px; }
+@media (min-width:1051px) { .shell{grid-template-columns:280px 1fr} aside{width:280px} }
+@media (max-width:1050px) { .vm-filter-toolbar{grid-template-columns:minmax(140px,1fr) 115px 82px}.vm-detail-hero{grid-template-columns:170px 1fr}.vm-detail-hero .vm-live-metrics{grid-column:1/-1;grid-template-columns:repeat(3,1fr)} }
+@media (max-width:700px) { .vm-filter-toolbar{grid-template-columns:minmax(120px,1fr) 105px 78px}.vm-detail-hero,.vm-detail-panels{grid-template-columns:1fr} }
