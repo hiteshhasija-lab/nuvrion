@@ -30,8 +30,8 @@
 .vm-status.attention>span { background:#9ba8ab; }
 .vm-status.attention { color:#657478; }
 .sidebar-vm-list { max-height:calc(100vh - 430px);padding-left:18px; }
-.sidebar-vm-list button { align-items:flex-start;padding:5px 8px;font-size:9px;line-height:1.2; }
-.sidebar-vm-list button>span:last-child { white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere; }
+.sidebar-vm-list button { align-items:center;padding:4px 7px;font-size:8px;line-height:1.1;min-width:0; }
+.sidebar-vm-list button>span:last-child { min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .sidebar-power { margin-top:3px; }
 .vm-detail { display:block;margin-top:0;padding:0;min-height:0; }
 .vm-detail-hero { display:grid;grid-template-columns:210px minmax(270px,1fr) minmax(130px,190px);gap:16px;align-items:stretch;padding:14px;min-height:180px; }
@@ -46,6 +46,17 @@
 .vm-info-panel dt,.vm-info-panel dd { margin:0;padding:8px 11px;border-top:1px solid #edf0f1; }
 .vm-info-panel dt { background:#edf6f8;color:#42565b; }
 .vm-info-panel dd { overflow-wrap:anywhere; }
+.vm-info-panel .section-row { grid-column:1/-1;background:#e4f1f5;font-weight:750;color:#254f59; }
+.vm-info-panel .ip-list { display:grid;gap:3px; }
+.vm-detail-panels.performance { align-items:start; }
+.vm-performance-summary { padding:10px; }
+.vm-performance-summary .metric-chart { min-height:190px; }
+.vm-performance-summary .metric-chart svg { height:140px; }
+.vm-toolbar-action.edit,.vm-toolbar-action.actions { color:#334b51; }
+.vm-toolbar-action.actions { position:relative; }
+.sidebar-monitor-title { display:flex;align-items:center;gap:10px;padding:10px 16px 5px;color:#637378;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em; }
+.sidebar-monitor-list { padding-left:18px; }
+.sidebar-monitor-list button { padding-top:6px;padding-bottom:6px;font-size:10px; }
 .vm-toolbar-action { height:31px;padding:0 10px;font-size:11px; }
 .bulk-count { padding:0 8px;color:var(--muted);font-size:10px;white-space:nowrap; }
 .vm-live-metrics>div { position:relative;min-height:54px;padding-right:45px; }
