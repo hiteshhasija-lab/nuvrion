@@ -57,7 +57,7 @@ const agentUpgrades=production?new PostgresAgentUpgradeService(store.pool,signin
 const provider = new ProviderRouter({connections,agents,mock:mockProvider});
 const worker = new Worker({ store, provider, broker, onCompleted:async(task,result)=>{if(task.target.type==='virtual_machine'&&await inventory.get(task.target.id))await inventory.applyOperation(task.target.id,task.operation,result);} });
 await worker.start();
-const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:'0023'});
+const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:'0024'});
 const verificationReconciler=new VerificationReconciler({store,connections,inventory,provider});
 const discoveryScheduler=new DiscoveryScheduler({connections,inventory,provider,reconciler:verificationReconciler,performance,intervalMs:Number(process.env.NUVRION_DISCOVERY_INTERVAL_MS??300000),onError:(error,connection)=>console.error(JSON.stringify({level:'error',event:'discovery.failed',connectionId:connection.id,error:error.message}))});
 const loginLimiter=new LoginRateLimiter({limit:Number(process.env.NUVRION_LOGIN_ATTEMPT_LIMIT??5),windowMs:Number(process.env.NUVRION_LOGIN_WINDOW_MS??300000),...(process.env.NUVRION_MASTER_KEY?{keySecret:process.env.NUVRION_MASTER_KEY}:{})});
@@ -133,7 +133,7 @@ export async function handler(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/v1/mock/operations') {
       const p=await requireAuth(req,res,correlationId,'resource.operate');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
       const input = await body(req);
-      if (!['start','stop','restart'].includes(input.operation)) return problem(res, 422, 'NUV_OPERATION_INVALID', 'operation must be start, stop, or restart.', correlationId);
+      if (!['start','stop','restart','pause'].includes(input.operation)) return problem(res, 422, 'NUV_OPERATION_INVALID', 'operation must be start, stop, restart, or pause.', correlationId);
       const key = req.headers['idempotency-key'];
       if (!key) return problem(res, 400, 'NUV_IDEMPOTENCY_REQUIRED', 'Idempotency-Key is required.', correlationId);
       const { task, created } = await store.create({ operation: input.operation, targetId: input.targetId ?? 'mock-vm-001', correlationId, idempotencyKey: key });

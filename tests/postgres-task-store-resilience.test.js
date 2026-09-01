@@ -15,7 +15,7 @@ test('an idle PostgreSQL pool error marks the store unhealthy without becoming a
 test('readiness rejects traffic during a database outage and returns healthy after recovery',async()=>{
   let available=false;
   const store={status:'healthy',pool:{async query(sql){if(!available)throw Object.assign(new Error('database unavailable'),{code:'ECONNREFUSED'});return sql==='SELECT 1'?{rowCount:1}:{rowCount:7};}}};
-  const service=new ReadinessService({production:true,store,broker:{status:'healthy'},worker:{status:'healthy'},agentMaintenance:{timer:{}},requiredMigration:'0023'});
+  const service=new ReadinessService({production:true,store,broker:{status:'healthy'},worker:{status:'healthy'},agentMaintenance:{timer:{}},requiredMigration:'0024'});
   const unavailable=await service.check();
   assert.equal(unavailable.status,'not_ready');
   assert.equal(unavailable.components.database,'unhealthy');
