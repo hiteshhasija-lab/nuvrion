@@ -848,3 +848,13 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 .shell.sidebar-collapsed #navigation button:hover,
 .shell.sidebar-collapsed #navigation button.active{border-color:transparent!important;background:transparent!important;box-shadow:none!important}
 .shell.sidebar-collapsed #navigation button>.nav-icon{display:grid!important;place-items:center!important;margin:0 auto!important}
+
+/* v0.1.105 geometrically centered collapsed sidebar icon rail. */
+.shell.sidebar-collapsed .sidebar-brand{gap:0!important}
+.shell.sidebar-collapsed .sidebar-brand>div{display:none!important}
+.shell.sidebar-collapsed #navigation{
+  overflow:visible!important;
+  scrollbar-gutter:auto!important;
+  justify-items:center!important;
+}
+.shell.sidebar-collapsed .sidebar-footer{justify-content:center!important}
