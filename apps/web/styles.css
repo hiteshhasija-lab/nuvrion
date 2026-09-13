@@ -731,10 +731,13 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 #platform-metrics>div{padding:6px 12px}
 #navigation>.sidebar-vm-group:not(.expanded),#navigation>.sidebar-monitor-group:not(.expanded){row-gap:0}
 #navigation .sidebar-vm-list:empty,#navigation .sidebar-monitor-list:empty{display:none}
+#navigation>.sidebar-vm-group:not(.expanded) .sidebar-vm-list,#navigation>.sidebar-monitor-group:not(.expanded) .sidebar-monitor-list{margin-block:0}
 
 /* One compact row rhythm across every Monitor tab. */
-#monitor-content .monitor-pressure-heading{min-height:34px;padding:6px 13px}
-#monitor-content .monitor-pressure-row{min-height:44px;padding:6px 13px;line-height:1.2}
-#monitor-content .monitor-history thead tr,#monitor-content .monitor-history th{height:34px}
-#monitor-content .monitor-history tbody tr{height:44px}
-#monitor-content .monitor-history td{padding:6px 15px;line-height:1.2}
+#monitor-content .monitor-pressure-heading{min-height:27px;padding:3px 13px}
+#monitor-content .monitor-pressure-row{min-height:35px;padding:4px 13px;line-height:1.1}
+#monitor-content .monitor-pressure-row>span:first-child small{margin-top:0;line-height:1.05}
+#monitor-content .monitor-history thead tr,#monitor-content .monitor-history th{height:27px}
+#monitor-content .monitor-history tbody tr{height:35px}
+#monitor-content .monitor-history td{padding:4px 15px;line-height:1.1}
+#monitor-content .monitor-history td small.block{margin-top:0;line-height:1.05}
