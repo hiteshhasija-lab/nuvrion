@@ -1,7 +1,9 @@
 const login=document.getElementById('login'),brand=login?.querySelector('.login-brand');
-if(login&&brand&&!login.querySelector('.login-intro')){
-  const intro=document.createElement('div');intro.className='login-intro';brand.before(intro);intro.append(brand);
-  intro.insertAdjacentHTML('beforeend','<div class="login-showcase"><p class="eyebrow">HYBRID OPERATIONS, ONE VIEW</p><h2>Operate your infrastructure with clarity.</h2><p>Monitor virtual machines, investigate health, and perform controlled lifecycle actions across every connected platform.</p><div class="login-capabilities"><div><span aria-hidden="true">◇</span><span><strong>Unified visibility</strong><small>Live inventory and performance insight</small></span></div><div><span aria-hidden="true">↗</span><span><strong>Controlled operations</strong><small>Provider-aware actions with verification</small></span></div><div><span aria-hidden="true">✓</span><span><strong>Auditable by design</strong><small>Every administrative action recorded</small></span></div></div></div>');
+if(login&&brand){
+  login.classList.add('login-reference','login-image-background');
+  brand.hidden=true;
+  const panel=document.getElementById('login-panel'),eyebrow=panel?.querySelector(':scope>.eyebrow'),heading=panel?.querySelector(':scope>h1');if(eyebrow)eyebrow.textContent='Welcome to';if(heading){heading.textContent='Nuvrion';heading.insertAdjacentHTML('afterend','<p class="login-signin-copy">Sign in to your account</p>')}
+  const usernameField=document.querySelector('#login-form [name="username"]'),passwordField=document.querySelector('#login-form [name="password"]');if(usernameField)usernameField.placeholder='Username';if(passwordField)passwordField.placeholder='Password';
 }
 const loginForm=document.getElementById('login-form'),username=loginForm?.elements?.username,password=loginForm?.elements?.password,remember=document.getElementById('remember-login'),passwordToggle=document.getElementById('toggle-login-password'),rememberKey='nuvrion.login.rememberedUsername';
 if(username&&remember){const saved=localStorage.getItem(rememberKey);if(saved){username.value=saved;remember.checked=true}loginForm.addEventListener('submit',()=>{if(remember.checked)localStorage.setItem(rememberKey,String(username.value??'').trim());else localStorage.removeItem(rememberKey)})}

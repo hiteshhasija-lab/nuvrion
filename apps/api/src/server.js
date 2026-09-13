@@ -265,6 +265,10 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'login-polish.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/assets/nuvrion-login-background.png') {
+      const image = await readFile(resolve(webRoot, 'assets/nuvrion-login-background.png'));
+      res.writeHead(200, securityHeaders('image/png','public, max-age=86400')); return res.end(image);
+    }
     if (req.method === 'GET' && url.pathname === '/styles.css') {
       const css = await readFile(resolve(webRoot, 'styles.css'));
       res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
