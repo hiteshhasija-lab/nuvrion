@@ -144,7 +144,7 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .vm-toolbar-action.edit,.vm-toolbar-action.actions { color:#334b51; }
 .vm-toolbar-action.actions { position:relative; }
 .sidebar-vm-group>button,.sidebar-monitor-group>button { display:flex;align-items:center;width:100%; }
-.sidebar-vm-group .nav-label,.sidebar-monitor-group .nav-label { width:auto!important;min-width:0;flex:1;font-size:14px;font-weight:600;line-height:normal;text-align:left; }
+.sidebar-vm-group .nav-label,.sidebar-monitor-group .nav-label { width:auto!important;min-width:0;flex:1;font-size:12px;font-weight:680;line-height:normal;text-align:left; }
 .sidebar-vm-group .nav-chevron,.sidebar-monitor-group .nav-chevron { width:20px!important;font-size:12px;text-align:center;transition:transform .32s cubic-bezier(.4,0,.2,1); }
 .sidebar-vm-group:not(.expanded) .nav-chevron,.sidebar-monitor-group:not(.expanded) .nav-chevron { transform:rotate(-90deg); }
 .sidebar-vm-group:not(.expanded) .sidebar-vm-list { max-height:0;padding-top:0;padding-bottom:0;opacity:0;transform:translateY(-7px);visibility:hidden;pointer-events:none;transition:max-height .32s cubic-bezier(.4,0,.2,1),opacity .18s ease,transform .32s cubic-bezier(.4,0,.2,1),padding .32s cubic-bezier(.4,0,.2,1),visibility 0s linear .32s; }
@@ -179,8 +179,8 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .bulk-count { padding:0 8px;color:var(--muted);font-size:10px;white-space:nowrap; }
 .vm-live-metrics>div { position:relative;min-height:48px;padding:7px 45px 7px 12px; }
 .vm-live-metrics svg { position:absolute;right:8px;top:50%;width:30px;height:30px;transform:translateY(-50%); }
-/* Expanded desktop sidebar reduced by 10%; the compact breakpoint remains unchanged. */
-@media (min-width:1051px) { .shell{grid-template-columns:240px 1fr} aside{width:240px} }
+/* Expanded desktop sidebar restored; the compact breakpoint remains unchanged. */
+@media (min-width:1051px) { .shell{grid-template-columns:266px 1fr} aside{width:266px} }
 @media (max-width:1450px) {
   #view-inventory:not(.detail-mode) .vm-workspace-head { display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-items:stretch; }
   #view-inventory:not(.detail-mode) .vm-action-toolbar { width:100%;min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden; }
