@@ -712,3 +712,14 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
   .login-note{margin-top:11px}
 }
 @media(max-width:980px){.login-view{overflow:auto}}
+
+/* v0.1.94 sidebar layering, anchored release card, and denser user rows. */
+.shell aside{z-index:30;padding-bottom:10px}
+.sidebar-collapse{z-index:40}
+#user-table td{padding-top:8px;padding-bottom:8px}
+#user-table select{height:30px;padding:4px 9px}
+#user-table .row-actions button{min-height:28px;padding:4px 7px}
+.sidebar-footer{margin:auto 4px 0}
+.sidebar-footer>div{display:grid;gap:4px;align-content:center}
+.sidebar-footer strong,.sidebar-footer small,.sidebar-footer .sidebar-copyright{margin:0!important;padding:0!important;border:0!important;line-height:1.2}
+.shell.sidebar-collapsed .sidebar-footer{margin:auto 0 0}

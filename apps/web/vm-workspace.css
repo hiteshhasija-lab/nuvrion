@@ -179,7 +179,8 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .bulk-count { padding:0 8px;color:var(--muted);font-size:10px;white-space:nowrap; }
 .vm-live-metrics>div { position:relative;min-height:48px;padding:7px 45px 7px 12px; }
 .vm-live-metrics svg { position:absolute;right:8px;top:50%;width:30px;height:30px;transform:translateY(-50%); }
-@media (min-width:1051px) { .shell{grid-template-columns:266px 1fr} aside{width:266px} }
+/* Expanded desktop sidebar reduced by 10%; the compact breakpoint remains unchanged. */
+@media (min-width:1051px) { .shell{grid-template-columns:240px 1fr} aside{width:240px} }
 @media (max-width:1450px) {
   #view-inventory:not(.detail-mode) .vm-workspace-head { display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-items:stretch; }
   #view-inventory:not(.detail-mode) .vm-action-toolbar { width:100%;min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden; }
