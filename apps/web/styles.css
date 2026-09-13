@@ -775,7 +775,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 @media(max-width:940px){.login-view.login-reference{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;overflow:auto}.login-masthead nav{display:none}.login-command-center{grid-column:1;grid-template-columns:minmax(220px,.7fr) minmax(390px,1.3fr)}.login-reference .login-card{grid-column:1;justify-self:center;width:min(520px,100%);max-height:none}.login-benefits{grid-template-columns:repeat(3,1fr)}.login-benefits>div{min-height:48px}.login-benefits>div:nth-child(3){border-right:0}}
 @media(max-width:680px){.login-view.login-reference{padding:17px 15px 24px}.login-masthead{justify-content:center}.login-masthead .login-brand strong{font-size:21px}.login-command-center{display:block}.login-pitch{max-width:none;text-align:center}.login-pitch>p:last-of-type{margin-inline:auto}.login-pitch h1{font-size:34px}.login-edge-cards{grid-template-columns:1fr 1fr}.login-edge-cards>div{width:100%;text-align:left}.login-network{display:none}.login-reference .login-card{padding:25px 20px}.login-benefits{grid-template-columns:1fr 1fr}.login-benefits>div{justify-content:flex-start;border-bottom:1px solid rgba(47,226,224,.18)}.login-benefits>div:nth-child(odd){border-right:1px solid rgba(47,226,224,.42)}.login-benefits>div:nth-child(even){border-right:0}}
 
-/* v0.1.100 approved image-backed login page. */
+/* v0.1.101 approved image-backed login page with functional overlay. */
 .login-view.login-reference.login-image-background{
   display:grid!important;
   grid-template-columns:minmax(0,1fr) clamp(370px,26.5vw,455px)!important;
