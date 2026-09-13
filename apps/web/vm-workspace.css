@@ -144,7 +144,7 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .vm-toolbar-action.edit,.vm-toolbar-action.actions { color:#334b51; }
 .vm-toolbar-action.actions { position:relative; }
 .sidebar-vm-group>button,.sidebar-monitor-group>button { display:flex;align-items:center;width:100%; }
-.sidebar-vm-group .nav-label,.sidebar-monitor-group .nav-label { width:auto!important;min-width:0;flex:1;font-size:12px;font-weight:680;line-height:normal;text-align:left; }
+.sidebar-vm-group .nav-label,.sidebar-monitor-group .nav-label { width:auto!important;min-width:0;flex:1;font-size:13px;font-weight:680;line-height:normal;text-align:left; }
 .sidebar-vm-group .nav-chevron,.sidebar-monitor-group .nav-chevron { width:20px!important;font-size:12px;text-align:center;transition:transform .32s cubic-bezier(.4,0,.2,1); }
 .sidebar-vm-group:not(.expanded) .nav-chevron,.sidebar-monitor-group:not(.expanded) .nav-chevron { transform:rotate(-90deg); }
 .sidebar-vm-group:not(.expanded) .sidebar-vm-list { max-height:0;padding-top:0;padding-bottom:0;opacity:0;transform:translateY(-7px);visibility:hidden;pointer-events:none;transition:max-height .32s cubic-bezier(.4,0,.2,1),opacity .18s ease,transform .32s cubic-bezier(.4,0,.2,1),padding .32s cubic-bezier(.4,0,.2,1),visibility 0s linear .32s; }

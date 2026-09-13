@@ -714,7 +714,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 @media(max-width:980px){.login-view{overflow:auto}}
 
 /* v0.1.94 sidebar layering, anchored release card, and denser user rows. */
-.shell aside{z-index:30;padding-bottom:10px}
+.shell aside{z-index:30;padding-bottom:10px;overflow:visible}
 .sidebar-collapse{z-index:40}
 #user-table td{padding-top:8px;padding-bottom:8px}
 #user-table select{height:30px;padding:4px 9px}
@@ -723,3 +723,9 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 .sidebar-footer>div{display:grid;gap:4px;align-content:center}
 .sidebar-footer strong,.sidebar-footer small,.sidebar-footer .sidebar-copyright{margin:0!important;padding:0!important;border:0!important;line-height:1.2}
 .shell.sidebar-collapsed .sidebar-footer{margin:auto 0 0}
+
+/* v0.1.96 sidebar legibility and compact Platform Health counters. */
+#navigation .sidebar-section-label{font-size:10px;letter-spacing:.15em}
+#navigation>button,#navigation>.sidebar-vm-group>button,#navigation>.sidebar-monitor-group>button{font-size:13px}
+#user-table [data-user-sessions],#user-table [data-user-recovery]{font-size:11px!important;line-height:1.2;font-weight:650}
+#platform-metrics>div{padding:8px 12px}
