@@ -786,7 +786,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
   min-height:100vh;
   padding:clamp(20px,2.8vw,46px) clamp(22px,2vw,36px)!important;
   overflow:auto;
-  background:url("/assets/nuvrion-login-background.png") center top/96% auto no-repeat #010f18!important;
+  background:url("/assets/nuvrion-login-background.png") center top/99% auto no-repeat #010f18!important;
 }
 .login-view.login-reference.login-image-background::before,
 .login-view.login-reference.login-image-background::after{display:none!important}
@@ -858,3 +858,9 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
   justify-items:center!important;
 }
 .shell.sidebar-collapsed .sidebar-footer{justify-content:center!important}
+
+/* v0.1.106 optical alignment for grouped icons and wider login artwork. */
+.shell.sidebar-collapsed #navigation>.sidebar-vm-group>button>.nav-icon,
+.shell.sidebar-collapsed #navigation>.sidebar-monitor-group>button>.nav-icon{
+  transform:translateX(-2px)!important;
+}
