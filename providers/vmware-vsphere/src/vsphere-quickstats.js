@@ -1,0 +1,23 @@
+const escapeXml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');
+const decodeXml=value=>String(value??'').replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&quot;','"').replaceAll('&apos;',"'").replaceAll('&amp;','&');
+const tag=(xml,name)=>{const match=String(xml).match(new RegExp(`<(?:\\w+:)?${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:\\w+:)?${name}>`,'i'));return match?decodeXml(match[1].replace(/<[^>]+>/g,'').trim()):null;};
+const ref=(xml,name)=>{const match=String(xml).match(new RegExp(`<(?:\\w+:)?${name}(?:\\s[^>]*)?>([^<]+)<\\/(?:\\w+:)?${name}>`,'i'));return match?decodeXml(match[1].trim()):null;};
+const numberOrNull=value=>value==null||value===''||!Number.isFinite(Number(value))?null:Number(value);
+const property=(xml,path)=>{const sets=String(xml).match(/<(?:\w+:)?propSet(?:\s[^>]*)?>[\s\S]*?<\/(?:\w+:)?propSet>/gi)??[];for(const set of sets)if(tag(set,'name')===path)return tag(set,'val');return null;};
+
+export async function collectVsphereQuickStats({endpointUri,credential,vmIds,fetchImpl=fetch,timeoutMs=15000}){
+  if(!vmIds.length)return new Map();
+  const base=new URL(endpointUri),envelope=body=>`<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25"><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`;
+  const soap=async(body,cookie=null)=>{const headers={accept:'text/xml','content-type':'text/xml; charset=utf-8',soapaction:'urn:vim25/8.0.0.0'};if(cookie)headers.cookie=cookie;const response=await fetchImpl(new URL('/sdk',base),{method:'POST',headers,body:envelope(body),signal:AbortSignal.timeout(timeoutMs)}),xml=await response.text();if(!response.ok||/<(?:\w+:)?Fault[\s>]/i.test(xml))throw Error(tag(xml,'faultstring')??`vSphere Web Services API returned HTTP ${response.status}.`);const setCookie=response.headers?.getSetCookie?.()[0]??response.headers?.get?.('set-cookie')??null;return {xml,cookie:setCookie?.split(';')[0]??cookie};};
+  let session=null;
+  try{
+    const service=await soap('<vim25:RetrieveServiceContent><vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this></vim25:RetrieveServiceContent>'),sessionManager=ref(service.xml,'sessionManager'),propertyCollector=ref(service.xml,'propertyCollector');
+    if(!sessionManager||!propertyCollector)return new Map();
+    const login=await soap(`<vim25:Login><vim25:_this type="SessionManager">${escapeXml(sessionManager)}</vim25:_this><vim25:userName>${escapeXml(credential.username)}</vim25:userName><vim25:password>${escapeXml(credential.password)}</vim25:password></vim25:Login>`,service.cookie);
+    session={cookie:login.cookie,sessionManager};
+    const paths=['summary.quickStats.overallCpuUsage','summary.quickStats.hostMemoryUsage','summary.quickStats.guestMemoryUsage','summary.quickStats.uptimeSeconds','summary.storage.committed','summary.storage.uncommitted'],pathSet=paths.map(path=>`<vim25:pathSet>${path}</vim25:pathSet>`).join(''),stats=new Map();
+    for(let start=0;start<vmIds.length;start+=200){const batch=vmIds.slice(start,start+200),objectSet=batch.map(id=>`<vim25:objectSet><vim25:obj type="VirtualMachine">${escapeXml(id)}</vim25:obj><vim25:skip>false</vim25:skip></vim25:objectSet>`).join(''),result=await soap(`<vim25:RetrievePropertiesEx><vim25:_this type="PropertyCollector">${escapeXml(propertyCollector)}</vim25:_this><vim25:specSet><vim25:propSet><vim25:type>VirtualMachine</vim25:type><vim25:all>false</vim25:all>${pathSet}</vim25:propSet>${objectSet}</vim25:specSet><vim25:options/></vim25:RetrievePropertiesEx>`,session.cookie),blocks=String(result.xml).match(/<(?:\w+:)?objects(?:\s[^>]*)?>[\s\S]*?<\/(?:\w+:)?objects>/gi)??[];for(const block of blocks){const id=ref(block,'obj');if(!id)continue;stats.set(id,{cpuUsageMhz:numberOrNull(property(block,'summary.quickStats.overallCpuUsage')),hostMemoryUsageMiB:numberOrNull(property(block,'summary.quickStats.hostMemoryUsage')),guestMemoryUsageMiB:numberOrNull(property(block,'summary.quickStats.guestMemoryUsage')),uptimeSeconds:numberOrNull(property(block,'summary.quickStats.uptimeSeconds')),committedStorageBytes:numberOrNull(property(block,'summary.storage.committed')),uncommittedStorageBytes:numberOrNull(property(block,'summary.storage.uncommitted'))});}}
+    return stats;
+  }catch{return new Map();}
+  finally{if(session)try{await soap(`<vim25:Logout><vim25:_this type="SessionManager">${escapeXml(session.sessionManager)}</vim25:_this></vim25:Logout>`,session.cookie);}catch{/* collection is best effort */}}
+}

@@ -1,0 +1,2 @@
+[hidden] { display: none !important; }
+.connection-actions { display: grid; gap: 8px; min-width: 84px; }

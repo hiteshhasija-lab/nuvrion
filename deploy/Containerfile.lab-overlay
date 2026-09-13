@@ -1,0 +1,14 @@
+ARG BASE_IMAGE
+ARG RELEASE_VERSION=0.1.50
+FROM ${BASE_IMAGE}
+ARG RELEASE_VERSION
+COPY --chown=node:node apps/ /opt/nuvrion/apps/
+COPY --chown=node:node database/ /opt/nuvrion/database/
+COPY --chown=node:node modules/ /opt/nuvrion/modules/
+COPY --chown=node:node providers/ /opt/nuvrion/providers/
+USER root
+RUN printf '%s\n' "${RELEASE_VERSION}" > /opt/nuvrion/RELEASE_VERSION \
+ && chown node:node /opt/nuvrion/RELEASE_VERSION
+USER node
+ENV NUVRION_RELEASE_VERSION=${RELEASE_VERSION}
+LABEL org.opencontainers.image.version=${RELEASE_VERSION}
