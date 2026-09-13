@@ -822,3 +822,29 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 .shell.sidebar-collapsed #navigation .nav-chevron,
 .shell.sidebar-collapsed #navigation .sidebar-vm-list,
 .shell.sidebar-collapsed #navigation .sidebar-monitor-list{display:none!important}
+
+/* v0.1.104 clean single-column collapsed navigation. */
+.shell.sidebar-collapsed #navigation{justify-items:center!important;align-items:start!important}
+.shell.sidebar-collapsed #navigation>.sidebar-vm-group,
+.shell.sidebar-collapsed #navigation>.sidebar-monitor-group{width:38px!important;justify-self:center!important;justify-items:center!important;row-gap:0!important}
+.shell.sidebar-collapsed #navigation>button,
+.shell.sidebar-collapsed #navigation>.sidebar-vm-group>button,
+.shell.sidebar-collapsed #navigation>.sidebar-monitor-group>button{
+  justify-self:center!important;
+  width:38px!important;
+  min-width:38px!important;
+  max-width:38px!important;
+  height:40px!important;
+  min-height:40px!important;
+  padding:4px 0!important;
+  border-color:transparent!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  overflow:visible!important;
+}
+.shell.sidebar-collapsed #navigation>button::before,
+.shell.sidebar-collapsed #navigation>.sidebar-vm-group>button::before,
+.shell.sidebar-collapsed #navigation>.sidebar-monitor-group>button::before{display:none!important}
+.shell.sidebar-collapsed #navigation button:hover,
+.shell.sidebar-collapsed #navigation button.active{border-color:transparent!important;background:transparent!important;box-shadow:none!important}
+.shell.sidebar-collapsed #navigation button>.nav-icon{display:grid!important;place-items:center!important;margin:0 auto!important}
