@@ -732,6 +732,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 #navigation>.sidebar-vm-group:not(.expanded),#navigation>.sidebar-monitor-group:not(.expanded){row-gap:0}
 #navigation .sidebar-vm-list:empty,#navigation .sidebar-monitor-list:empty{display:none}
 #navigation>.sidebar-vm-group:not(.expanded) .sidebar-vm-list,#navigation>.sidebar-monitor-group:not(.expanded) .sidebar-monitor-list{margin-block:0}
+#navigation>.sidebar-vm-group:not(.expanded) .sidebar-vm-list,#navigation>.sidebar-monitor-group:not(.expanded) .sidebar-monitor-list{display:none!important}
 
 /* One compact row rhythm across every Monitor tab. */
 #monitor-content .monitor-pressure-heading{min-height:27px;padding:3px 13px}
