@@ -70,7 +70,7 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .vm-info-panel { padding:0;overflow:hidden; }
 .vm-info-panel h3 { margin:0;padding:8px 11px;background:#edf1f2;border-bottom:1px solid var(--line);font-size:11px; }
 .vm-info-panel dl { display:grid;grid-template-columns:125px 1fr;margin:0;font-size:10px; }
-.vm-info-panel dt,.vm-info-panel dd { margin:0;padding:8px 11px;border-top:1px solid #edf0f1; }
+.vm-info-panel dt,.vm-info-panel dd { margin:0;padding:7px 11px;border-top:1px solid #edf0f1; }
 .vm-info-panel dt { background:#edf6f8;color:#42565b; }
 .vm-info-panel dd { overflow-wrap:anywhere; }
 .vm-info-panel .section-row { grid-column:1/-1;background:#e4f1f5;font-weight:750;color:#254f59; }
@@ -178,16 +178,21 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .bulk-count { padding:0 8px;color:var(--muted);font-size:10px;white-space:nowrap; }
 .vm-live-metrics>div { position:relative;min-height:54px;padding-right:45px; }
 .vm-live-metrics svg { position:absolute;right:8px;top:50%;width:30px;height:30px;transform:translateY(-50%); }
-@media (min-width:1051px) { .shell{grid-template-columns:280px 1fr} aside{width:280px} }
+@media (min-width:1051px) { .shell{grid-template-columns:266px 1fr} aside{width:266px} }
 @media (max-width:1450px) {
   #view-inventory:not(.detail-mode) .vm-workspace-head { display:grid;grid-template-columns:minmax(0,1fr);gap:9px;align-items:stretch; }
-  #view-inventory:not(.detail-mode) .vm-action-toolbar { width:100%;min-width:0;flex-wrap:wrap;overflow:visible; }
+  #view-inventory:not(.detail-mode) .vm-action-toolbar { width:100%;min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden; }
   #view-inventory:not(.detail-mode) .vm-filter-toolbar { width:min(100%,420px);justify-self:end;flex:none; }
 }
 @media (max-width:1050px) { .vm-filter-toolbar{grid-template-columns:minmax(140px,1fr) 115px}.vm-detail-hero{grid-template-columns:170px 1fr}.vm-detail-hero .vm-live-metrics{grid-column:1/-1;grid-template-columns:repeat(3,1fr)} }
 @media (max-width:700px) { .vm-filter-toolbar{grid-template-columns:minmax(120px,1fr) 105px}.vm-detail-hero,.vm-detail-panels{grid-template-columns:1fr} }
 .vm-filter-card .vm-filter-toolbar { width:100%!important;max-width:none!important;flex:1 1 100%;grid-template-columns:repeat(2,minmax(0,1fr))!important;column-gap:14px!important;justify-self:stretch!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important; }
 .vm-filter-card .search,.vm-filter-card .search input,.vm-filter-card .vm-filter-toolbar>select { border-radius:11px;background-clip:padding-box; }
+
+/* Keep all single- and multi-VM actions on one horizontal toolbar row. */
+.vm-action-toolbar { width:100%;flex-wrap:nowrap!important;overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;scrollbar-width:none; }
+.vm-action-toolbar::-webkit-scrollbar { display:none; }
+.vm-action-toolbar .vm-toolbar-action,.vm-action-toolbar .bulk-count { flex:0 0 auto; }
 
 /* Keep Performance VM details consistent with Alerts and Tasks table typography. */
 .monitor-pressure-row { font-size:12px; }
