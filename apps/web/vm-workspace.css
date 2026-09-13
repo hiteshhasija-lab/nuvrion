@@ -188,3 +188,8 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 @media (max-width:700px) { .vm-filter-toolbar{grid-template-columns:minmax(120px,1fr) 105px}.vm-detail-hero,.vm-detail-panels{grid-template-columns:1fr} }
 .vm-filter-card .vm-filter-toolbar { width:100%!important;max-width:none!important;flex:1 1 100%;grid-template-columns:repeat(2,minmax(0,1fr))!important;column-gap:14px!important;justify-self:stretch!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important; }
 .vm-filter-card .search,.vm-filter-card .search input,.vm-filter-card .vm-filter-toolbar>select { border-radius:11px;background-clip:padding-box; }
+
+/* Keep Performance VM details consistent with Alerts and Tasks table typography. */
+.monitor-pressure-row { font-size:12px; }
+.monitor-pressure-row>span:first-child strong { font-size:12px; }
+.monitor-pressure-row>span:first-child small { font-size:10px; }
