@@ -314,6 +314,9 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 #user-table .row-actions button.primary:hover,#user-table [data-user-save]:hover{color:#fff!important;background:linear-gradient(145deg,#2bc5b6,#116e69)}
 #user-table [data-user-sessions],#user-table [data-user-recovery]{color:#08655f!important;background:transparent;border-color:transparent;font-weight:650}
 #user-table [data-user-sessions]:hover,#user-table [data-user-recovery]:hover{color:#043f3b!important;background:rgba(34,183,169,.10)}
+#user-table td{padding-top:10px;padding-bottom:10px}
+#user-table select{height:32px;padding:5px 10px}
+#user-table .row-actions button{min-height:30px;padding:5px 7px}
 
 /* Reference-style resource SVGs in expanded VM summary rows. */
 .detail-metric-label{display:inline-flex;align-items:center;gap:7px;min-width:0}
@@ -640,6 +643,48 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 @media(max-width:980px){.login-topology{margin-top:22px}.login-showcase h2 br{display:none}}
 @media(max-width:620px){.login-topology svg{min-width:560px;transform:translateX(-54px)}.login-topology{max-height:240px}.topology-status{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(3,26,36,.88));padding-top:24px}.login-capability-labels{grid-template-columns:1fr}.login-capability-labels span{padding:8px}.login-showcase h2 br{display:block}}
 @media(prefers-reduced-motion:reduce){.topology-routes path,.topology-core .core-ring{animation:none}.topology-packet,.migration-workload{display:none}}
+
+/* Structured operations sidebar with compact groups and a precise active rail. */
+.shell aside{
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 18% 4%,rgba(45,204,187,.13),transparent 25%),
+    radial-gradient(circle at 80% 88%,rgba(22,125,119,.20),transparent 34%),
+    linear-gradient(180deg,#061a2b 0%,#082d38 58%,#0a4142 100%);
+  border-right:1px solid rgba(105,224,210,.20);
+  box-shadow:12px 0 38px rgba(0,12,24,.14);
+}
+.shell aside::before{content:"";position:absolute;inset:0 0 auto;height:150px;pointer-events:none;background:linear-gradient(180deg,rgba(117,228,215,.055),transparent)}
+.sidebar-brand{position:relative;min-height:70px;margin:0 4px;padding:0 9px 18px;border-bottom:1px solid rgba(130,234,222,.13)}
+.sidebar-brand .brand-mark{flex:0 0 42px;width:42px;height:42px;border:1px solid rgba(173,255,245,.38);border-radius:13px;background:linear-gradient(145deg,#67ded0,#16877f);box-shadow:0 9px 24px rgba(18,165,153,.24),inset 0 1px rgba(255,255,255,.48);color:#052e32}
+.sidebar-brand strong{font-size:14px;letter-spacing:.085em}.sidebar-brand small{margin-top:3px;font-size:9px;letter-spacing:.035em}
+#navigation{position:relative;display:grid;align-content:start;row-gap:5px;margin-top:17px;margin-bottom:22px;padding:0 4px 8px;overflow-y:auto;overscroll-behavior:contain}
+#navigation .sidebar-section-label{margin:13px 10px 4px;color:rgba(161,220,216,.62);font-size:8px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;line-height:1}
+#navigation .sidebar-section-label:first-child{margin-top:1px}
+#navigation>button,#navigation>.sidebar-vm-group>button,#navigation>.sidebar-monitor-group>button{display:grid;grid-template-columns:34px minmax(0,1fr) 16px;align-items:center;column-gap:9px;width:100%;min-height:43px;padding:5px 9px;border-radius:12px!important;font-size:12px;font-weight:680;line-height:1.15}
+#navigation>button::before,#navigation>.sidebar-vm-group>button::before,#navigation>.sidebar-monitor-group>button::before{content:"";position:absolute;left:-5px;top:10px;bottom:10px;width:3px;border-radius:0 4px 4px 0;background:#78e7da;opacity:0;transform:scaleY(.45);transition:opacity .18s ease,transform .18s ease}
+#navigation>button.active::before,#navigation>.sidebar-vm-group>button.active::before,#navigation>.sidebar-monitor-group>button.active::before{opacity:1;transform:scaleY(1)}
+#navigation .nav-icon{width:31px!important;height:31px;border:1px solid transparent;border-radius:9px;background:rgba(213,255,250,.045);transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease}
+#navigation .nav-icon svg{width:21px;height:21px;stroke-width:1.9}
+#navigation button:hover .nav-icon{background:rgba(89,218,204,.10);border-color:rgba(122,229,217,.13)}
+#navigation button.active .nav-icon{background:rgba(218,255,250,.13);border-color:rgba(167,247,237,.22);box-shadow:inset 0 1px rgba(255,255,255,.10),0 5px 14px rgba(0,16,24,.14)}
+#navigation>button.active,#navigation>.sidebar-vm-group>button.active,#navigation>.sidebar-monitor-group>button.active{background:linear-gradient(100deg,rgba(27,149,140,.70),rgba(20,106,108,.48));border-color:rgba(114,221,209,.28);box-shadow:0 8px 22px rgba(0,0,0,.13),inset 0 1px rgba(255,255,255,.11)}
+#navigation .nav-chevron{width:16px!important;color:rgba(198,237,233,.70);font-size:14px!important;text-align:center}
+#navigation>.sidebar-vm-group,#navigation>.sidebar-monitor-group{row-gap:4px}
+#navigation .sidebar-vm-list{margin:0 4px 2px 17px;padding:4px 0 4px 13px;border-left:1px solid rgba(117,228,215,.16)}
+#navigation .sidebar-vm-list>button{min-height:30px;padding:4px 7px;border-radius:8px;font-size:9px}
+.sidebar-footer{margin:0 4px 1px;padding:12px 13px;border-color:rgba(126,230,218,.20);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(4,35,43,.24));box-shadow:inset 0 1px rgba(255,255,255,.10),0 12px 30px rgba(0,10,19,.20)}
+.sidebar-footer .status-dot{width:9px;height:9px;box-shadow:0 0 0 5px rgba(68,201,134,.10),0 0 14px rgba(68,201,134,.42)}
+.sidebar-footer strong{font-size:10px}.sidebar-footer small{font-size:9px}.sidebar-footer .sidebar-copyright{margin-top:6px;padding-top:6px;border-top:1px solid rgba(157,230,222,.10);font-size:7px}
+.shell.sidebar-collapsed .sidebar-section-label{display:none}
+.shell.sidebar-collapsed .sidebar-brand{min-height:61px;margin:0;padding:0 0 15px;border-bottom-color:rgba(130,234,222,.10)}
+.shell.sidebar-collapsed .sidebar-brand .brand-mark{flex-basis:38px;width:38px;height:38px;border-radius:11px}
+.shell.sidebar-collapsed #navigation{align-items:center;row-gap:8px;margin-top:14px;padding-inline:0}
+.shell.sidebar-collapsed #navigation>button,.shell.sidebar-collapsed #navigation>.sidebar-vm-group>button,.shell.sidebar-collapsed #navigation>.sidebar-monitor-group>button{display:flex;min-height:40px;padding:4px 0}
+.shell.sidebar-collapsed #navigation .nav-icon{width:31px!important;height:31px}
+.shell.sidebar-collapsed #navigation>button::before,.shell.sidebar-collapsed #navigation>.sidebar-vm-group>button::before,.shell.sidebar-collapsed #navigation>.sidebar-monitor-group>button::before{left:-6px;top:8px;bottom:8px}
+.shell.sidebar-collapsed .sidebar-footer{margin-inline:0;padding:10px}
+@media(prefers-reduced-motion:reduce){#navigation>button::before,#navigation>.sidebar-vm-group>button::before,#navigation>.sidebar-monitor-group>button::before,#navigation .nav-icon{transition:none}}
 
 /* Preserve the accepted v0.1.54 login composition. */
 .login-view{grid-template-columns:minmax(360px,1.08fr) minmax(390px,.92fr);gap:clamp(44px,7vw,120px);padding:clamp(34px,6vw,92px);background:radial-gradient(circle at 14% 18%,rgba(74,222,205,.25),transparent 28%),radial-gradient(circle at 78% 88%,rgba(35,147,143,.20),transparent 30%),linear-gradient(135deg,#041523 0%,#082b38 52%,#0b4b49 100%)}
