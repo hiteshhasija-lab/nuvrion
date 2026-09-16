@@ -205,6 +205,7 @@ export async function handler(req, res) {
       const css = await readFile(resolve(webRoot, 'visibility.css'));
       res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
     }
+    if(req.method==='GET'&&url.pathname.startsWith('/assets/')){const relative=url.pathname.slice('/assets/'.length);const assetTypes={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.svg':'image/svg+xml','.webp':'image/webp'};const ext=relative.slice(relative.lastIndexOf('.'));if(!relative||relative.includes('..')||!assetTypes[ext])return problem(res,404,'NUV_ROUTE_NOT_FOUND','Route was not found.',correlationId);const assetsRoot=resolve(webRoot,'assets');const file=resolve(assetsRoot,relative);if(!file.startsWith(`${assetsRoot}/`))return problem(res,404,'NUV_ROUTE_NOT_FOUND','Route was not found.',correlationId);try{const asset=await readFile(file);res.writeHead(200,securityHeaders(assetTypes[ext],'public, max-age=86400'));return res.end(asset);}catch{return problem(res,404,'NUV_ROUTE_NOT_FOUND','Route was not found.',correlationId);}}
     return problem(res, 404, 'NUV_ROUTE_NOT_FOUND', 'Route was not found.', correlationId);
   } catch (error) {
     console.error(JSON.stringify({ level: 'error', event: 'http.error', correlationId, error: error.message }));
