@@ -1,0 +1,11 @@
+# OS junk
+.DS_Store
+._*
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
