@@ -1,0 +1,9 @@
+const buckets=[25,50,100,250,500,1000,2500,5000];
+const safe=value=>String(value??'unknown').replace(/[^a-zA-Z0-9_]/g,'_').slice(0,64);
+export class OperationalMetrics{
+  constructor({startedAt=Date.now()}={}){this.startedAt=startedAt;this.requests=0;this.errors=0;this.inFlight=0;this.latencyBuckets=new Map(buckets.map(value=>[value,0]));this.latencyTotalMs=0;}
+  begin(){this.inFlight++;let completed=false;return status=>{if(completed)return;completed=true;this.inFlight=Math.max(0,this.inFlight-1);this.requests++;if(Number(status)>=500)this.errors++;};}
+  observeLatency(durationMs){const value=Math.max(0,Number(durationMs)||0);this.latencyTotalMs+=value;for(const boundary of buckets)if(value<=boundary)this.latencyBuckets.set(boundary,this.latencyBuckets.get(boundary)+1);}
+  snapshot(now=Date.now()){return {uptimeSeconds:Math.max(0,Math.floor((now-this.startedAt)/1000)),httpRequestsTotal:this.requests,httpErrorsTotal:this.errors,httpRequestsInFlight:this.inFlight,httpLatencyTotalMs:Number(this.latencyTotalMs.toFixed(3))};}
+  prometheus({application={},runtime={}}={}){const lines=['# HELP nuvrion_uptime_seconds Process uptime in seconds.','# TYPE nuvrion_uptime_seconds gauge',`nuvrion_uptime_seconds ${this.snapshot().uptimeSeconds}`,'# HELP nuvrion_http_requests_total Completed HTTP requests.','# TYPE nuvrion_http_requests_total counter',`nuvrion_http_requests_total ${this.requests}`,`nuvrion_http_errors_total ${this.errors}`,`nuvrion_http_requests_in_flight ${this.inFlight}`];for(const [le,count] of this.latencyBuckets)lines.push(`nuvrion_http_request_duration_ms_bucket{le="${le}"} ${count}`);lines.push(`nuvrion_http_request_duration_ms_sum ${this.latencyTotalMs}`,`nuvrion_http_request_duration_ms_count ${this.requests}`);for(const [name,value] of Object.entries({...application,...runtime}))if(Number.isFinite(Number(value)))lines.push(`nuvrion_${safe(name)} ${Number(value)}`);return `${lines.join('\n')}\n`;}
+}
