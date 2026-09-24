@@ -682,7 +682,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 #navigation .sidebar-vm-list>button{min-height:30px;padding:4px 7px;border-radius:8px;font-size:9px}
 .sidebar-footer{margin:0 4px 1px;padding:12px 13px;border-color:rgba(126,230,218,.20);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(4,35,43,.24));box-shadow:inset 0 1px rgba(255,255,255,.10),0 12px 30px rgba(0,10,19,.20)}
 .sidebar-footer .status-dot{width:9px;height:9px;box-shadow:0 0 0 5px rgba(68,201,134,.10),0 0 14px rgba(68,201,134,.42)}
-.sidebar-footer strong{font-size:11px}.sidebar-footer small{font-size:10px}.sidebar-footer .sidebar-copyright{margin-top:6px;padding-top:6px;border-top:1px solid rgba(157,230,222,.10);font-size:8px}
+.sidebar-footer strong{font-size:11px}.sidebar-footer small{font-size:10px}.sidebar-footer .sidebar-copyright{margin-top:6px;padding-top:6px;border-top:1px solid rgba(157,230,222,.10);font-size:7px;white-space:nowrap}
 .shell.sidebar-collapsed .sidebar-section-label{display:none}
 .shell.sidebar-collapsed .sidebar-brand{min-height:61px;margin:0;padding:0 0 15px;border-bottom-color:rgba(130,234,222,.10)}
 .shell.sidebar-collapsed .sidebar-brand .brand-mark{flex-basis:38px;width:38px;height:38px;border-radius:11px}
