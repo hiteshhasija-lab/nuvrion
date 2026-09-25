@@ -1,0 +1,13 @@
+BEGIN;
+CREATE SCHEMA IF NOT EXISTS audit;
+ALTER TABLE operations.tasks ADD COLUMN IF NOT EXISTS idempotency_key_hash char(64);
+ALTER TABLE operations.tasks ADD COLUMN IF NOT EXISTS row_version bigint NOT NULL DEFAULT 1;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_idempotency ON operations.tasks(idempotency_key_hash) WHERE idempotency_key_hash IS NOT NULL;
+CREATE TABLE operations.task_attempts (attempt_id uuid PRIMARY KEY, task_id uuid NOT NULL REFERENCES operations.tasks(task_id), attempt_no integer NOT NULL, worker_id varchar(200) NOT NULL, started_at timestamptz NOT NULL, completed_at timestamptz, outcome varchar(32), safe_error jsonb, UNIQUE(task_id,attempt_no));
+CREATE TABLE operations.task_leases (task_id uuid PRIMARY KEY REFERENCES operations.tasks(task_id), worker_id varchar(200) NOT NULL, lease_token uuid NOT NULL, acquired_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, heartbeat_at timestamptz NOT NULL);
+CREATE TABLE operations.outbox_messages (message_id uuid PRIMARY KEY, topic varchar(128) NOT NULL, message_key varchar(256) NOT NULL, payload jsonb NOT NULL, occurred_at timestamptz NOT NULL, published_at timestamptz, attempts integer NOT NULL DEFAULT 0);
+CREATE INDEX ix_outbox_unpublished ON operations.outbox_messages(occurred_at) WHERE published_at IS NULL;
+CREATE TABLE audit.audit_events (audit_event_id uuid PRIMARY KEY, occurred_at timestamptz NOT NULL, actor_type varchar(32) NOT NULL, actor_id uuid, action varchar(128) NOT NULL, target_type varchar(64), target_id uuid, task_id uuid REFERENCES operations.tasks(task_id), correlation_id uuid NOT NULL, outcome varchar(24) NOT NULL, detail jsonb NOT NULL DEFAULT '{}');
+CREATE INDEX ix_audit_time ON audit.audit_events(occurred_at DESC);
+CREATE INDEX ix_audit_correlation ON audit.audit_events(correlation_id);
+COMMIT;

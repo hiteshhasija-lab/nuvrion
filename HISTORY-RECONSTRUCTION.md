@@ -31,3 +31,24 @@ matches reality rather than being a gap in the reconstruction.
 This branch does not touch `main`. What (if anything) to do with the two histories —
 merge, replace, keep as parallel references — is an open decision for whoever owns this
 repo.
+
+## 2026-09-24: `main` replaced with this branch's history, plus one catch-up commit
+
+The open decision above has been made: `main` was force-pushed to this branch's tip
+(`11c3664`) plus one new commit, `61fdea3` — "Sync main to actual deployed state
+(v0.1.121 reconstruction -> v0.1.149 live)". That commit's content was sourced by direct
+extraction from the live `nuvrion-api` container on NOVAAPP01, not guessed or copied from
+the old `main`, matching this branch's own standard of "nothing added or guessed."
+
+Per-version history for v0.1.122 through v0.1.148 is **not** recoverable — no artifacts
+survive for that range either, same as the gaps already documented above. The catch-up
+commit says so in its own message rather than implying those versions never existed.
+
+The previous, unrelated `main` history is preserved at the `main-pre-replica-backup-20260924`
+branch on `origin`, in case anything there is ever needed.
+
+This restructuring also brought the release pipeline itself in line with NovaDesk's and
+NovaConnect's (git-tracked `Containerfile.base`/`Containerfile.overlay` at repo root, a real
+`~/nuvrion` git checkout on NOVAAPP01 replacing the untracked `~/nuvrion-native-build`, and
+`upgrade-nuvrion.sh` swapping via a movable `:stable` image tag + `systemctl --user restart`
+instead of a raw `podman stop`/`rm`/`run`).

@@ -14,6 +14,7 @@
 .power-indicator.suspended{color:#d58a13;background:#fff3d8;border-color:#edcf91}.sidebar-power.suspended{background:#d9911b}
 .power-indicator.rebooting{color:#9a5b00;background:#fff0d7;border-color:#e6b65f}.power-indicator.rebooting>span:first-child,.sidebar-power.rebooting{background:#e2a12b;animation:reboot-status-pulse 1.15s ease-in-out infinite}.sidebar-power.rebooting{box-shadow:0 0 0 3px rgba(226,161,43,.18)}@keyframes reboot-status-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.78)}}@media(prefers-reduced-motion:reduce){.power-indicator.rebooting>span:first-child,.sidebar-power.rebooting{animation:none}}
 .power-indicator.shutdown-pending,.power-indicator.poweroff-override,.power-indicator.powering-off,.power-indicator.powering-on,.power-indicator.suspending{color:#9a5b00;background:#fff0d7;border-color:#e6b65f}.power-indicator.shutdown-pending>span:first-child,.power-indicator.poweroff-override>span:first-child,.power-indicator.powering-off>span:first-child,.power-indicator.powering-on>span:first-child,.power-indicator.suspending>span:first-child{background:#e2a12b;animation:reboot-status-pulse 1.15s ease-in-out infinite}@media(prefers-reduced-motion:reduce){.power-indicator.shutdown-pending>span:first-child,.power-indicator.poweroff-override>span:first-child,.power-indicator.powering-off>span:first-child,.power-indicator.powering-on>span:first-child,.power-indicator.suspending>span:first-child{animation:none}}
+.power-indicator.unreachable{color:#d23f3a;background:#fde8e7;border-color:#f1c4c1}.power-indicator.unreachable>span:first-child{background:#bc4943}.sidebar-power.unreachable{background:#bc4943}
 .connection-actions .danger-link{color:#a32f2f;border-color:rgba(163,47,47,.28);background:rgba(255,241,240,.72)}.connection-actions .danger-link:hover{background:#fff1f0;border-color:#d9827c}.sidebar-footer .sidebar-copyright{display:block;max-width:180px;margin-top:5px;font-size:8px;line-height:1.25;letter-spacing:0;color:rgba(216,235,236,.62);text-transform:none}.sidebar-collapsed .sidebar-footer .sidebar-copyright{display:none}
 
 /* Horizontal provider actions reduce connection cards by a further 20% without shrinking text. */
@@ -27,6 +28,12 @@
 .connection-host-actions{grid-column:3;grid-row:1;display:grid;align-content:start;gap:5px;min-width:0}
 .connection-host-actions button{width:100%;height:30px;padding:5px 8px;white-space:nowrap}
 @media(max-width:560px){.connection-card.esxi-host-card{grid-template-columns:45px minmax(0,1fr);min-height:0}.connection-host-actions{grid-column:1/-1;grid-row:auto;grid-template-columns:repeat(2,minmax(0,1fr))}}
+.vm-freshness-chip{display:inline-flex;align-items:center;margin-left:6px;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle}.vm-freshness-chip.stale{background:#fde8e7;color:#a7342f}.vm-freshness-chip.live{background:#e2f5ec;color:#18734a}.vm-freshness-chip.unavailable{background:#edf1f2;color:#506064}
+#edit-connection-dialog{width:min(344px,calc(100% - 30px))}
+#edit-connection-form{grid-template-columns:1fr}
+#edit-connection-form label:not([hidden]){display:grid;gap:6px;width:100%}
+#connection-form input:disabled,#connection-form select:disabled{opacity:.5;cursor:not-allowed;background:#f2f4f5}
+#connection-form label:has(:disabled){opacity:.55}
 .vm-freshness-chip.retained{font-size:0}.vm-freshness-chip.retained::after{content:'Last known';font-size:8px}
 .sidebar-collapse{position:absolute;z-index:4;top:28px;right:-13px;display:grid;place-items:center;width:27px;height:34px;padding:0;border:1px solid #315157;border-radius:0 8px 8px 0;background:#17363b;color:#d9e7e8;box-shadow:2px 1px 5px #07191d33;font-size:22px;line-height:1}.sidebar-collapse:hover{background:#245057;color:#fff}.shell.sidebar-collapsed{grid-template-columns:68px 1fr}.shell.sidebar-collapsed aside{width:68px;padding-left:10px;padding-right:10px}.shell.sidebar-collapsed main{grid-column:2}.shell.sidebar-collapsed .sidebar-brand{padding:0}.shell.sidebar-collapsed .sidebar-brand>div,.shell.sidebar-collapsed .sidebar-footer>div,.shell.sidebar-collapsed nav button:not(.sidebar-collapse){font-size:0}.shell.sidebar-collapsed nav button>span:first-child{width:27px;font-size:17px}.shell.sidebar-collapsed .nav-label,.shell.sidebar-collapsed .nav-chevron,.shell.sidebar-collapsed .sidebar-vm-list,.shell.sidebar-collapsed .sidebar-monitor-list{display:none}.shell.sidebar-collapsed .sidebar-footer{justify-content:center;padding-left:0;padding-right:0}
 .shell{transition:grid-template-columns .32s cubic-bezier(.4,0,.2,1)}aside{transition:width .32s cubic-bezier(.4,0,.2,1),padding .32s cubic-bezier(.4,0,.2,1)}main{transition:padding .32s cubic-bezier(.4,0,.2,1)}.sidebar-collapse{right:-15px;width:30px;height:30px;border-radius:50%;transition:transform .32s cubic-bezier(.4,0,.2,1),background-color .2s ease,box-shadow .2s ease}.sidebar-collapse:hover{box-shadow:0 3px 10px #07191d66;transform:scale(1.06)}.sidebar-brand>div{max-width:170px;opacity:1;overflow:hidden;white-space:nowrap;transition:max-width .25s ease,opacity .18s ease}.shell.sidebar-collapsed .sidebar-brand>div{display:block;max-width:0;opacity:0}.shell.sidebar-collapsed .sidebar-brand{justify-content:center}.shell.sidebar-collapsed .brand-mark{flex:0 0 38px}@media(prefers-reduced-motion:reduce){.shell,aside,main,.sidebar-collapse,.sidebar-brand>div{transition:none}}
@@ -675,7 +682,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 #navigation .sidebar-vm-list>button{min-height:30px;padding:4px 7px;border-radius:8px;font-size:9px}
 .sidebar-footer{margin:0 4px 1px;padding:12px 13px;border-color:rgba(126,230,218,.20);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(4,35,43,.24));box-shadow:inset 0 1px rgba(255,255,255,.10),0 12px 30px rgba(0,10,19,.20)}
 .sidebar-footer .status-dot{width:9px;height:9px;box-shadow:0 0 0 5px rgba(68,201,134,.10),0 0 14px rgba(68,201,134,.42)}
-.sidebar-footer strong{font-size:10px}.sidebar-footer small{font-size:9px}.sidebar-footer .sidebar-copyright{margin-top:6px;padding-top:6px;border-top:1px solid rgba(157,230,222,.10);font-size:7px}
+.sidebar-footer strong{font-size:11px}.sidebar-footer small{font-size:10px}.sidebar-footer .sidebar-copyright{margin-top:6px;padding-top:6px;border-top:1px solid rgba(157,230,222,.10);font-size:7px;white-space:nowrap}
 .shell.sidebar-collapsed .sidebar-section-label{display:none}
 .shell.sidebar-collapsed .sidebar-brand{min-height:61px;margin:0;padding:0 0 15px;border-bottom-color:rgba(130,234,222,.10)}
 .shell.sidebar-collapsed .sidebar-brand .brand-mark{flex-basis:38px;width:38px;height:38px;border-radius:11px}
@@ -925,3 +932,13 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 
 /* v0.1.112 lower the collapsed chevron for final optical alignment. */
 .shell.sidebar-collapsed .sidebar-collapse{top:32px!important}
+
+/* v0.1.138 de-emphasize the health Status badge for powered-off VMs so Power reads first. */
+.vm-status.dimmed{opacity:.5}
+
+/* v0.1.139 sortable Virtual Machines table headers. */
+.vm-list-card th[data-sort-key]{cursor:pointer;user-select:none}
+.vm-list-card th[data-sort-key]:hover{color:#1c3b40}
+.vm-list-card th[data-sort-key]::after{content:'';display:inline-block;width:9px;margin-left:4px;font-size:9px;color:var(--teal)}
+.vm-list-card th[data-sort-key].sorted-asc::after{content:'▲'}
+.vm-list-card th[data-sort-key].sorted-desc::after{content:'▼'}

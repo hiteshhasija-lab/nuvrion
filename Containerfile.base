@@ -1,0 +1,24 @@
+FROM node:24-bookworm
+
+ENV NODE_ENV=production
+ENV NUVRION_RUNTIME_PROFILE=production
+
+WORKDIR /opt/nuvrion
+
+COPY package.json ./
+RUN npm install --omit=dev
+
+COPY apps ./apps
+COPY modules ./modules
+COPY providers ./providers
+COPY contracts ./contracts
+COPY database ./database
+COPY tools ./tools
+
+RUN chown -R node:node /opt/nuvrion
+
+USER node
+EXPOSE 4100
+HEALTHCHECK CMD node -e "fetch('http://127.0.0.1:4100/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "apps/api/src/server.js"]
