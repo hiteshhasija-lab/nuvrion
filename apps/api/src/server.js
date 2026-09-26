@@ -41,6 +41,12 @@ const webRoot = resolve(here, '../../web');
 const novncRoot = resolve(here, '../../../node_modules/@novnc/novnc');
 const xtermRoot = resolve(here, '../../../node_modules/@xterm');
 const production=process.env.NUVRION_RUNTIME_PROFILE==='production';
+// Version shown in the app UI. In any deployed NOVAAPP01 container, /opt/nuvrion/RELEASE_VERSION
+// (written per release by the upgrade pipeline from release-manifest.json) always wins, then
+// NUVRION_RELEASE_VERSION if that file is missing. The '0.1.0' literal below only matters when
+// running outside that pipeline (e.g. `node apps/api/src/server.js` locally) -- package.json's
+// own "version" field is a separate, purely cosmetic value that this code never reads and that
+// isn't reliably kept in sync with real releases either (same convention as NovaDesk/NovaConnect).
 const embeddedReleaseVersion=(()=>{try{return readFileSync('/opt/nuvrion/RELEASE_VERSION','utf8').trim()}catch{return ''}})();
 const releaseVersion=embeddedReleaseVersion||process.env.NUVRION_RELEASE_VERSION||'0.1.0';
 export function allowsLifecycleOverride(activeTask,requestedOperation,resource){return requestedOperation==='power_off'&&activeTask?.operation==='stop'&&resource?.providerType==='vmware_workstation';}
