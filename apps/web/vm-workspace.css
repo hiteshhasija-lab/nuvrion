@@ -23,21 +23,30 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .vm-filter-card .vm-filter-toolbar { width:min(100%,420px);flex:0 1 420px;margin:0; }
 .vm-list-card,.vm-list-scroll,#view-inventory,.vm-workspace-head { max-width:100%;overflow-x:clip!important; }
 .vm-list-scroll { width:100%;overflow-y:auto; }
-.vm-list-scroll table { min-width:0;table-layout:fixed; }
+.vm-list-scroll table { min-width:900px;table-layout:fixed; }
 .vm-list-scroll th,.vm-list-scroll td { min-width:0;overflow:hidden;text-overflow:ellipsis; }
 .vm-list-scroll th,.vm-list-scroll td { padding-left:8px;padding-right:8px; }
 .vm-list-scroll th { height:36px;font-size:9px; }
 .vm-list-scroll td { padding-top:9px;padding-bottom:9px;font-size:10px; }
-/* Guest OS (column 4) has no fixed width: it takes whatever the other columns leave free. */
+/* Default layout (before a user resizes anything): Guest OS (column 4) has no fixed width and takes whatever the others leave free. */
+.vm-list-scroll th { white-space:nowrap; }
 .vm-list-scroll th:nth-child(1) { width:34px; }
-.vm-list-scroll th:nth-child(2) { width:145px; }
-.vm-list-scroll th:nth-child(3) { width:75px; }
+.vm-list-scroll th:nth-child(2) { width:130px; }
+.vm-list-scroll th:nth-child(3) { width:70px; }
 .vm-list-scroll th:nth-child(4) { width:auto; }
-.vm-list-scroll th:nth-child(5) { width:108px; }
-.vm-list-scroll th:nth-child(6) { width:44px; }
-.vm-list-scroll th:nth-child(7) { width:76px; }
-.vm-list-scroll th:nth-child(8) { width:52px; }
-.vm-list-scroll th:nth-child(n+9) { width:60px; }
+.vm-list-scroll th:nth-child(5) { width:124px; }
+.vm-list-scroll th:nth-child(6) { width:66px; }
+.vm-list-scroll th:nth-child(7) { width:90px; }
+.vm-list-scroll th:nth-child(8) { width:56px; }
+.vm-list-scroll th:nth-child(9) { width:72px; }
+.vm-list-scroll th:nth-child(10) { width:84px; }
+/* Custom column widths can exceed the card, so the list scrolls sideways instead of clipping. */
+.vm-list-card .vm-list-scroll { overflow-x:auto!important; }
+.vm-col-resizer { position:absolute;top:0;right:0;bottom:0;width:9px;cursor:col-resize;touch-action:none;z-index:1; }
+.vm-col-resizer::after { content:"";position:absolute;top:25%;bottom:25%;right:3px;width:2px;border-radius:1px;background:currentColor;opacity:0;transition:opacity .12s ease; }
+.vm-list-scroll th:hover .vm-col-resizer::after { opacity:.22; }
+.vm-col-resizer:hover::after,.vm-col-resizer.dragging::after { opacity:.7;background:var(--teal); }
+body.vm-column-resizing { cursor:col-resize;user-select:none; }
 .vm-check-cell { text-align:center;padding-left:5px!important;padding-right:5px!important; }
 .vm-check-cell input { width:15px;height:15px;margin:0;accent-color:var(--teal); }
 .compact-cell { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
