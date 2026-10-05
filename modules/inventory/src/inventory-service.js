@@ -43,7 +43,7 @@ export class InventoryService {
     }
     let missing = 0;
     for (const [key, resource] of this.#resources) {
-      if (resource.connectionId === connection.id && !seen.has(key) && resource.lifecycleState !== 'missing') {
+      if (resource.connectionId === connection.id && !seen.has(key) && !['missing', 'deleted'].includes(resource.lifecycleState)) {
         resource.lifecycleState = 'missing'; resource.missingSince = observedAt; resource.version++; missing++;
       }
     }
