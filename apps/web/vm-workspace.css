@@ -28,14 +28,16 @@ body.inventory-scroll-lock .shell,body.inventory-scroll-lock main { height:100vh
 .vm-list-scroll th,.vm-list-scroll td { padding-left:8px;padding-right:8px; }
 .vm-list-scroll th { height:36px;font-size:9px; }
 .vm-list-scroll td { padding-top:9px;padding-bottom:9px;font-size:10px; }
+/* Guest OS (column 4) has no fixed width: it takes whatever the other columns leave free. */
 .vm-list-scroll th:nth-child(1) { width:34px; }
 .vm-list-scroll th:nth-child(2) { width:145px; }
 .vm-list-scroll th:nth-child(3) { width:75px; }
-.vm-list-scroll th:nth-child(4) { width:125px; }
-.vm-list-scroll th:nth-child(5) { width:100px; }
-.vm-list-scroll th:nth-child(6) { width:50px; }
-.vm-list-scroll th:nth-child(7) { width:80px; }
-.vm-list-scroll th:nth-child(n+8) { width:70px; }
+.vm-list-scroll th:nth-child(4) { width:auto; }
+.vm-list-scroll th:nth-child(5) { width:108px; }
+.vm-list-scroll th:nth-child(6) { width:44px; }
+.vm-list-scroll th:nth-child(7) { width:76px; }
+.vm-list-scroll th:nth-child(8) { width:52px; }
+.vm-list-scroll th:nth-child(n+9) { width:60px; }
 .vm-check-cell { text-align:center;padding-left:5px!important;padding-right:5px!important; }
 .vm-check-cell input { width:15px;height:15px;margin:0;accent-color:var(--teal); }
 .compact-cell { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
