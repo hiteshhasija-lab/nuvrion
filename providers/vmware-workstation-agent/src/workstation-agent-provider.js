@@ -13,7 +13,16 @@ const GUEST_OS_NAMES=new Map([
   ['windows11-64','Microsoft Windows 11 (64-bit)'],['vmkernel7','VMware ESXi 7.x'],['vmkernel8','VMware ESXi 8.x'],
   ['rhel9-64','Red Hat Enterprise Linux 9 (64-bit)'],
 ]);
-const friendlyGuestOs=value=>value==null||String(value).trim()===''?null:(GUEST_OS_NAMES.get(String(value).trim().toLowerCase())??String(value).trim());
+const friendlyGuestOs=value=>{
+  if(value==null||String(value).trim()==='')return null;
+  const raw=String(value).trim(),known=GUEST_OS_NAMES.get(raw.toLowerCase());
+  if(known)return known;
+  const rhel=/^rhel(\d+)(-64)?$/i.exec(raw);
+  if(rhel)return `Red Hat Enterprise Linux ${rhel[1]}${rhel[2]?' (64-bit)':''}`;
+  const detail=Object.fromEntries([...raw.matchAll(/(\w+)='([^']*)'/g)].map(([,key,val])=>[key,val]));
+  if(/vmkernel/i.test(detail.distroName??detail.familyName??''))return `VMware ESXi ${detail.kernelVersion??''}`.trim();
+  return raw;
+};
 const versionAtLeast=(value,minimum)=>{const parse=input=>String(input??'').split(/[.-]/).slice(0,3).map(part=>Number(part)||0),a=parse(value),b=parse(minimum);return a[0]>b[0]||a[0]===b[0]&&(a[1]>b[1]||a[1]===b[1]&&a[2]>=b[2]);};
 
 export class WorkstationAgentProvider {
