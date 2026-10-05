@@ -10,8 +10,17 @@ const GUEST_OS_NAMES=new Map([
   ['windows9','Microsoft Windows 10'],['windows9-64','Microsoft Windows 10 (64-bit)'],
   ['windows8srv-64','Microsoft Windows Server 2012 (64-bit)'],['windows9srv-64','Microsoft Windows Server 2016 (64-bit)'],['windows2019srv-64','Microsoft Windows Server 2019 (64-bit)'],
   ['windows2022srvnext-64','Microsoft Windows Server 2022 (64-bit)'],['windows2022srv-64','Microsoft Windows Server 2022 (64-bit)'],
-  ['windows11-64','Microsoft Windows 11 (64-bit)'],['vmkernel7','VMware ESXi 7.x'],['vmkernel8','VMware ESXi 8.x'],
+  ['windows11-64','Microsoft Windows 11 (64-bit)'],['vmkernel7','VMware ESXi 7.0.2'],['vmkernel8','VMware ESXi 8.x'],
   ['rhel9-64','Red Hat Enterprise Linux 9 (64-bit)'],
+  ['win2000serv','Microsoft Windows 2000 Server'],['winvista','Microsoft Windows Vista'],['winvista-64','Microsoft Windows Vista (64-bit)'],
+  ['longhorn','Microsoft Windows Server 2008'],['longhorn-64','Microsoft Windows Server 2008 (64-bit)'],
+  ['windows7srv-64','Microsoft Windows Server 2008 R2 (64-bit)'],
+  ['other24xlinux','Other Linux 2.4.x kernel'],['other24xlinux-64','Other Linux 2.4.x kernel (64-bit)'],
+  ['other26xlinux','Other Linux 2.6.x kernel'],['other26xlinux-64','Other Linux 2.6.x kernel (64-bit)'],
+  ['other3xlinux','Other Linux 3.x kernel'],['other3xlinux-64','Other Linux 3.x kernel (64-bit)'],
+  ['other4xlinux','Other Linux 4.x kernel'],['other4xlinux-64','Other Linux 4.x kernel (64-bit)'],
+  ['other5xlinux','Other Linux 5.x kernel'],['other5xlinux-64','Other Linux 5.x kernel (64-bit)'],
+  ['other6xlinux','Other Linux 6.x kernel'],['other6xlinux-64','Other Linux 6.x kernel (64-bit)'],
 ]);
 const friendlyGuestOs=value=>{
   if(value==null||String(value).trim()==='')return null;
