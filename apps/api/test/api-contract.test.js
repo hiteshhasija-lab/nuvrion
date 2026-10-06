@@ -245,8 +245,15 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     ctx.newbie = created.json.user;
     assert.equal(ctx.newbie.status, 'pending');
     await call('signup', { as: null, body: { username: 'newbie', displayName: 'Again', password: PASSWORD }, expect: 409 });
-    // 422 (NUV_SIGNUP_INVALID) for a too-short password is documented, but this server mode (signup is a lab-recovery feature) allows weak passwords, so it cannot be provoked here.
+    for (const [label, body] of [['a missing username', { displayName: 'X', password: PASSWORD }], ['a username with a space', { username: 'two words', displayName: 'X', password: PASSWORD }], ['a blank display name', { username: 'blank.name', displayName: ' ', password: PASSWORD }], ['a too-short password', { username: 'short.pw', displayName: 'X', password: 'short' }], ['a missing password', { username: 'no.pw', displayName: 'X' }]]) {
+      const refused = await call('signup', { as: null, body, invalid: true, expect: 422 });
+      assert.equal(codeOf(refused), 'NUV_SIGNUP_INVALID', label);
+    }
+    assert.equal(codeOf(await call('signup', { as: null, rawBody: 'null', headers: { 'content-type': 'application/json' }, invalid: true, expect: 422 })), 'NUV_SIGNUP_INVALID', 'a request body of null');
+    assert.equal(codeOf(await call('signup', { as: null, rawBody: '[]', headers: { 'content-type': 'application/json' }, invalid: true, expect: 422 })), 'NUV_SIGNUP_INVALID', 'a request body that is a list');
+    assert.match((await call('login', { as: null, body: { username: 'no.pw', password: 'x' }, expect: 401 })).json.code, /NUV_LOGIN_FAILED/, 'no account was created by the refused requests');
     await call('resetPassword', { as: null, body: { username: 'newbie', recoveryCode: 'wrong-code', newPassword: PASSWORD }, expect: 401 });
+    await call('resetPassword', { as: null, body: { username: 'newbie', recoveryCode: created.json.recoveryCode, newPassword: 'short' }, invalid: true, expect: 422 });   // refused, and the recovery code is not used up
     await call('resetPassword', { as: null, body: { username: 'newbie', recoveryCode: created.json.recoveryCode, newPassword: 'Another-Password-2!' }, expect: 200 }); // secret-scan:allow (fake test credential)
   });
 

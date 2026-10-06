@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import {hashPassword,passwordMatches,needsPasswordRehash} from './password-hasher.js';
+import {cleanUserIdentity,passwordAcceptable} from './user-input.js';
 
 const DEFAULT_PERMISSIONS = {
   platform_admin: ['resource.view','resource.operate','connection.view','connection.manage','identity.manage','audit.view','platform.manage'],
@@ -8,19 +9,18 @@ const DEFAULT_PERMISSIONS = {
 };
 
 export class IdentityService {
-  #users = new Map(); #sessions = new Map(); #minimumPasswordLength; #idleTimeoutMs; #absoluteTimeoutMs;
-  constructor({ bootstrapPassword = process.env.NUVRION_BOOTSTRAP_PASSWORD ?? 'ChangeMe-Nuvrion-01!', allowWeakPasswords=false, idleTimeoutMs=30*60_000, absoluteTimeoutMs=8*60*60_000 } = {}) {
-    this.#minimumPasswordLength=allowWeakPasswords?1:12;
+  #users = new Map(); #sessions = new Map(); #idleTimeoutMs; #absoluteTimeoutMs;
+  constructor({ bootstrapPassword = process.env.NUVRION_BOOTSTRAP_PASSWORD ?? 'ChangeMe-Nuvrion-01!', idleTimeoutMs=30*60_000, absoluteTimeoutMs=8*60*60_000 } = {}) {
     this.#idleTimeoutMs=idleTimeoutMs;this.#absoluteTimeoutMs=absoluteTimeoutMs;
     this.createUser({ username:'admin', displayName:'Platform Administrator', password:bootstrapPassword, roles:['platform_admin'] });
   }
   createUser({ username, displayName, password, roles=['operator'], status='active' }) {
-    const normalized = username.trim().toLowerCase();
-    if (this.findUser(normalized)) throw new Error('USERNAME_EXISTS');
-    if (typeof password!=='string'||password.length < this.#minimumPasswordLength) throw new Error('PASSWORD_TOO_SHORT');
+    const identity = cleanUserIdentity({ username, displayName });
+    if(!['active','pending','locked','disabled'].includes(status)||!Array.isArray(roles)||roles.some(role=>!DEFAULT_PERMISSIONS[role]))throw new Error('USER_INVALID');
+    if (!passwordAcceptable(password)) throw new Error('PASSWORD_TOO_SHORT');
+    if (this.findUser(identity.normalized)) throw new Error('USERNAME_EXISTS');
     const recoveryCode=randomBytes(18).toString('base64url');
-    if(!['active','pending','locked','disabled'].includes(status)||roles.some(role=>!DEFAULT_PERMISSIONS[role]))throw new Error('USER_INVALID');
-    const user={ id:randomUUID(), username:username.trim(), normalizedUsername:normalized, displayName:displayName.trim(), status, roles:[...new Set(roles)], rowVersion:1, passwordHash:hashPassword(password), recoveryCodeHash:createHash('sha256').update(recoveryCode).digest(), createdAt:new Date().toISOString() };
+    const user={ id:randomUUID(), username:identity.username, normalizedUsername:identity.normalized, displayName:identity.displayName, status, roles:[...new Set(roles)], rowVersion:1, passwordHash:hashPassword(password), recoveryCodeHash:createHash('sha256').update(recoveryCode).digest(), createdAt:new Date().toISOString() };
     this.#users.set(user.id,user); return {user:this.publicUser(user),recoveryCode};
   }
   findUser(username) { return [...this.#users.values()].find(u=>u.normalizedUsername===username.trim().toLowerCase()); }
@@ -42,7 +42,7 @@ export class IdentityService {
   listSessions(userId,currentToken){const currentHash=currentToken?createHash('sha256').update(currentToken).digest('hex'):null,now=Date.now();return [...this.#sessions.values()].filter(session=>session.userId===userId&&session.idleExpiresAt>now&&session.absoluteExpiresAt>now).map(session=>({id:session.idHash,createdAt:new Date(session.createdAt).toISOString(),lastSeenAt:new Date(session.lastSeenAt??session.createdAt).toISOString(),idleExpiresAt:new Date(session.idleExpiresAt).toISOString(),absoluteExpiresAt:new Date(session.absoluteExpiresAt).toISOString(),current:session.idHash===currentHash})).sort((a,b)=>b.lastSeenAt.localeCompare(a.lastSeenAt));}
   revokeSession(userId,sessionId){const session=this.#sessions.get(sessionId);if(!session||session.userId!==userId)return {revoked:0};this.#sessions.delete(sessionId);return {revoked:1};}
   rotateRecoveryCode(userId){const user=this.#users.get(userId);if(!user)throw new Error('USER_NOT_FOUND');const recoveryCode=randomBytes(18).toString('base64url');user.recoveryCodeHash=createHash('sha256').update(recoveryCode).digest();return {recoveryCode};}
-  resetPassword(username,recoveryCode,newPassword){const user=this.findUser(username),normalizedRecoveryCode=typeof recoveryCode==='string'?recoveryCode.trim():'';if(!user||!normalizedRecoveryCode||!user.recoveryCodeHash)return null;const supplied=createHash('sha256').update(normalizedRecoveryCode).digest();if(!timingSafeEqual(supplied,user.recoveryCodeHash))return null;if(typeof newPassword!=='string'||newPassword.length<this.#minimumPasswordLength)throw new Error('PASSWORD_TOO_SHORT');user.passwordHash=hashPassword(newPassword);for(const [key,session] of this.#sessions)if(session.userId===user.id)this.#sessions.delete(key);return this.rotateRecoveryCode(user.id);}
+  resetPassword(username,recoveryCode,newPassword){const user=this.findUser(username),normalizedRecoveryCode=typeof recoveryCode==='string'?recoveryCode.trim():'';if(!user||!normalizedRecoveryCode||!user.recoveryCodeHash)return null;const supplied=createHash('sha256').update(normalizedRecoveryCode).digest();if(!timingSafeEqual(supplied,user.recoveryCodeHash))return null;if(!passwordAcceptable(newPassword))throw new Error('PASSWORD_TOO_SHORT');user.passwordHash=hashPassword(newPassword);for(const [key,session] of this.#sessions)if(session.userId===user.id)this.#sessions.delete(key);return this.rotateRecoveryCode(user.id);}
   publicUser(user){const permissions=[...new Set(user.roles.flatMap(r=>DEFAULT_PERMISSIONS[r]??[]))];return {id:user.id,username:user.username,displayName:user.displayName,status:user.status,roles:[...user.roles],permissions,rowVersion:user.rowVersion};}
   authorize(principal,permission){return Boolean(principal?.user.permissions.includes(permission));}
 }

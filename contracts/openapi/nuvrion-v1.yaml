@@ -133,12 +133,12 @@ paths:
       security: []
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [username, displayName, password], properties: { username: { type: string }, displayName: { type: string }, password: { type: string, minLength: 12 } } } } }
+        content: { application/json: { schema: { type: object, required: [username, displayName, password], properties: { username: { type: string, pattern: '^[A-Za-z0-9._-]{3,128}$' }, displayName: { type: string, minLength: 1, maxLength: 200 }, password: { type: string, minLength: 12 } } } } }
       responses:
         '201': { description: Account created, content: { application/json: { schema: { $ref: '#/components/schemas/UserWithRecoveryCode' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
+        '409': { description: That username is taken (NUV_USERNAME_EXISTS), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: 'The username (3 to 128 letters, digits, dots, hyphens or underscores), the display name (1 to 200 characters) or the password (at least 12 characters) is not valid (NUV_SIGNUP_INVALID)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /auth/password-reset:
     post:
       tags: [Authentication]

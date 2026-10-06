@@ -141,3 +141,35 @@ test('cookie parsing handles empty headers, several cookies and encoded values',
   assert.deepEqual(parseCookies(undefined), {});
   assert.deepEqual(parseCookies('a=1; b=two%20words; c=x=y'), { a: '1', b: 'two words', c: 'x=y' });
 });
+
+test('a new account needs a well-formed username and display name; anything else is USER_INVALID, never a crash', () => {
+  const identity = service();
+  const create = over => () => identity.createUser({ username: 'valid.name', displayName: 'Valid Name', password: PASSWORD, ...over });
+  for (const [label, over] of [
+    ['a missing username', { username: undefined }], ['a null username', { username: null }], ['a numeric username', { username: 12345 }], ['an object username', { username: { a: 1 } }],
+    ['a username with a space', { username: 'two words' }], ['a username with a symbol', { username: 'bad!name' }], ['an e-mail address', { username: 'a@example.com' }],
+    ['a two-letter username', { username: 'ab' }], ['a 129-letter username', { username: 'a'.repeat(129) }], ['an empty username', { username: '   ' }],
+    ['a missing display name', { displayName: undefined }], ['a blank display name', { displayName: '   ' }], ['a display name over 200 characters', { displayName: 'n'.repeat(201) }], ['a numeric display name', { displayName: 7 }]
+  ]) assert.throws(create(over), /USER_INVALID/, label);
+  assert.ok(create({ username: '  Mixed.Case_1-x  ' })().user.username === 'Mixed.Case_1-x', 'surrounding spaces are trimmed, case is kept for display');
+  assert.ok(create({ username: 'a'.repeat(128), displayName: 'n'.repeat(200) })(), 'the limits themselves are allowed');
+});
+
+test('the 12-character password minimum always applies, for new accounts and for resets; no option turns it off', () => {
+  const identity = service({ allowWeakPasswords: true });          // the old lab option no longer exists, and is ignored
+  assert.throws(() => identity.createUser({ username: 'weak.one', displayName: 'W', password: 'short' }), /PASSWORD_TOO_SHORT/);
+  assert.throws(() => identity.createUser({ username: 'weak.two', displayName: 'W', password: '11-chars-xx' }), /PASSWORD_TOO_SHORT/);
+  assert.throws(() => identity.createUser({ username: 'weak.three', displayName: 'W', password: undefined }), /PASSWORD_TOO_SHORT/);
+  assert.ok(identity.createUser({ username: 'ok.one', displayName: 'W', password: '12-chars-xxx' }), 'exactly 12 is enough'); // secret-scan:allow (fake test credential)
+  const { recoveryCode } = identity.createUser({ username: 'reset.me', displayName: 'R', password: PASSWORD });
+  assert.throws(() => identity.resetPassword('reset.me', recoveryCode, 'short'), /PASSWORD_TOO_SHORT/);
+  assert.ok(identity.authenticate('reset.me', PASSWORD), 'a refused reset leaves the old password in place');
+  assert.ok(identity.resetPassword('reset.me', recoveryCode, '12-chars-new'), 'the recovery code still works after a refused attempt');
+});
+
+test('an invalid request is reported before a duplicate one, and a duplicate is only reported for a valid request', () => {
+  const identity = service();
+  assert.throws(() => identity.createUser({ username: 'ADMIN', displayName: 'Dup', password: PASSWORD }), /USERNAME_EXISTS/);
+  assert.throws(() => identity.createUser({ username: 'admin', displayName: 'Dup', password: 'short' }), /PASSWORD_TOO_SHORT/);
+  assert.throws(() => identity.createUser({ username: 'admin', displayName: '', password: PASSWORD }), /USER_INVALID/);
+});
