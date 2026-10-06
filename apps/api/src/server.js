@@ -28,6 +28,7 @@ import { AgentUpgradeService } from '../../../modules/agents/src/agent-upgrade-s
 import { PostgresAgentUpgradeService } from '../../../modules/agents/src/postgres-agent-upgrade-service.js';
 import { validateRuntimeConfiguration } from '../../../modules/platform/src/runtime-configuration.js';
 import { ReadinessService } from '../../../modules/platform/src/readiness-service.js';
+import { RetentionService, retentionPoliciesFromEnv } from '../../../modules/platform/src/retention-service.js';
 import { VerificationReconciler } from '../../../modules/tasks/src/verification-reconciler.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
 import { OperationalMetrics } from '../../../modules/platform/src/operational-metrics.js';
@@ -105,6 +106,8 @@ const consoleWebSockets=new WebSocketServer({noServer:true});
 const outboxRelay=production?new OutboxRelay({store,broker,onError:error=>console.error(JSON.stringify({level:'error',event:'outbox.publish_failed',error:error.message}))}):null;outboxRelay?.start();
 const recovered=await store.recoverExpired();if(recovered&&!production)await worker.notify();
 discoveryScheduler.start();
+// History tables prune themselves by age (discovery runs 30d, health events 90d by default; see retention-service.js).
+const retention=production?new RetentionService({pool:store.pool,policies:retentionPoliciesFromEnv(process.env),intervalMs:Number(process.env.NUVRION_RETENTION_INTERVAL_MS??6*60*60_000),onPruned:(table,rows)=>console.log(JSON.stringify({level:'info',event:'retention.pruned',table,rows})),onError:(error,policy)=>console.error(JSON.stringify({level:'error',event:'retention.failed',table:policy.name,error:error.message}))}):null;retention?.start();
 
 function securityHeaders(contentType,cacheControl='no-store'){return {'content-type':contentType,'cache-control':cacheControl,'x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer','permissions-policy':'camera=(), microphone=(), geolocation=()','content-security-policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'",...(production?{'strict-transport-security':'max-age=31536000; includeSubDomains'}:{})};}
 function json(res, status, payload, correlationId) {
@@ -314,6 +317,6 @@ export function createServer() { const server=http.createServer(handler);server.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const host = process.env.NUVRION_HOST ?? '127.0.0.1'; const port = Number(process.env.NUVRION_PORT ?? 4100);
   const server=createServer();server.listen(port, host, () => console.log(JSON.stringify({ level: 'info', event: 'server.started', profile:production?'production':'local',url: `http://${host}:${port}` })));
-  const shutdown=async signal=>{console.log(JSON.stringify({level:'info',event:'server.stopping',signal}));server.close();discoveryScheduler.close();agentMaintenance.close();outboxRelay?.close();await worker.close();await store.close?.();};
+  const shutdown=async signal=>{console.log(JSON.stringify({level:'info',event:'server.stopping',signal}));server.close();discoveryScheduler.close();retention?.close();agentMaintenance.close();outboxRelay?.close();await worker.close();await store.close?.();};
   process.once('SIGTERM',()=>shutdown('SIGTERM'));process.once('SIGINT',()=>shutdown('SIGINT'));
 }
