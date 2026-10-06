@@ -106,3 +106,34 @@ jobs:
           path: evidence/
           if-no-files-found: error
           retention-days: 90
+
+  # The API description is the contract with clients. A change that would break an existing client (a removed operation or field,
+  # a new required request field, a retyped response field ...) fails the build, unless the commit message or pull request title
+  # contains [breaking-api-change], which records that the break is intended.
+  api-compatibility:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+      - name: Install dependencies (from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Breaking-change check against the previous description
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BREAK_ALLOWED: ${{ contains(github.event.head_commit.message, '[breaking-api-change]') || contains(github.event.pull_request.title, '[breaking-api-change]') }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "There is no earlier commit to compare with; skipping."; exit 0
+          fi
+          if ! git show "$BASE_SHA:contracts/openapi/nuvrion-v1.yaml" > "$RUNNER_TEMP/before.yaml" 2>/dev/null; then
+            echo "The earlier commit has no API description; nothing to compare."; exit 0
+          fi
+          flags=""; if [ "$BREAK_ALLOWED" = "true" ]; then flags="--allow-breaking"; fi
+          node tools/check-api-compat.js "$RUNNER_TEMP/before.yaml" contracts/openapi/nuvrion-v1.yaml $flags

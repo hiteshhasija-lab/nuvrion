@@ -85,7 +85,16 @@ const repoLock = JSON.parse(readFileSync(new URL('../../../package-lock.json', i
 const repoPackage = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
 test('the repository lockfile lists exactly the dependencies in package.json', () => {
   assert.deepEqual(repoLock.packages[''].dependencies, repoPackage.dependencies);
-  assert.equal(repoLock.packages[''].devDependencies, undefined, 'there are no development dependencies to hide');
+  assert.deepEqual(repoLock.packages[''].devDependencies, repoPackage.devDependencies);
+});
+
+test('development-only packages (test tooling) are locked but never reach the SBOM, which describes what ships', () => {
+  const dev = Object.entries(repoLock.packages).filter(([path, entry]) => path && entry.dev).map(([path]) => path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length));
+  assert.ok(dev.includes('ajv') && dev.includes('yaml'), 'the OpenAPI test tooling is a development dependency');
+  const doc = createCycloneDxSbom({ lockText: JSON.stringify(repoLock), packageJson: repoPackage, sourceRevision: 'test' });
+  const shipped = new Set(doc.components.map(c => c.name));
+  for (const name of Object.keys(repoPackage.devDependencies ?? {})) assert.equal(shipped.has(name), false, `${name} is development-only and must not be in the SBOM`);
+  for (const name of Object.keys(repoPackage.dependencies)) assert.ok(shipped.has(name), `${name} ships and must be in the SBOM`);
 });
 
 test('every locked package comes from the npm registry over HTTPS with a SHA-512 integrity hash', () => {

@@ -37,3 +37,8 @@ test('CI runs the SBOM, provenance and vulnerability checks, and keeps their out
     assert.ok(workflow.includes(expected), `${expected} is missing from the workflow`);
   }
 });
+
+test('CI checks every API description change for breaking changes against the previous commit', () => {
+  assert.match(workflow, /check-api-compat\.js/);
+  assert.match(workflow, /fetch-depth: 0/);
+});

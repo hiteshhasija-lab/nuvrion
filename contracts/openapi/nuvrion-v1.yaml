@@ -1,76 +1,1443 @@
 openapi: 3.1.0
-info: { title: Nuvrion API, version: 0.1.0 }
-servers: [{ url: /api/v1 }]
+info:
+  title: Nuvrion API
+  version: 0.1.160
+  summary: The REST API behind the Nuvrion console.
+  description: |
+    Every operation below is exercised by the contract tests (apps/api/test/api-contract.test.js), which send real requests to the
+    server and check each response against the schema documented here. The route list is also compared with the server's route table, so a
+    route cannot be added, removed or renamed without this file changing.
+
+    Sessions use an HttpOnly cookie. Every request that changes something must also send the session's CSRF token in `X-CSRF-Token`
+    (it is returned by login). Agents authenticate with `X-Agent-Secret` instead. `x-required-permission` on an operation names the
+    permission the caller needs; the three built-in roles are Platform Administrator (all), Operator (resource.view, resource.operate,
+    connection.view) and Auditor (resource.view, connection.view, audit.view).
+
+    Changes that remove an operation, a response status or a response field, or that add a required request field, are breaking;
+    tools/check-api-compat.js reports them in CI.
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+tags:
+  - { name: Platform, description: Health, metrics and platform updates }
+  - { name: Authentication, description: Sign-in, sessions and recovery }
+  - { name: Users, description: User administration }
+  - { name: Connections, description: Provider connections, health and alerts }
+  - { name: Resources, description: Discovered virtual machines and what can be done to them }
+  - { name: Tasks, description: Lifecycle operations and their outcomes }
+  - { name: Audit, description: The audit log }
+  - { name: Agents, description: Workstation agents, enrollment and signed commands }
+  - { name: Mock, description: The built-in mock provider }
+
 paths:
+  /health:
+    get:
+      tags: [Platform]
+      operationId: getHealth
+      summary: Platform health (no sign-in needed)
+      security: []
+      responses:
+        '200': { description: Platform health, content: { application/json: { schema: { $ref: '#/components/schemas/Health' } } } }
+  /readiness:
+    get:
+      tags: [Platform]
+      operationId: getReadiness
+      summary: Whether the platform is ready to serve traffic (no sign-in needed)
+      security: []
+      responses:
+        '200': { description: Ready, content: { application/json: { schema: { $ref: '#/components/schemas/Readiness' } } } }
+        '503': { description: Not ready, content: { application/json: { schema: { $ref: '#/components/schemas/Readiness' } } } }
+  /platform/metrics:
+    get:
+      tags: [Platform]
+      operationId: getPlatformMetrics
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: Platform metrics, content: { application/json: { schema: { $ref: '#/components/schemas/PlatformMetrics' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /platform/metrics/prometheus:
+    get:
+      tags: [Platform]
+      operationId: getPrometheusMetrics
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: Metrics in the Prometheus text format, content: { text/plain: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /platform/upgrade:
+    get:
+      tags: [Platform]
+      operationId: getPlatformUpgrade
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: State of the platform update helper and any staged bundle, content: { application/json: { schema: { $ref: '#/components/schemas/PlatformUpgradeStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /platform/upgrade/upload:
+    post:
+      tags: [Platform]
+      operationId: stagePlatformUpgrade
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { in: query, name: sha256, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{64}$' } }
+        - { in: header, name: X-Nuvrion-File-Name, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/zip: { schema: { type: string, format: binary } } }
+      responses:
+        '201': { description: Bundle staged, content: { application/json: { schema: { $ref: '#/components/schemas/StagedUpgrade' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { description: The body is not a ZIP, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /platform/upgrade/start:
+    post:
+      tags: [Platform]
+      operationId: startPlatformUpgrade
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [uploadId], properties: { uploadId: { type: string } } } } }
+      responses:
+        '202': { description: Update queued, content: { application/json: { schema: { $ref: '#/components/schemas/StagedUpgrade' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
   /auth/login:
     post:
+      tags: [Authentication]
       operationId: login
-      responses: { '200': { description: Authenticated session }, '401': { description: Login failed } }
+      summary: Sign in; sets the session cookie and returns the CSRF token
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string } } } } }
+      responses:
+        '200':
+          description: Authenticated session
+          headers: { Set-Cookie: { description: The HttpOnly session cookie, schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } }
+        '401': { description: Username or password is incorrect (NUV_LOGIN_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/Throttled' }
+  /auth/signup:
+    post:
+      tags: [Authentication]
+      operationId: signup
+      summary: Request an account (lab recovery mode only); the account is pending until an administrator activates it
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, displayName, password], properties: { username: { type: string }, displayName: { type: string }, password: { type: string, minLength: 12 } } } } }
+      responses:
+        '201': { description: Account created, content: { application/json: { schema: { $ref: '#/components/schemas/UserWithRecoveryCode' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /auth/password-reset:
+    post:
+      tags: [Authentication]
+      operationId: resetPassword
+      summary: Reset a password with a recovery code (lab recovery mode only)
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, recoveryCode, newPassword], properties: { username: { type: string }, recoveryCode: { type: string }, newPassword: { type: string, minLength: 12 } } } } }
+      responses:
+        '200': { description: Password changed; a new recovery code is issued, content: { application/json: { schema: { $ref: '#/components/schemas/RecoveryCode' } } } }
+        '401': { description: Username or recovery code is incorrect, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /auth/me:
     get:
+      tags: [Authentication]
       operationId: getCurrentUser
-      responses: { '200': { description: Current user }, '401': { description: Authentication required } }
+      responses:
+        '200': { description: The signed-in user, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/sessions:
+    get:
+      tags: [Authentication]
+      operationId: listOwnSessions
+      responses:
+        '200': { description: The caller's active sessions, content: { application/json: { schema: { $ref: '#/components/schemas/SessionList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/sessions/{sessionId}:
+    delete:
+      tags: [Authentication]
+      operationId: revokeOwnSession
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' } }]
+      responses:
+        '200': { description: Session revoked, content: { application/json: { schema: { $ref: '#/components/schemas/RevokedCount' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /auth/recovery-code:
+    post:
+      tags: [Authentication]
+      operationId: rotateOwnRecoveryCode
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: A new recovery code (shown once), content: { application/json: { schema: { $ref: '#/components/schemas/RecoveryCode' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '204': { description: Signed out; the session cookie is cleared }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      x-required-permission: identity.manage
+      responses:
+        '200': { description: All users, content: { application/json: { schema: { $ref: '#/components/schemas/UserList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /users/{userId}:
+    patch:
+      tags: [Users]
+      operationId: updateUser
+      summary: Change a user's status and roles (optimistic concurrency with If-Match)
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+        - { $ref: '#/components/parameters/IfMatch' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [status, roles], properties: { status: { $ref: '#/components/schemas/UserStatus' }, roles: { type: array, minItems: 1, items: { $ref: '#/components/schemas/RoleName' } } } } } }
+      responses:
+        '200': { description: Updated user, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The last active Platform Administrator cannot be removed (NUV_LAST_ADMIN_REQUIRED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+  /users/{userId}/revoke-sessions:
+    post:
+      tags: [Users]
+      operationId: revokeUserSessions
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Sessions ended, content: { application/json: { schema: { $ref: '#/components/schemas/RevokedCount' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /users/{userId}/recovery-code:
+    post:
+      tags: [Users]
+      operationId: rotateUserRecoveryCode
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: A new recovery code (shown once), content: { application/json: { schema: { $ref: '#/components/schemas/RecoveryCode' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /connections:
     get:
+      tags: [Connections]
       operationId: listConnections
-      responses: { '200': { description: Connection collection }, '401': { description: Authentication required } }
+      x-required-permission: connection.view
+      responses:
+        '200': { description: All connections (credentials are never returned), content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
+      tags: [Connections]
       operationId: createConnection
-      responses: { '201': { description: Connection created }, '403': { description: Permission or CSRF denied } }
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionCreate' } } }
+      responses:
+        '201':
+          description: Connection created
+          headers: { Location: { schema: { type: string } }, ETag: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /connections/{connectionId}:
+    parameters: [{ $ref: '#/components/parameters/ConnectionId' }]
+    get:
+      tags: [Connections]
+      operationId: getConnection
+      x-required-permission: connection.view
+      responses:
+        '200': { description: The connection, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Connections]
+      operationId: updateConnection
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { name: { type: string, minLength: 1 }, endpointUri: { type: string } } } } }
+      responses:
+        '200': { description: Updated connection, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [Connections]
+      operationId: deleteConnection
+      summary: Retire the connection (its inventory history is kept)
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: Connection retired, content: { application/json: { schema: { type: object, required: [id, name, status], properties: { id: { type: string, format: uuid }, name: { type: string }, status: { const: deleted } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /connections/{connectionId}/credentials:
+    post:
+      tags: [Connections]
+      operationId: replaceConnectionCredential
+      summary: Replace the stored credential (write-only; optimistic concurrency with If-Match)
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }, { $ref: '#/components/parameters/IfMatch' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [credential], properties: { credential: { type: object, minProperties: 1 } } } } }
+      responses:
+        '200': { description: Credential replaced, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
   /connections/{connectionId}/discover:
     post:
+      tags: [Connections]
       operationId: discoverConnectionResources
-      parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Discovery synchronization summary }, '404': { description: Connection not found }, '422': { description: Provider unavailable } }
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }]
+      responses:
+        '200': { description: Discovery synchronization summary, content: { application/json: { schema: { $ref: '#/components/schemas/DiscoverySummary' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /connections/{connectionId}/test:
     post:
+      tags: [Connections]
       operationId: testProviderConnection
-      parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Provider connection is healthy }, '401': { description: Provider authentication failed }, '403': { description: Provider permission denied }, '503': { description: Provider unavailable } }
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }]
+      responses:
+        '200': { description: The provider connection is healthy, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionTestResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /connections/{connectionId}/diagnostics:
+    get:
+      tags: [Connections]
+      operationId: getConnectionDiagnostics
+      x-required-permission: connection.view
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }, { in: query, name: limit, schema: { type: integer, minimum: 1 } }]
+      responses:
+        '200': { description: Recent checks and the last failure, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionDiagnostics' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /connections/{connectionId}/host-client:
+    post:
+      tags: [Connections]
+      operationId: openEsxiHostClient
+      summary: The URL of a standalone ESXi host's web client
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }]
+      responses:
+        '200': { description: Host Client address, content: { application/json: { schema: { type: object, required: [connectionId, url], properties: { connectionId: { type: string, format: uuid }, url: { type: string, format: uri } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /connections/{connectionId}/terminal-sessions:
+    post:
+      tags: [Connections]
+      operationId: createHostTerminalSession
+      summary: Open a short-lived SSH terminal to a standalone ESXi host (the socket itself is a WebSocket)
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ConnectionId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, password], properties: { username: { type: string, maxLength: 128 }, password: { type: string, maxLength: 1024 } } } } }
+      responses:
+        '201': { description: Terminal session created, content: { application/json: { schema: { type: object, required: [sessionId, socketUrl, expiresAt], properties: { sessionId: { type: string, format: uuid }, socketUrl: { type: string }, expiresAt: { type: string, format: date-time } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /connection-alerts:
+    get:
+      tags: [Connections]
+      operationId: listConnectionAlerts
+      x-required-permission: connection.view
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [active, acknowledged, recovered] } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200': { description: Connection health alerts, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionAlertList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /connection-alerts/{alertId}/acknowledge:
+    post:
+      tags: [Connections]
+      operationId: acknowledgeConnectionAlert
+      x-required-permission: connection.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ in: path, name: alertId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: The acknowledged alert, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionAlert' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /resources:
     get:
+      tags: [Resources]
       operationId: listResources
+      x-required-permission: resource.view
       parameters:
         - { in: query, name: connectionId, schema: { type: string, format: uuid } }
         - { in: query, name: resourceType, schema: { type: string } }
         - { in: query, name: lifecycleState, schema: { type: string } }
         - { in: query, name: search, schema: { type: string } }
-      responses: { '200': { description: Normalized infrastructure resource collection } }
-  /resources/{resourceId}:
+      responses:
+        '200': { description: Normalized infrastructure resources, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /performance/latest:
     get:
+      tags: [Resources]
+      operationId: getLatestPerformance
+      summary: The newest performance sample of every virtual machine
+      x-required-permission: resource.view
+      responses:
+        '200': { description: Latest samples, content: { application/json: { schema: { type: object, required: [items, count], properties: { items: { type: array, items: { $ref: '#/components/schemas/PerformanceSample' } }, count: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /resources/{resourceId}:
+    parameters: [{ $ref: '#/components/parameters/ResourceId' }]
+    get:
+      tags: [Resources]
       operationId: getResource
-      parameters: [{ in: path, name: resourceId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Normalized infrastructure resource }, '404': { description: Resource not found } }
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The resource, content: { application/json: { schema: { $ref: '#/components/schemas/Resource' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /resources/{resourceId}/metrics:
+    get:
+      tags: [Resources]
+      operationId: getResourceMetrics
+      x-required-permission: resource.view
+      parameters:
+        - { $ref: '#/components/parameters/ResourceId' }
+        - { in: query, name: hours, schema: { type: integer, minimum: 1, maximum: 168 } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200': { description: Performance history, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceMetrics' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /resources/{resourceId}/operations:
     post:
+      tags: [Resources]
       operationId: createResourceOperation
+      summary: Start, stop, restart, pause or power off a VM (idempotent)
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
-        - { in: path, name: resourceId, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/ResourceId' }
         - { in: header, name: Idempotency-Key, required: true, schema: { type: string } }
-      responses: { '202': { description: Lifecycle task accepted }, '200': { description: Existing idempotent task }, '409': { description: State or concurrency conflict }, '422': { description: Unsupported operation } }
-  /audit-events:
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [operation], properties: { operation: { $ref: '#/components/schemas/LifecycleOperation' } } } } }
+      responses:
+        '202': { description: Lifecycle task accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '200': { description: The task already created with this Idempotency-Key, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '400': { description: Idempotency-Key is missing, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /resources/{resourceId}/settings:
+    parameters: [{ $ref: '#/components/parameters/ResourceId' }]
     get:
-      operationId: listAuditEvents
-      responses: { '200': { description: Audit event collection }, '403': { description: Permission denied } }
-  /platform/metrics:
+      tags: [Resources]
+      operationId: getResourceSettings
+      summary: Virtual machine settings (ESXi and vCenter VMs)
+      x-required-permission: resource.view
+      responses:
+        '200': { description: Settings and hardware summary, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceSettings' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    patch:
+      tags: [Resources]
+      operationId: updateResourceSettings
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ResourceSettingsUpdate' } } }
+      responses:
+        '200': { description: Settings changed, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderActionResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/snapshots:
+    parameters: [{ $ref: '#/components/parameters/ResourceId' }]
     get:
-      operationId: getPlatformMetrics
-      responses: { '200': { description: Platform metrics }, '403': { description: Permission denied } }
-  /health:
+      tags: [Resources]
+      operationId: listResourceSnapshots
+      x-required-permission: resource.view
+      responses:
+        '200': { description: Snapshot tree, content: { application/json: { schema: { $ref: '#/components/schemas/SnapshotList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    post:
+      tags: [Resources]
+      operationId: createResourceSnapshot
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 80 }, description: { type: string, maxLength: 512 }, includeMemory: { type: boolean }, quiesce: { type: boolean } } } } }
+      responses:
+        '201': { description: Snapshot created, content: { application/json: { schema: { $ref: '#/components/schemas/SnapshotResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/snapshots/{snapshotId}:
+    delete:
+      tags: [Resources]
+      operationId: deleteResourceSnapshot
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ResourceId' }, { $ref: '#/components/parameters/SnapshotId' }]
+      responses:
+        '200': { description: Snapshot deleted, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderActionResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/snapshots/{snapshotId}/revert:
+    post:
+      tags: [Resources]
+      operationId: revertResourceSnapshot
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ResourceId' }, { $ref: '#/components/parameters/SnapshotId' }]
+      responses:
+        '200': { description: VM reverted to the snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderActionResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/media:
+    parameters: [{ $ref: '#/components/parameters/ResourceId' }]
     get:
-      operationId: getHealth
-      responses: { '200': { description: Platform health } }
+      tags: [Resources]
+      operationId: getResourceMedia
+      summary: CD/DVD drives and available images
+      x-required-permission: resource.view
+      responses:
+        '200': { description: Drives, datastores and images, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceMedia' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    post:
+      tags: [Resources]
+      operationId: mountResourceMedia
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [driveId, isoPath], properties: { driveId: { type: string, minLength: 1, maxLength: 128 }, isoPath: { type: string, minLength: 1, maxLength: 1024 } } } } }
+      responses:
+        '200': { description: Image mounted, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderActionResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/media/browse:
+    get:
+      tags: [Resources]
+      operationId: browseResourceMedia
+      summary: Browse ISO files on a Workstation host drive
+      x-required-permission: resource.operate
+      parameters: [{ $ref: '#/components/parameters/ResourceId' }, { in: query, name: path, schema: { type: string, maxLength: 1024 } }]
+      responses:
+        '200': { description: A folder listing, content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/media/{driveId}:
+    delete:
+      tags: [Resources]
+      operationId: ejectResourceMedia
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ResourceId' }, { in: path, name: driveId, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }]
+      responses:
+        '200': { description: Image ejected, content: { application/json: { schema: { $ref: '#/components/schemas/ProviderActionResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /resources/{resourceId}/console-sessions:
+    post:
+      tags: [Resources]
+      operationId: createConsoleSession
+      summary: Open an embedded console (the socket itself is a WebSocket)
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/ResourceId' }]
+      responses:
+        '201': { description: Console session created, content: { application/json: { schema: { $ref: '#/components/schemas/ConsoleSession' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /tasks:
     get:
+      tags: [Tasks]
       operationId: listTasks
-      responses: { '200': { description: Task collection } }
+      x-required-permission: resource.view
+      responses:
+        '200': { description: Recent tasks, newest first, content: { application/json: { schema: { $ref: '#/components/schemas/TaskList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /tasks/{taskId}:
     get:
+      tags: [Tasks]
       operationId: getTask
-      parameters: [{ in: path, name: taskId, required: true, schema: { type: string, format: uuid } }]
-      responses: { '200': { description: Task }, '404': { description: Not found } }
+      x-required-permission: resource.view
+      parameters: [{ $ref: '#/components/parameters/TaskId' }]
+      responses:
+        '200': { description: The task with its attempts, content: { application/json: { schema: { $ref: '#/components/schemas/TaskDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tasks/{taskId}/cancel:
+    post:
+      tags: [Tasks]
+      operationId: cancelTask
+      summary: Cancel a task that has not started
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/TaskId' }]
+      responses:
+        '200': { description: Task cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tasks/{taskId}/retry:
+    post:
+      tags: [Tasks]
+      operationId: retryTask
+      summary: Run a failed task again
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/TaskId' }]
+      responses:
+        '202': { description: Task queued again, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tasks/{taskId}/reconcile:
+    post:
+      tags: [Tasks]
+      operationId: reconcileTask
+      summary: Check a verification-required task against the provider and settle it
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/TaskId' }]
+      responses:
+        '200': { description: Reconciliation outcome, content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /mock/operations:
     post:
+      tags: [Mock]
       operationId: createMockOperation
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters: [{ in: header, name: Idempotency-Key, required: true, schema: { type: string } }]
-      responses: { '201': { description: Task created } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [operation], properties: { operation: { $ref: '#/components/schemas/LifecycleOperation' }, targetId: { type: string } } } } }
+      responses:
+        '201': { description: Task created, headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '200': { description: The task already created with this Idempotency-Key, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '400': { description: Idempotency-Key is missing, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /audit-events:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      x-required-permission: audit.view
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 250, default: 100 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: action, schema: { type: string } }
+        - { in: query, name: outcome, schema: { type: string } }
+        - { in: query, name: search, schema: { type: string } }
+      responses:
+        '200': { description: A page of audit events, newest first, content: { application/json: { schema: { $ref: '#/components/schemas/AuditEventPage' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /agents:
+    get:
+      tags: [Agents]
+      operationId: listAgents
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: Enrolled Workstation agents, content: { application/json: { schema: { $ref: '#/components/schemas/AgentList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agents/enrollment-tokens:
+    post:
+      tags: [Agents]
+      operationId: createAgentEnrollmentToken
+      summary: A single-use token (valid for 10 minutes) for enrolling one agent; shown once
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '201': { description: Enrollment token, content: { application/json: { schema: { type: object, required: [id, token, expiresAt], properties: { id: { type: string, format: uuid }, token: { type: string }, expiresAt: { type: string, format: date-time } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agents/enroll:
+    post:
+      tags: [Agents]
+      operationId: enrollAgent
+      summary: Exchange an enrollment token for the agent's identity and secret (no sign-in; the token is the credential)
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string }, name: { type: string }, version: { type: string } } } } }
+      responses:
+        '201': { description: Agent enrolled, content: { application/json: { schema: { type: object, required: [agentId, secret, enrolledAt], properties: { agentId: { type: string, format: uuid }, secret: { type: string }, enrolledAt: { type: string, format: date-time } } } } } }
+        '401': { description: The token is invalid, expired or already used (NUV_AGENT_ENROLLMENT_INVALID), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /agents/maintenance/sweep:
+    post:
+      tags: [Agents]
+      operationId: sweepAgents
+      summary: Mark silent agents offline and expire undelivered commands
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { offlineAfterMs: { type: integer, minimum: 1, default: 120000 } } } } }
+      responses:
+        '200': { description: Sweep result, content: { application/json: { schema: { type: object, required: [offline, expiredCommands, sweptAt], properties: { offline: { type: integer }, expiredCommands: { type: integer }, sweptAt: { type: string, format: date-time } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent-upgrades/releases:
+    post:
+      tags: [Agents]
+      operationId: registerAgentRelease
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [version, artifactUrl, sha256, sizeBytes], properties: { version: { type: string }, artifactUrl: { type: string, pattern: '^https://' }, sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }, sizeBytes: { type: integer, minimum: 1 } } } } }
+      responses:
+        '201': { description: Release registered and signed, content: { application/json: { schema: { $ref: '#/components/schemas/AgentRelease' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /agents/{agentId}/rotate-secret:
+    post:
+      tags: [Agents]
+      operationId: rotateAgentSecret
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      responses:
+        '200': { description: New secret (shown once), content: { application/json: { schema: { type: object, required: [agentId, secret, rotatedAt], properties: { agentId: { type: string, format: uuid }, secret: { type: string }, rotatedAt: { type: string, format: date-time } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /agents/{agentId}/revoke:
+    post:
+      tags: [Agents]
+      operationId: revokeAgent
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } }
+      responses:
+        '200': { description: The revoked agent; queued commands are rejected, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /agents/{agentId}/upgrades:
+    get:
+      tags: [Agents]
+      operationId: listAgentPendingUpgrades
+      summary: Called by the agent itself
+      security: [{ agentSecret: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      responses:
+        '200': { description: Upgrades staged for this agent, content: { application/json: { schema: { type: object, required: [items, count], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentUpgradeDeployment' } }, count: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+    post:
+      tags: [Agents]
+      operationId: stageAgentUpgrade
+      summary: Stage a registered release for one agent
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [releaseId], properties: { releaseId: { type: string, format: uuid } } } } }
+      responses:
+        '201': { description: Upgrade staged, content: { application/json: { schema: { $ref: '#/components/schemas/AgentUpgradeDeployment' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /agents/{agentId}/upgrades/{deploymentId}/report:
+    post:
+      tags: [Agents]
+      operationId: reportAgentUpgrade
+      summary: Called by the agent itself
+      security: [{ agentSecret: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }, { in: path, name: deploymentId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [downloading, ready, installed, failed, rolled_back] }, rollbackVersion: { type: [string, 'null'] }, detail: { type: [string, object, 'null'] } } } } }
+      responses:
+        '200': { description: Report recorded, content: { application/json: { schema: { $ref: '#/components/schemas/AgentUpgradeDeployment' } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /agents/{agentId}/heartbeat:
+    post:
+      tags: [Agents]
+      operationId: agentHeartbeat
+      summary: Called by the agent itself every few seconds with its version, discovered VMs and diagnostics
+      security: [{ agentSecret: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { version: { type: string }, inventory: { type: array, items: { type: object } }, diagnostics: { type: [object, 'null'] } } } } }
+      responses:
+        '200': { description: The agent's record, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+  /agents/{agentId}/commands:
+    get:
+      tags: [Agents]
+      operationId: listAgentPendingCommands
+      summary: Called by the agent itself; returns the signed commands waiting for it
+      security: [{ agentSecret: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      responses:
+        '200': { description: Signed commands, content: { application/json: { schema: { type: object, required: [items, count], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentCommand' } }, count: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+    post:
+      tags: [Agents]
+      operationId: createAgentCommand
+      summary: Queue a signed command (start, stop, power off, restart, pause, console, media) for one agent
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [operation], properties: { operation: { type: string, enum: [start, stop, power_off, reboot_guest, restart, pause, console, media.browse, media.mount, media.eject] }, targetId: { type: string }, ttlMs: { type: integer, minimum: 1, default: 60000 } } } } }
+      responses:
+        '201': { description: Command queued; the signature covers the payload, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCommand' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /agents/{agentId}/commands/{commandId}/ack:
+    post:
+      tags: [Agents]
+      operationId: acknowledgeAgentCommand
+      summary: Called by the agent itself; a command can be acknowledged once
+      security: [{ agentSecret: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }, { in: path, name: commandId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string, enum: [completed, failed, rejected] }, result: { type: [object, 'null'] } } } } }
+      responses:
+        '200': { description: The command with its recorded result, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCommandResult' } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: nuvrion_session, description: HttpOnly session cookie set by login. }
+    csrfHeader: { type: apiKey, in: header, name: X-CSRF-Token, description: The session's CSRF token (returned by login); required on every request that changes something. }
+    agentSecret: { type: apiKey, in: header, name: X-Agent-Secret, description: The secret issued to an enrolled Workstation agent. }
+  parameters:
+    UserId: { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+    ConnectionId: { in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }
+    ResourceId: { in: path, name: resourceId, required: true, schema: { type: string, format: uuid } }
+    TaskId: { in: path, name: taskId, required: true, schema: { type: string, format: uuid } }
+    AgentId: { in: path, name: agentId, required: true, schema: { type: string, format: uuid } }
+    SnapshotId: { in: path, name: snapshotId, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    IfMatch: { in: header, name: If-Match, required: true, description: 'The row version being changed, quoted, as returned in the ETag or rowVersion.', schema: { type: string } }
+  responses:
+    Unauthorized: { description: Not signed in (NUV_AUTH_REQUIRED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    AgentUnauthorized: { description: Agent authentication failed (NUV_AGENT_AUTH_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Forbidden: { description: 'The role lacks the permission (NUV_PERMISSION_DENIED) or the CSRF token is missing or wrong (NUV_CSRF_INVALID)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    NotFound: { description: The thing asked for does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Conflict: { description: The request conflicts with the current state, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Unprocessable: { description: The request is understood but not valid or not supported here, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PreconditionFailed: { description: The If-Match version is stale (NUV_VERSION_CONFLICT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PreconditionRequired: { description: If-Match is required (NUV_PRECONDITION_REQUIRED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Throttled: { description: Too many failed sign-ins; try again after Retry-After seconds (NUV_LOGIN_THROTTLED), headers: { Retry-After: { schema: { type: integer } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Unavailable: { description: The provider is unreachable or failing; retry later, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+
+  schemas:
+    Problem:
+      description: The error body of every non-2xx response.
+      type: object
+      required: [type, title, status, detail, code, correlationId, retryable]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        code: { type: string, pattern: '^NUV_[A-Z0-9_]+$' }
+        correlationId: { type: string, format: uuid }
+        retryable: { type: boolean }
+    ItemList:
+      type: object
+      required: [items, count]
+      properties: { items: { type: array }, count: { type: integer, minimum: 0 } }
+    ListMeta:
+      type: object
+      required: [correlationId]
+      properties: { correlationId: { type: string, format: uuid } }
+    Health:
+      type: object
+      required: [status, version, correlationId, components, metrics]
+      properties:
+        status: { type: string }
+        version: { type: string }
+        correlationId: { type: string, format: uuid }
+        components: { type: object, required: [api, database, broker, worker], properties: { api: { type: string }, database: { type: string }, broker: { type: string }, worker: { type: string }, mockProvider: { type: string } } }
+        metrics: { $ref: '#/components/schemas/PlatformMetricsCounts' }
+    Readiness:
+      type: object
+      required: [status, components, issues, profile, correlationId]
+      properties:
+        status: { type: string, enum: [ready, not_ready, degraded] }
+        components: { type: object }
+        issues: { type: array }
+        profile: { type: string }
+        correlationId: { type: string, format: uuid }
+    PlatformMetricsCounts:
+      type: object
+      required: [tasksTotal, tasksQueued, tasksRunning, tasksCompleted, tasksFailed, auditEvents, outboxUnpublished, resourcesTotal, resourcesActive, resourcesMissing]
+      properties:
+        tasksTotal: { type: integer }
+        tasksQueued: { type: integer }
+        tasksRunning: { type: integer }
+        tasksCompleted: { type: integer }
+        tasksFailed: { type: integer }
+        auditEvents: { type: integer }
+        outboxUnpublished: { type: integer }
+        resourcesTotal: { type: integer }
+        resourcesActive: { type: integer }
+        resourcesMissing: { type: integer }
+    PlatformMetrics:
+      allOf:
+        - { $ref: '#/components/schemas/PlatformMetricsCounts' }
+        - { type: object, required: [correlationId], properties: { correlationId: { type: string, format: uuid } } }
+    PlatformUpgradeStatus:
+      type: object
+      required: [currentVersion, helperAvailable, status]
+      properties:
+        currentVersion: { type: string }
+        helperAvailable: { type: boolean }
+        status: { type: object, required: [state, message], properties: { state: { type: string }, message: { type: string }, updatedAt: { type: [string, 'null'], format: date-time } } }
+        staged: { type: [object, 'null'] }
+    StagedUpgrade:
+      type: object
+      required: [uploadId, sha256, sizeBytes]
+      properties: { uploadId: { type: string }, fileName: { type: [string, 'null'] }, sha256: { type: string }, sizeBytes: { type: integer }, stagedAt: { type: string, format: date-time } }
+
+    UserStatus: { type: string, enum: [active, pending, locked, disabled] }
+    RoleName: { type: string, enum: [platform_admin, operator, auditor] }
+    User:
+      type: object
+      required: [id, username, displayName, status, roles, permissions, rowVersion]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        roles: { type: array, items: { $ref: '#/components/schemas/RoleName' } }
+        permissions: { type: array, items: { type: string } }
+        rowVersion: { type: integer, minimum: 1 }
+    UserWithRecoveryCode:
+      type: object
+      required: [user, recoveryCode]
+      properties: { user: { $ref: '#/components/schemas/User' }, recoveryCode: { type: string } }
+    RecoveryCode:
+      type: object
+      required: [recoveryCode]
+      properties: { recoveryCode: { type: string } }
+    RevokedCount:
+      type: object
+      required: [revoked]
+      properties: { revoked: { type: integer, minimum: 0 } }
+    UserList:
+      type: object
+      required: [items, nextCursor, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/User' } }
+        nextCursor: { type: [string, 'null'] }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    SessionPolicy:
+      type: object
+      required: [idleTimeoutMs, absoluteTimeoutMs]
+      properties: { idleTimeoutMs: { type: integer }, absoluteTimeoutMs: { type: integer } }
+    AuthSession:
+      type: object
+      required: [user, csrfToken, expiresAt, sessionPolicy]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrfToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+        sessionPolicy: { $ref: '#/components/schemas/SessionPolicy' }
+    SessionInfo:
+      type: object
+      required: [id, createdAt, lastSeenAt, idleExpiresAt, absoluteExpiresAt, current]
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        idleExpiresAt: { type: string, format: date-time }
+        absoluteExpiresAt: { type: string, format: date-time }
+        current: { type: boolean }
+    SessionList:
+      type: object
+      required: [items, count, sessionPolicy]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SessionInfo' } }
+        count: { type: integer }
+        sessionPolicy: { $ref: '#/components/schemas/SessionPolicy' }
+
+    ProviderType: { type: string, enum: [vmware_vsphere, vmware_workstation, aws, azure] }
+    ConnectionCreate:
+      type: object
+      required: [name, providerType, credential]
+      properties:
+        name: { type: string, minLength: 1 }
+        providerType: { $ref: '#/components/schemas/ProviderType' }
+        connectionType: { type: string }
+        endpointUri: { type: [string, 'null'] }
+        credential: { type: object, minProperties: 1, description: Write-only; never returned. }
+        configuration: { type: object }
+    Connection:
+      type: object
+      required: [id, name, providerType, connectionType, endpointUri, configuration, status, healthState, lastSuccessAt, lastSyncAt, resourceCount, consecutiveFailures, lastErrorCode, nextRetryAt, rowVersion, createdAt, updatedAt, etag]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        providerType: { $ref: '#/components/schemas/ProviderType' }
+        connectionType: { type: string }
+        endpointUri: { type: [string, 'null'] }
+        configuration: { type: object }
+        status: { type: string, enum: [enabled, disabled, deleted] }
+        healthState: { type: string }
+        lastSuccessAt: { type: [string, 'null'], format: date-time }
+        lastSyncAt: { type: [string, 'null'], format: date-time }
+        resourceCount: { type: integer, minimum: 0 }
+        consecutiveFailures: { type: integer, minimum: 0 }
+        lastErrorCode: { type: [string, 'null'] }
+        nextRetryAt: { type: [string, 'null'], format: date-time }
+        rowVersion: { type: integer, minimum: 1 }
+        createdBy: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        etag: { type: string }
+      not: { anyOf: [{ required: [credential] }, { required: [secret] }, { required: [password] }], description: Credentials are never returned. }
+    ConnectionList:
+      type: object
+      required: [items, nextCursor, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Connection' } }
+        nextCursor: { type: [string, 'null'] }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    DiscoverySummary:
+      type: object
+      required: [connectionId, observedAt, discovered, created, updated, missing]
+      properties:
+        connectionId: { type: string, format: uuid }
+        observedAt: { type: string, format: date-time }
+        discovered: { type: integer }
+        created: { type: integer }
+        updated: { type: integer }
+        missing: { type: integer }
+        metricsRecorded: { type: integer }
+        reconciliation: { type: array }
+    ConnectionTestResult:
+      type: object
+      required: [status]
+      properties: { status: { type: string }, provider: { type: string } }
+    ConnectionDiagnostics:
+      type: object
+      required: [connection, items, count, lastFailure, stale]
+      properties:
+        connection: { type: object, required: [id, name, providerType, healthState, consecutiveFailures], properties: { id: { type: string, format: uuid }, name: { type: string }, providerType: { type: string }, healthState: { type: string }, lastSuccessAt: { type: [string, 'null'] }, lastSyncAt: { type: [string, 'null'] }, consecutiveFailures: { type: integer }, lastErrorCode: { type: [string, 'null'] }, nextRetryAt: { type: [string, 'null'] } } }
+        items: { type: array, items: { type: object, required: [id, connectionId, checkType, outcome, durationMs, checkedAt], properties: { id: { type: string, format: uuid }, connectionId: { type: string, format: uuid }, checkType: { type: string }, outcome: { type: string, enum: [succeeded, failed] }, errorCode: { type: [string, 'null'] }, durationMs: { type: integer }, checkedAt: { type: string, format: date-time } } } }
+        count: { type: integer }
+        lastFailure: { type: [object, 'null'] }
+        stale: { type: boolean }
+    ConnectionAlert:
+      type: object
+      required: [id, connectionId, connectionName, severity, status, errorCode, occurrenceCount, openedAt, lastSeenAt, acknowledgedAt, acknowledgedBy, recoveredAt]
+      properties:
+        id: { type: string, format: uuid }
+        connectionId: { type: string, format: uuid }
+        connectionName: { type: string }
+        severity: { type: string }
+        status: { type: string, enum: [active, acknowledged, recovered] }
+        errorCode: { type: [string, 'null'] }
+        occurrenceCount: { type: integer, minimum: 1 }
+        openedAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        acknowledgedAt: { type: [string, 'null'], format: date-time }
+        acknowledgedBy: { type: [string, 'null'], format: uuid }
+        recoveredAt: { type: [string, 'null'], format: date-time }
+    ConnectionAlertList:
+      type: object
+      required: [items, count, activeCount, criticalCount]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ConnectionAlert' } }
+        count: { type: integer }
+        activeCount: { type: integer }
+        criticalCount: { type: integer }
+
+    Capability:
+      type: object
+      required: [operation, enabled]
+      properties:
+        operation: { type: string }
+        enabled: { type: boolean }
+        providerSemantics: { type: string }
+        reason: { type: [string, 'null'] }
+    Resource:
+      type: object
+      required: [id, connectionId, providerType, resourceType, nativeId, name, lifecycleState, healthState, observedAt, firstSeenAt, lastSeenAt, version, attributes, capabilities]
+      properties:
+        id: { type: string, format: uuid }
+        connectionId: { type: string, format: uuid }
+        providerType: { $ref: '#/components/schemas/ProviderType' }
+        resourceType: { type: string }
+        nativeId: { type: string }
+        name: { type: string }
+        lifecycleState: { type: string, enum: [active, missing, deleted] }
+        healthState: { type: string }
+        observedAt: { type: string, format: date-time }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        missingSince: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+        attributes: { type: object, properties: { powerState: { type: string }, guestOs: { type: [string, 'null'] }, vcpuCount: { type: [integer, 'null'] }, memoryBytes: { type: [integer, 'null'] }, storageBytes: { type: [integer, 'null'] }, privateIps: { type: array, items: { type: string } } } }
+        providerMetadata: { type: object }
+        providerMetadataHash: { type: string }
+        capabilities: { type: array, items: { $ref: '#/components/schemas/Capability' } }
+    ResourceList:
+      type: object
+      required: [items, nextCursor, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Resource' } }
+        nextCursor: { type: [string, 'null'] }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    ResourceRef:
+      type: object
+      required: [id, name, providerType]
+      properties: { id: { type: string, format: uuid }, name: { type: string }, providerType: { type: string } }
+    PerformanceSample:
+      type: object
+      required: [id, resourceId, observedAt, source]
+      properties:
+        id: { type: string, format: uuid }
+        resourceId: { type: string, format: uuid }
+        observedAt: { type: string, format: date-time }
+        cpuUtilizationPercent: { type: [number, 'null'] }
+        cpuUsageMhz: { type: [number, 'null'] }
+        memoryUtilizationPercent: { type: [number, 'null'] }
+        memoryUsedBytes: { type: [number, 'null'] }
+        memoryActiveBytes: { type: [number, 'null'] }
+        storageUsedBytes: { type: [number, 'null'] }
+        networkRxBytesPerSec: { type: [number, 'null'] }
+        networkTxBytesPerSec: { type: [number, 'null'] }
+        source: { type: string }
+    ResourceMetrics:
+      type: object
+      required: [resource, latest, items, count, hours, available]
+      properties:
+        resource: { $ref: '#/components/schemas/ResourceRef' }
+        latest: { oneOf: [{ $ref: '#/components/schemas/PerformanceSample' }, { type: 'null' }] }
+        items: { type: array, items: { $ref: '#/components/schemas/PerformanceSample' } }
+        count: { type: integer }
+        hours: { type: integer, minimum: 1, maximum: 168 }
+        available: { type: boolean }
+    ResourceSettings:
+      type: object
+      required: [resource, provider, settings]
+      properties:
+        resource: { $ref: '#/components/schemas/ResourceRef' }
+        provider: { type: string }
+        settings: { type: object, required: [name, powerState, cpuCount, memoryMB], properties: { name: { type: string }, annotation: { type: string }, guestId: { type: string }, powerState: { type: string }, cpuCount: { type: integer }, coresPerSocket: { type: integer }, memoryMB: { type: integer }, hardware: { type: object } } }
+    ResourceSettingsUpdate:
+      description: Any of the editable settings. Fields that are not listed here are ignored; a listed field outside its range is a 422.
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        annotation: { type: string, maxLength: 1024 }
+        cpuCount: { type: integer, minimum: 1, maximum: 768 }
+        coresPerSocket: { type: integer, minimum: 1, maximum: 768 }
+        memoryMB: { type: integer, minimum: 4, maximum: 25165824 }
+        bootDelayMs: { type: integer, minimum: 0, maximum: 600000 }
+    ProviderActionResult:
+      description: What a provider action (settings change, snapshot delete or revert, media mount or eject) reports; some add details such as snapshotId, isoPath or drive.
+      type: object
+      required: [code, summary]
+      properties: { code: { type: string }, summary: { type: string }, snapshotId: { type: string }, isoPath: { type: string }, drive: { type: object } }
+    Snapshot:
+      type: object
+      required: [id, name, createdAt]
+      properties: { id: { type: string }, name: { type: string }, description: { type: string }, createdAt: { type: string, format: date-time }, powerState: { type: string }, quiesced: { type: boolean }, includeMemory: { type: boolean }, current: { type: boolean }, parentId: { type: [string, 'null'] }, depth: { type: integer }, childCount: { type: integer } }
+    SnapshotList:
+      type: object
+      required: [resource, provider, currentSnapshotId, items]
+      properties:
+        resource: { $ref: '#/components/schemas/ResourceRef' }
+        provider: { type: string }
+        currentSnapshotId: { type: [string, 'null'] }
+        items: { type: array, items: { $ref: '#/components/schemas/Snapshot' } }
+    SnapshotResult:
+      allOf:
+        - { $ref: '#/components/schemas/ProviderActionResult' }
+        - { type: object, required: [snapshot, items], properties: { snapshot: { $ref: '#/components/schemas/Snapshot' }, currentSnapshotId: { type: [string, 'null'] }, items: { type: array, items: { $ref: '#/components/schemas/Snapshot' } } } }
+    ResourceMedia:
+      type: object
+      required: [resource, provider, drives]
+      properties:
+        resource: { $ref: '#/components/schemas/ResourceRef' }
+        provider: { type: string }
+        drives: { type: array, items: { type: object, required: [id, connected], properties: { id: { type: string }, label: { type: string }, media: { type: [string, 'null'] }, connected: { type: boolean }, startConnected: { type: boolean } } } }
+        datastores: { type: array }
+        images: { type: array }
+        warnings: { type: array }
+    ConsoleSession:
+      type: object
+      required: [sessionId, resourceId, consoleUrl, transport, expiresAt]
+      properties:
+        sessionId: { type: string, format: uuid }
+        resourceId: { type: string, format: uuid }
+        consoleUrl: { type: string }
+        transport: { type: string }
+        expiresAt: { type: string, format: date-time }
+        credential: { type: object, description: One-time console credential, present only for some transports. }
+
+    LifecycleOperation: { type: string, enum: [start, stop, power_off, reboot_guest, restart, pause] }
+    TaskStatus: { type: string, enum: [queued, running, completed, failed, cancelled, verification_required] }
+    TaskError:
+      type: object
+      required: [code]
+      properties: { code: { type: string }, detail: { type: string }, retryable: { type: boolean } }
+    Task:
+      type: object
+      required: [id, operation, status, target, correlationId, queuedAt, startedAt, completedAt, progress, result, error]
+      properties:
+        id: { type: string, format: uuid }
+        operation: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        target: { type: object, required: [id, type], properties: { id: { type: string }, type: { type: string } } }
+        providerNativeId: { type: [string, 'null'] }
+        connectionId: { type: [string, 'null'], format: uuid }
+        requestedBy: { oneOf: [{ type: object, required: [id, username], properties: { id: { type: string, format: uuid }, username: { type: string } } }, { type: 'null' }] }
+        correlationId: { type: string, format: uuid }
+        queuedAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        progress: { type: object, required: [current, total, messageCode], properties: { current: { type: integer }, total: { type: integer }, messageCode: { type: string } } }
+        result: { type: [object, 'null'] }
+        error: { oneOf: [{ $ref: '#/components/schemas/TaskError' }, { type: 'null' }] }
+        retryAt: { type: [string, 'null'], format: date-time }
+        providerReference: { type: [string, 'null'] }
+        overrodeTaskId: { type: [string, 'null'], format: uuid }
+    TaskAttempt:
+      type: object
+      required: [id, taskId, attemptNo, workerId, startedAt]
+      properties: { id: { type: string, format: uuid }, taskId: { type: string, format: uuid }, attemptNo: { type: integer, minimum: 1 }, workerId: { type: string }, startedAt: { type: string, format: date-time }, completedAt: { type: [string, 'null'], format: date-time }, outcome: { type: [string, 'null'] } }
+    TaskDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Task' }
+        - { type: object, required: [attempts], properties: { attempts: { type: array, items: { $ref: '#/components/schemas/TaskAttempt' } } } }
+    TaskList:
+      type: object
+      required: [items, nextCursor, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Task' } }
+        nextCursor: { type: [string, 'null'] }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    AuditEvent:
+      type: object
+      required: [id, occurredAt, actorType, action, correlationId, outcome, detail]
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        actorType: { type: string }
+        actorId: { type: [string, 'null'], format: uuid }
+        actorName: { type: [string, 'null'] }
+        action: { type: string }
+        targetType: { type: [string, 'null'] }
+        targetId: { type: [string, 'null'] }
+        taskId: { type: [string, 'null'], format: uuid }
+        correlationId: { type: string, format: uuid }
+        outcome: { type: string }
+        detail: { type: object }
+    AuditEventPage:
+      type: object
+      required: [items, nextCursor, count, page, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+        nextCursor: { type: [string, 'null'] }
+        count: { type: integer, description: Total events matching the filter. }
+        page: { type: object, required: [limit, offset], properties: { limit: { type: integer }, offset: { type: integer } } }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+
+    AgentCompatibility:
+      type: object
+      required: [compatible, upgradeRequired, upgradeAvailable, agentVersion]
+      properties: { compatible: { type: boolean }, upgradeRequired: { type: boolean }, upgradeAvailable: { type: boolean }, minimumVersion: { type: string }, recommendedVersion: { type: string }, agentVersion: { type: string } }
+    Agent:
+      type: object
+      required: [id, name, version, status, enrolledAt, lastHeartbeatAt, compatibility]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        version: { type: string }
+        status: { type: string, enum: [online, offline, revoked] }
+        enrolledAt: { type: string, format: date-time }
+        lastHeartbeatAt: { type: string, format: date-time }
+        inventory: { type: array }
+        diagnostics: { type: [object, 'null'] }
+        compatibility: { $ref: '#/components/schemas/AgentCompatibility' }
+        revokedAt: { type: string, format: date-time }
+        revocationReason: { type: string }
+        secretRotatedAt: { type: string, format: date-time }
+      not: { anyOf: [{ required: [secret] }, { required: [secretHash] }], description: The agent's secret is never returned after enrollment or rotation. }
+    AgentList:
+      type: object
+      required: [items, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Agent' } }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    AgentCommand:
+      description: A command signed with the agent's secret (HMAC-SHA256 over the payload).
+      type: object
+      required: [payload, signature]
+      properties:
+        payload: { type: object, required: [commandId, agentId, operation, issuedAt, expiresAt, nonce], properties: { commandId: { type: string, format: uuid }, agentId: { type: string, format: uuid }, operation: { type: string }, targetId: { type: [string, 'null'] }, issuedAt: { type: string, format: date-time }, expiresAt: { type: string, format: date-time }, nonce: { type: string } } }
+        signature: { type: string, minLength: 1 }
+    AgentCommandResult:
+      type: object
+      required: [commandId, agentId, operation, issuedAt, expiresAt, nonce, status, completedAt]
+      properties: { commandId: { type: string, format: uuid }, agentId: { type: string, format: uuid }, operation: { type: string }, targetId: { type: [string, 'null'] }, issuedAt: { type: string }, expiresAt: { type: string }, nonce: { type: string }, requestedBy: { type: [string, 'null'] }, status: { type: string, enum: [completed, failed, rejected] }, result: { type: [object, 'null'] }, completedAt: { type: string, format: date-time } }
+    AgentUpgradeDeployment:
+      type: object
+      required: [deploymentId, agentId, releaseId, status, stagedAt]
+      properties:
+        deploymentId: { type: string, format: uuid }
+        agentId: { type: string, format: uuid }
+        releaseId: { type: string, format: uuid }
+        status: { type: string }
+        stagedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        rollbackVersion: { type: [string, 'null'] }
+        detail: { type: [string, object, 'null'] }
+        release: { $ref: '#/components/schemas/AgentRelease' }
+        trustedPublicKey: { type: string }
+    AgentRelease:
+      type: object
+      required: [manifest, signature]
+      properties:
+        manifest: { type: object, required: [releaseId, version, artifactUrl, sha256, sizeBytes, signingKeyId, createdAt], properties: { releaseId: { type: string, format: uuid }, version: { type: string }, artifactUrl: { type: string }, sha256: { type: string, pattern: '^[a-f0-9]{64}$' }, sizeBytes: { type: integer }, signingKeyId: { type: string }, createdAt: { type: string, format: date-time } } }
+        signature: { type: string }
