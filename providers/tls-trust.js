@@ -8,7 +8,7 @@ export function probeSshHostKeyFingerprint(hostname,port=22){
   return new Promise(resolve=>{
     let fingerprint=null,settled=false;
     const client=new SshClient(),finish=()=>{if(settled)return;settled=true;client.end();resolve(fingerprint);};
-    client.on('ready',finish).on('error',finish).connect({host:hostname,port,username:'nuvrion-host-key-probe',password:'nuvrion-host-key-probe',readyTimeout:5000,hostVerifier:key=>{fingerprint=`SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/,'')}`;return true;}});
+    client.on('ready',finish).on('error',finish).connect({host:hostname,port,username:'nuvrion-host-key-probe',password:'nuvrion-host-key-probe'/* secret-scan:allow dummy login used only to read the SSH host key */,readyTimeout:5000,hostVerifier:key=>{fingerprint=`SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/,'')}`;return true;}});
     setTimeout(finish,6000).unref();
   });
 }
