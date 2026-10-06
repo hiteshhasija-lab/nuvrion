@@ -1,5 +1,5 @@
-# Runs on every push to main and on pull requests. Needs no dependencies, secrets or network access to the lab:
-# the tests and syntax checks use only Node itself, and read-only repository access.
+# Runs on every push to main and on pull requests. Needs no secrets or network access to the lab: the checks use Node,
+# the declared npm dependencies and a throwaway PostgreSQL container, with read-only repository access.
 name: CI
 
 on:
@@ -18,6 +18,21 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # A real PostgreSQL, the same major version production runs (postgres:16-alpine), pinned by digest. It is used only by
+    # the database tests, which create and drop their own throwaway databases; it holds no real data and is gone after the run.
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-throwaway # secret-scan:allow (disposable CI container, not a credential)
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       # Actions are pinned to exact commits (the comment names the release) so a moved tag cannot change what runs.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -39,5 +54,9 @@ jobs:
       # The authorization tests start the API in-process, so they need the declared dependencies. Lifecycle scripts are not run.
       - name: Install dependencies
         run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
-      - name: Tests
+      # NUVRION_REQUIRE_DATABASE_TESTS makes the database tests fail, rather than skip, if the database is not reachable.
+      - name: Tests (including PostgreSQL migration and task-store tests)
+        env:
+          NUVRION_TEST_DATABASE_URL: postgres://ci:ci-only-throwaway@127.0.0.1:5432/postgres # secret-scan:allow (disposable CI container)
+          NUVRION_REQUIRE_DATABASE_TESTS: '1'
         run: npm test
