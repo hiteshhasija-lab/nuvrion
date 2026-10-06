@@ -48,3 +48,16 @@ After a validated deploy the script also tidies up (best effort, same rule: it n
 
 Measured on NOVAAPP01 (17 GB root disk): the one-time cleanup freed about 0.5 GB. Most of the rest of the container storage
 (about 4.4 GB) belongs to the NovaDesk and NovaConnect images and their build layers, which this script does not touch.
+
+## Data retention
+
+The API prunes two history tables on a schedule (every 6 hours, first run a minute after start), in batches, always
+keeping each connection's newest 100 rows so a long-dead connection still shows how it last failed:
+
+| Table | Default | Environment variable (set in the API env file; `0` turns it off) |
+|---|---|---|
+| `inventory.discovery_runs` | 30 days | `NUVRION_RETENTION_DISCOVERY_DAYS` |
+| `connections.health_events` | 90 days | `NUVRION_RETENTION_HEALTH_EVENTS_DAYS` |
+
+Metric samples prune themselves after 7 days (`NUVRION_METRIC_RETENTION_MS`; the UI never shows more than 7 days).
+Audit events and tasks are never pruned. Each prune is logged as `retention.pruned` with the table and row count.
