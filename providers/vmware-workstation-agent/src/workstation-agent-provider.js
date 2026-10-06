@@ -22,7 +22,7 @@ const GUEST_OS_NAMES=new Map([
   ['other5xlinux','Other Linux 5.x kernel'],['other5xlinux-64','Other Linux 5.x kernel (64-bit)'],
   ['other6xlinux','Other Linux 6.x kernel'],['other6xlinux-64','Other Linux 6.x kernel (64-bit)'],
 ]);
-const friendlyGuestOs=value=>{
+export const friendlyGuestOs=value=>{
   if(value==null||String(value).trim()==='')return null;
   const raw=String(value).trim(),known=GUEST_OS_NAMES.get(raw.toLowerCase());
   if(known)return known;

@@ -1,0 +1,38 @@
+# Runs on every push to main and on pull requests. Needs no dependencies, secrets or network access to the lab:
+# the tests and syntax checks use only Node itself, and read-only repository access.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to exact commits (the comment names the release) so a moved tag cannot change what runs.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Syntax check (server, workers, providers)
+        run: npm run check
+      - name: Syntax check (browser scripts)
+        run: for file in apps/web/*.js; do node --check "$file"; done
+      - name: Syntax check (deploy script)
+        run: bash -n deploy/upgrade-nuvrion.sh
+      - name: Database migrations are well formed
+        run: npm run migrate:check
+      - name: Tests
+        run: npm test
