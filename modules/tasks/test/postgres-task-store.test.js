@@ -81,12 +81,15 @@ test('the idempotency key is stored only as a hash', database, async () => {
 
 test('concurrent requests with the same idempotency key create exactly one task', database, async () => {
   const s = store();
-  const key = `race-${randomUUID()}`;
-  const results = await Promise.all(Array.from({ length: 12 }, () => s.create(input({ idempotencyKey: key }))));
-  assert.equal(results.filter(r => r.created).length, 1, 'exactly one request creates the task');
-  assert.equal(new Set(results.map(r => r.task.id)).size, 1, 'every caller is given the same task');
-  assert.equal(await scalar('SELECT count(*)::int FROM operations.tasks'), 1);
-  assert.equal(await scalar('SELECT count(*)::int FROM operations.outbox_messages'), 1, 'announced once');
+  for (let round = 0; round < 5; round++) {
+    const key = `race-${randomUUID()}`;
+    const results = await Promise.all(Array.from({ length: 20 }, () => s.create(input({ idempotencyKey: key }))));
+    assert.equal(results.filter(r => r.created).length, 1, `round ${round}: exactly one request creates the task`);
+    assert.equal(new Set(results.map(r => r.task.id)).size, 1, `round ${round}: every caller is given the same task`);
+  }
+  assert.equal(await scalar('SELECT count(*)::int FROM operations.tasks'), 5);
+  assert.equal(await scalar('SELECT count(*)::int FROM operations.outbox_messages'), 5, 'each task announced once');
+  assert.equal(await scalar("SELECT count(*)::int FROM audit.audit_events WHERE action = 'task.create'"), 5, 'each task audited once');
 });
 
 test('creating a task is atomic: if the audit record cannot be written, no task or announcement remains', database, async () => {
