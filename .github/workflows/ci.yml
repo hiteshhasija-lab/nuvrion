@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A weekly run, so a newly published vulnerability in a dependency shows up even when nobody has pushed.
+  schedule:
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
@@ -51,12 +54,55 @@ jobs:
         run: npm run migrate:check
       - name: Secret scan
         run: node tools/scan-repository-secrets.js
-      # The authorization tests start the API in-process, so they need the declared dependencies. Lifecycle scripts are not run.
-      - name: Install dependencies
-        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      # The authorization tests start the API in-process, so they need the dependencies. npm ci installs exactly what package-lock.json
+      # pins (and fails if it disagrees with package.json); lifecycle scripts are not run.
+      - name: Install dependencies (from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
       # NUVRION_REQUIRE_DATABASE_TESTS makes the database tests fail, rather than skip, if the database is not reachable.
       - name: Tests (including PostgreSQL migration and task-store tests)
         env:
           NUVRION_TEST_DATABASE_URL: postgres://ci:ci-only-throwaway@127.0.0.1:5432/postgres # secret-scan:allow (disposable CI container)
           NUVRION_REQUIRE_DATABASE_TESTS: '1'
         run: npm test
+
+  # Supply chain: what we ship is listed (SBOM), tied to its inputs (provenance), and free of known serious vulnerabilities.
+  supply-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+      - name: Install dependencies (from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Policy checks (lockfile, pinned images and actions)
+        run: node --test modules/platform/test/supply-chain-config.test.js modules/platform/test/sbom.test.js modules/platform/test/build-provenance.test.js
+      # The SBOM is built from package-lock.json and then checked against it again, so it cannot describe a different tree.
+      - name: SBOM (CycloneDX) - create and verify
+        env:
+          NUVRION_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          mkdir -p evidence
+          node tools/generate-sbom.js create evidence/nuvrion-sbom.cdx.json
+          node tools/generate-sbom.js verify evidence/nuvrion-sbom.cdx.json
+      # Provenance records the commit, the digest-pinned base image and the hash of every file the images are built from.
+      - name: Build provenance - create and verify
+        env:
+          NUVRION_SOURCE_REVISION: ${{ github.sha }}
+          NUVRION_BUILD_VERSION: 0.1.0-ci.${{ github.run_number }}
+        run: |
+          node tools/create-build-provenance.js create evidence/nuvrion-build-provenance.json
+          node tools/create-build-provenance.js verify evidence/nuvrion-build-provenance.json
+      # Fails the build on a known high or critical vulnerability in a dependency that ships (development tools are not installed).
+      - name: Dependency vulnerability audit (high and critical)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Keep the evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: supply-chain-evidence-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90

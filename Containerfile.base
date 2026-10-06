@@ -1,12 +1,14 @@
-FROM node:24-bookworm
+# Pinned by digest (Node 24.21.0, the version the running base image has) so a moved tag cannot change what is built; bump it deliberately.
+FROM node:24-bookworm@sha256:22f6fe5f59fb7fed238b19623506d573dffaa932ce33b84ce541a9a2e0eade28
 
 ENV NODE_ENV=production
 ENV NUVRION_RUNTIME_PROFILE=production
 
 WORKDIR /opt/nuvrion
 
-COPY package.json ./
-RUN npm install --omit=dev
+# The lockfile pins every dependency (version, source and hash); npm ci installs exactly that and fails if it disagrees with package.json.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY apps ./apps
 COPY modules ./modules

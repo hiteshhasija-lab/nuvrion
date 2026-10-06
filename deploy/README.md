@@ -61,3 +61,22 @@ keeping each connection's newest 100 rows so a long-dead connection still shows 
 
 Metric samples prune themselves after 7 days (`NUVRION_METRIC_RETENTION_MS`; the UI never shows more than 7 days).
 Audit events and tasks are never pruned. Each prune is logged as `retention.pruned` with the table and row count.
+
+## Dependencies and supply chain
+
+`package-lock.json` pins every runtime dependency (101 packages) to an exact version, registry source and SHA-512 hash. It
+was taken from the running base image, so the lockfile describes what production actually runs. `Containerfile.base` installs
+with `npm ci --omit=dev` and pins its Node base image by digest. To add or update a dependency, change `package.json` with
+`npm install <package>` (this updates the lockfile), commit both, and rebuild the base image as described above. Do not edit the
+lockfile by hand.
+
+Every push to `main`, every pull request and a weekly schedule run a `supply-chain` job in CI that:
+
+- installs from the lockfile and runs the policy tests (pins for the base image, GitHub Actions and service images);
+- creates a CycloneDX SBOM from the lockfile and verifies it against the lockfile again;
+- creates a build-provenance manifest (commit, base image digest, hash of every file the images are built from) and verifies it;
+- fails on any known high or critical vulnerability in a runtime dependency (`npm audit --omit=dev --audit-level=high`);
+- keeps the SBOM and provenance files as a workflow artifact for 90 days (`supply-chain-evidence-<commit>`).
+
+Not covered yet: container-image vulnerability scanning, image signing and a verified signature on the SBOM or provenance
+(`tools/evaluate-supply-chain.js` already defines that evidence for a release candidate), and attaching the SBOM to each release directory.
