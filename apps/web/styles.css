@@ -942,3 +942,7 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 .vm-list-card th[data-sort-key]::after{content:'';display:inline-block;width:9px;margin-left:4px;font-size:9px;color:var(--teal)}
 .vm-list-card th[data-sort-key].sorted-asc::after{content:'▲'}
 .vm-list-card th[data-sort-key].sorted-desc::after{content:'▼'}
+
+.connection-issue{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:10px;padding:7px 10px;border:1px solid rgba(190,62,62,.30);border-radius:8px;background:rgba(190,62,62,.08);font-size:12px;line-height:1.4}
+.connection-issue strong{color:#a23a3a;font-weight:700}
+.connection-issue span{color:var(--muted)}

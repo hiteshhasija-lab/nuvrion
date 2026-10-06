@@ -269,6 +269,10 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'upgrade-center.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/connection-issue.js') {
+      const js = await readFile(resolve(webRoot, 'connection-issue.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
     if (req.method === 'GET' && url.pathname === '/vm-column-resize.js') {
       const js = await readFile(resolve(webRoot, 'vm-column-resize.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
