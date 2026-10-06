@@ -34,3 +34,17 @@ git add deploy/STABLE-RELEASE.json && git commit -m "Record v<version> as stable
 `stableVersion`, `markedStableAt`, `markedBy`, `image`, `releaseDirectory`, `sourceBaselineCommit` and `reason`
 (from the release manifest's `change.summary`), and `rollbackImage`. Everything else in the file is preserved.
 Writing the record is best effort: a failure prints a warning but never fails an upgrade that already passed validation.
+
+## Cleanup after each deploy
+
+After a validated deploy the script also tidies up (best effort, same rule: it never fails a good upgrade):
+
+- removes this deploy's build directory, and any other build directory older than 7 days (a failed deploy keeps its
+  directory for a week for diagnosis);
+- untags `localhost/nuvrion:X.Y.Z` version tags beyond the newest 5 (never the version just deployed, `:stable`, the
+  `rollback-*` images, or anything a running container uses), then runs `podman image prune -f`, which removes the
+  build layers those old tags were keeping alive;
+- prints the free disk space afterwards.
+
+Measured on NOVAAPP01 (17 GB root disk): the one-time cleanup freed about 0.5 GB. Most of the rest of the container storage
+(about 4.4 GB) belongs to the NovaDesk and NovaConnect images and their build layers, which this script does not touch.

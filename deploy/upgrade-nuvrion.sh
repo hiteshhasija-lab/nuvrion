@@ -141,6 +141,25 @@ record_stable_release() {
   mv "$temporary" "$stable_record"
 }
 
+# Version tags (localhost/nuvrion:X.Y.Z) other than the newest $1 and the one just deployed. Reads tags on stdin.
+stale_version_tags() {
+  grep -E '^localhost/nuvrion:[0-9]+\.[0-9]+\.[0-9]+$' | sort -t: -k2 -V -r | tail -n +"$(($1 + 1))" | grep -vxF "$target_image" || true
+}
+
+# Each deploy leaves a build directory, older version tags and unused build layers behind; on a small disk they add up.
+# Rollback images, the running container's image and the :stable tag are never touched. Failed deploys keep their build
+# directory for a week for diagnosis.
+cleanup_after_deploy() {
+  local tag
+  rm -rf "$build_dir"
+  find "$upgrade_root/builds" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+  while IFS= read -r tag; do
+    if [[ -n "$tag" ]]; then podman rmi "$tag" >/dev/null 2>&1 || true; fi
+  done < <(podman images --format '{{.Repository}}:{{.Tag}}' | stale_version_tags 5)
+  podman image prune -f >/dev/null 2>&1 || true
+  echo "Cleaned up build files and unused images. Free disk: $(df -h --output=avail "$upgrade_root" | tail -n 1 | tr -d ' ')"
+}
+
 rollback() {
   local exit_code=$?
   if $new_container_started; then
@@ -201,3 +220,4 @@ echo "Backup: $backup_dir"
 echo "Rollback image: $rollback_image"
 # Best effort: a failure to write the record must never fail an upgrade that already passed validation.
 if record_stable_release; then echo "Recorded v$version as the stable release in $stable_record"; else echo "Warning: could not update $stable_record; record v$version by hand." >&2; fi
+if ! cleanup_after_deploy; then echo "Warning: post-deploy cleanup failed; disk space was not reclaimed." >&2; fi
