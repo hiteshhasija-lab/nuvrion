@@ -95,8 +95,4 @@ test('heartbeats carry the agent identity, version, inventory and time', (t) => 
   assert.equal(beat.observedAt, new Date(NOW).toISOString());
 });
 
-// Known gap, tracked in the status document: the deployed agent (agent-service.cjs) verifies the signature and expiry of a command
-// but keeps no replay ledger and does not check the recipient. Replay is currently prevented by the server, which only delivers
-// queued commands and refuses a second result. These two tests describe the behaviour the deployed agent should also have.
-test.todo('the deployed agent rejects a command it has already executed (replay ledger)');
-test.todo('the deployed agent rejects a command addressed to a different agent');
+// The deployed agent (agent-service.cjs) has its own command admission with the same guarantees; see agent-service-commands.test.js.
