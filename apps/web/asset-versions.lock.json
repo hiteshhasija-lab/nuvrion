@@ -1,0 +1,30 @@
+{
+  "app.js": {
+    "version": "20261006-116",
+    "sha256": "6bf7a66316b1b251fc4517a22cf7e759aeff123397795bd19833874065001675"
+  },
+  "connection-issue.js": {
+    "version": "20261006-115",
+    "sha256": "b9639b942e84abacbc33f6a8227dfa31892e97cccc75e938b5a86e7a9053767d"
+  },
+  "login-polish.js": {
+    "version": "20260913-112",
+    "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
+  },
+  "styles.css": {
+    "version": "20261006-115",
+    "sha256": "86303455c1b5d5e63e10658fca39d383325fae7d3b64223c0003c33983416d5c"
+  },
+  "upgrade-center.js": {
+    "version": "20260911",
+    "sha256": "64ebd0f4c69dc2e5bc1a17044702ef2f14b27bcd3ceff6397bc7e182fbeba36e"
+  },
+  "vm-column-resize.js": {
+    "version": "20261005-114",
+    "sha256": "e82217a5b3f900247dc4af65982079a1396696e69735b0d150ce89af4a88e82e"
+  },
+  "vm-workspace.css": {
+    "version": "20261006-115",
+    "sha256": "7d5f4f679b29031d73afaa7bdf5305196bc7476666cbc384bbab33dcd89eab82"
+  }
+}
