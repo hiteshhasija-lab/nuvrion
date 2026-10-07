@@ -21,6 +21,6 @@ export class OutboxRelay{
   constructor({store,broker,intervalMs=500,onError=()=>{}}){this.store=store;this.broker=broker;this.intervalMs=intervalMs;this.onError=onError;this.timer=null;this.running=false;this.status='starting';}
   start(){this.status='healthy';this.timer=setInterval(()=>this.tick().catch(this.onError),this.intervalMs);this.timer.unref?.();this.tick().catch(this.onError);}
   async tick(){if(this.running)return;this.running=true;try{for(const message of await this.store.pendingOutbox()){if(message.topic!=='task.queued')continue;await this.broker.publishTaskQueued(message.payload.taskId);await this.store.markOutboxPublished(message.id);}}finally{this.running=false;}}
-  kick(){queueMicrotask(()=>this.tick());}
+  kick(){queueMicrotask(()=>this.tick().catch(this.onError));}   // a failed publish is reported and retried by the timer; it must never become an unhandled rejection, which would end the process
   close(){if(this.timer)clearInterval(this.timer);this.status='stopped';}
 }

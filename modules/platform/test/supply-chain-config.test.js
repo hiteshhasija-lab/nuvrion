@@ -41,4 +41,5 @@ test('CI runs the SBOM, provenance and vulnerability checks, and keeps their out
 test('CI checks every API description change for breaking changes against the previous commit', () => {
   assert.match(workflow, /check-api-compat\.js/);
   assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /contracts\/messages\/\*\.json/, 'message schemas are checked too');
 });

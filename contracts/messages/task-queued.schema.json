@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nuvrion.lab.sps/contracts/messages/task-queued.schema.json",
+  "title": "TaskQueued",
+  "description": "The message the API's outbox relay puts on the nuvrion.tasks queue when a task is ready to run, and the worker reads. It carries only the task id; the worker loads everything else from the database. The AMQP messageId is the same task id, the message is persistent and its content type is application/json.",
+  "type": "object",
+  "required": ["taskId"],
+  "properties": {
+    "taskId": { "type": "string", "format": "uuid", "description": "The id of the task to run." }
+  },
+  "additionalProperties": false
+}

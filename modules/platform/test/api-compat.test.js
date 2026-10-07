@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareOpenApi } from '../src/api-compat.js';
+import { readFileSync, readdirSync } from 'node:fs';
+import { compareMessageSchemas, compareOpenApi } from '../src/api-compat.js';
 
 // Small specifications built from one operation: GET /things/{id} and POST /things.
 const thing = { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string' }, name: { type: 'string' }, size: { type: 'integer' } } };
@@ -115,4 +116,53 @@ test('response headers that disappear break clients', () => {
   const withHeader = edit(s => { s.paths['/things'].post.responses[201].headers = { Location: { schema: { type: 'string' } } }; });
   assert.match(breaking(withHeader, spec())[0], /header Location is no longer returned/);
   assert.deepEqual(breaking(spec(), withHeader), []);
+});
+
+// ---- message schemas ----
+const message = (over = {}) => structuredClone({
+  $schema: 'https://json-schema.org/draft/2020-12/schema', $id: 'https://example.invalid/m.json', title: 'M', type: 'object', required: ['taskId'], additionalProperties: false,
+  properties: { taskId: { type: 'string', format: 'uuid' }, kind: { enum: ['a', 'b'] } }, ...over
+});
+const messageBreaks = (before, after) => compareMessageSchemas(before, after, 'm.json').breaking.map(b => `${b.where}: ${b.reason}`);
+
+test('an unchanged message schema is compatible', () => {
+  const report = compareMessageSchemas(message(), message(), 'm.json');
+  assert.deepEqual([report.breaking, report.additions], [[], []]);
+});
+
+test('messages: removing a property breaks consumers, and a new required property breaks producers', () => {
+  assert.match(messageBreaks(message(), message({ properties: { taskId: { type: 'string', format: 'uuid' } } }))[0], /property "kind" was removed/);
+  const withRequired = message({ required: ['taskId', 'owner'], properties: { taskId: { type: 'string' }, kind: { enum: ['a', 'b'] }, owner: { type: 'string' } } });
+  assert.ok(messageBreaks(message(), withRequired).some(r => /new required property "owner"/.test(r)));
+});
+
+test('messages: a closed schema that gains even an optional property is breaking; an open one is not', () => {
+  const grown = message({ properties: { taskId: { type: 'string', format: 'uuid' }, kind: { enum: ['a', 'b'] }, note: { type: 'string' } } });
+  assert.ok(messageBreaks(message(), grown).some(r => /closed object gained property "note"/.test(r)));
+  const open = message({ additionalProperties: true });
+  assert.deepEqual(messageBreaks(open, { ...grown, additionalProperties: true }), []);
+  assert.ok(messageBreaks(open, message()).some(r => /now rejects properties it used to allow/.test(r)));
+});
+
+test('messages: a retyped field, a new enum value for consumers, a removed enum value for producers and a changed constant all break', () => {
+  assert.ok(messageBreaks(message(), message({ properties: { taskId: { type: 'integer' }, kind: { enum: ['a', 'b'] } } })).length > 0, 'retyped');
+  assert.ok(messageBreaks(message(), message({ properties: { taskId: { type: 'string', format: 'uuid' }, kind: { enum: ['a', 'b', 'c'] } } })).some(r => /new value\(s\) a client must handle: c/.test(r)), 'enum grew');
+  assert.ok(messageBreaks(message(), message({ properties: { taskId: { type: 'string', format: 'uuid' }, kind: { enum: ['a'] } } })).some(r => /no longer accepts: b/.test(r)), 'enum shrank');
+  const versioned = message({ properties: { taskId: { type: 'string' }, schemaVersion: { const: 1 } } });
+  assert.ok(messageBreaks(versioned, message({ properties: { taskId: { type: 'string' }, schemaVersion: { const: 2 } } })).some(r => /constant value changed/.test(r)));
+});
+
+test('messages: renaming the schema id breaks, and a changed description does not', () => {
+  assert.ok(messageBreaks(message(), message({ $id: 'https://example.invalid/other.json' })).some(r => /\$id changed/.test(r)));
+  assert.deepEqual(messageBreaks(message(), message({ description: 'Now with a description.', title: 'Renamed title' })), []);
+});
+
+test('every message schema in the repository is checked as compatible with itself, and the one in use is the real task message', () => {
+  const dir = new URL('../../../contracts/messages/', import.meta.url);
+  const files = readdirSync(dir).filter(name => name.endsWith('.json'));
+  assert.ok(files.includes('task-queued.schema.json') && files.includes('task-command.schema.json'));
+  for (const file of files) {
+    const schema = JSON.parse(readFileSync(new URL(file, dir), 'utf8'));
+    assert.deepEqual(compareMessageSchemas(schema, schema, file).breaking, [], file);
+  }
 });

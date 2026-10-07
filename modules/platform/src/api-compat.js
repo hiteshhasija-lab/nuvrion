@@ -143,3 +143,30 @@ export function compareOpenApi(beforeSpec, afterSpec) {
   for (const key of now.keys()) if (!was.has(key)) report.additions.push({ where: key, what: 'new operation' });
   return report;
 }
+
+// ---- message schemas (contracts/messages/*.json) -------------------------------------------------------------------
+// A message is written by one deployment (the producer) and read by another (the consumer), and the two are not always upgraded together.
+// So a change is breaking if it would break either side: whatever breaks a client reading a response, and whatever breaks a client sending a request.
+// A closed object (additionalProperties: false) also breaks when it gains a property, because a strict consumer rejects what it does not know.
+function closedObjectChanges(before, after, where, breaking) {
+  before = flatten(before); after = flatten(after);
+  if (!before || !after || typeof before !== 'object') return;
+  if (before.additionalProperties === false) {
+    for (const name of Object.keys(after.properties ?? {})) if (!(name in (before.properties ?? {}))) breaking.push({ where, reason: `closed object gained property "${name}": a consumer that validates strictly would reject it` });
+  } else if (after.additionalProperties === false) breaking.push({ where, reason: 'now rejects properties it used to allow' });
+  for (const [name, schema] of Object.entries(before.properties ?? {})) closedObjectChanges(schema, after.properties?.[name], `${where}.${name}`, breaking);
+  if (before.items) closedObjectChanges(before.items, after.items, `${where}[]`, breaking);
+}
+
+export function compareMessageSchemas(beforeSchema, afterSchema, name = 'message') {
+  const report = { breaking: [], additions: [], notes: [] }, seen = new Set();
+  for (const direction of ['response', 'request']) {
+    const part = { breaking: [], additions: [] };
+    diffSchema(beforeSchema, afterSchema, direction, name, part);
+    for (const item of part.breaking) { const key = `${item.where}|${item.reason}`; if (!seen.has(key)) { seen.add(key); report.breaking.push(item); } }
+    if (direction === 'response') report.additions.push(...part.additions);
+  }
+  closedObjectChanges(beforeSchema, afterSchema, name, report.breaking);
+  if (beforeSchema?.$id !== afterSchema?.$id) report.breaking.push({ where: name, reason: `$id changed from ${beforeSchema?.$id} to ${afterSchema?.$id}` });
+  return report;
+}
