@@ -10,7 +10,9 @@ const unesc = value => String(value ?? '').replaceAll('&lt;', '<').replaceAll('&
 const soap = (body, headers = {}, status = 200) => new Response(`<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`, { status, headers: { 'content-type': 'text/xml', ...headers } });
 const fault = (message, type = 'RuntimeFault') => soap(`<soapenv:Fault><faultcode>ServerFaultCode</faultcode><faultstring>${esc(message)}</faultstring><detail><${type}Fault xsi:type="${type}"/></detail></soapenv:Fault>`, {}, 500);
 
-const device = (type, key, fields) => `<VirtualDevice xsi:type="${type}"><key>${key}</key>${Object.entries(fields).filter(([, v]) => v != null).map(([k, v]) => `<${k}>${esc(v)}</${k}>`).join('')}</VirtualDevice>`;
+// Devices are written the way vSphere writes them: the file or network sits inside <backing>, the connection flags inside <connectable>.
+const flat = fields => Object.entries(fields).filter(([, v]) => v != null).map(([k, v]) => `<${k}>${esc(v)}</${k}>`).join('');
+const device = (type, key, fields, { backing = null, connectable = null } = {}) => `<VirtualDevice xsi:type="${type}"><key>${key}</key>${flat(fields)}${backing ? `<backing xsi:type="${backing.type}">${flat(backing.fields)}</backing>` : ''}${connectable ? `<connectable>${flat({ startConnected: connectable.startConnected, allowGuestControl: true, connected: connectable.connected })}</connectable>` : ''}</VirtualDevice>`;
 
 export function sampleEsxiVm(id = 'vm-1', over = {}) {
   return {
@@ -29,7 +31,7 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
     vms: new Map(vms.map(vm => [vm.id, structuredClone(vm)])), isos, tasks: new Map(), sessions: new Set(), hostName,
     taskPolls: 1,             // how many property reads a task stays "running" for
     shutdownPolls: 2, rebootPolls: 2, guestIgnoresRequests: false,
-    sessionsOpened: 0, sessionsClosed: 0, taskSeq: 0
+    sessionsOpened: 0, sessionsClosed: 0, taskSeq: 0, snapshotSeq: 0, configSeq: 0
   };
   const calls = [];
   const faults = { unreachable: false, emptyServiceContent: false, http: new Map() };   // faults.http: SOAP method name -> { status, message, type } (status 401/403/404/503 use a non-SOAP error)
@@ -42,14 +44,32 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
     'config.hardware.numCPU': vm.cpu, 'config.hardware.memoryMB': vm.memoryMB,
     'config.hardware.device': hardwareXml(vm),
     'summary.quickStats.overallCpuUsage': vm.quickStats?.cpu, 'summary.quickStats.hostMemoryUsage': vm.quickStats?.hostMem, 'summary.quickStats.guestMemoryUsage': vm.quickStats?.guestMem,
-    'summary.quickStats.uptimeSeconds': vm.uptime, 'summary.storage.committed': vm.quickStats?.committed, 'summary.storage.uncommitted': vm.quickStats?.uncommitted
+    'summary.quickStats.uptimeSeconds': vm.uptime, 'summary.storage.committed': vm.quickStats?.committed, 'summary.storage.uncommitted': vm.quickStats?.uncommitted,
+    ...configProps(vm),
+    snapshot: snapshotXml(vm), 'capability.snapshotOperationsSupported': vm.snapshotsSupported === false ? 'false' : 'true', 'runtime.consolidationNeeded': String(Boolean(vm.consolidationNeeded))
   });
+  // Settings the VM carries besides its devices; `vm.config` overrides any of them.
+  const configOf = vm => ({ annotation: '', guestId: 'ubuntu64Guest', version: 'vmx-19', changeVersion: '2026-10-07T00:00:00.000Z', coresPerSocket: 1, cpuHotAdd: false, memoryHotAdd: false, memoryReservationLockedToMax: false, nestedHV: false, firmware: 'bios', standbyAction: 'powerOnSuspend', extraConfig: [{ key: 'svga.present', value: 'TRUE' }], ...vm.config });
+  const configProps = vm => {
+    const c = configOf(vm);
+    return {
+      environmentBrowser: 'envbrowser-1', 'config.annotation': esc(c.annotation), 'config.guestId': c.guestId, 'config.version': c.version, 'config.changeVersion': c.changeVersion,
+      'config.hardware.numCoresPerSocket': c.coresPerSocket, 'config.cpuHotAddEnabled': String(c.cpuHotAdd), 'config.memoryHotAddEnabled': String(c.memoryHotAdd),
+      'config.memoryReservationLockedToMax': String(c.memoryReservationLockedToMax), 'config.nestedHVEnabled': String(c.nestedHV), 'config.firmware': c.firmware, 'config.defaultPowerOps.standbyAction': c.standbyAction,
+      'config.extraConfig': c.extraConfig.map(o => `<OptionValue><key>${esc(o.key)}</key><value xsi:type="xsd:string">${esc(o.value)}</value></OptionValue>`).join('')
+    };
+  };
+  // A VM with no snapshots has no `snapshot` property at all, as on a real host. Children are nested inside their parent's childSnapshotList.
+  const snapshotNode = node => `<snapshot type="VirtualMachineSnapshot">${node.id}</snapshot><name>${esc(node.name)}</name><description>${esc(node.description)}</description><createTime>${node.createTime}</createTime><state>${node.state}</state><quiesced>${node.quiesced}</quiesced><backupManifest></backupManifest>${node.children.map(child => `<childSnapshotList>${snapshotNode(child)}</childSnapshotList>`).join('')}`;
+  const snapshotXml = vm => vm.snapshots?.length ? `${vm.currentSnapshot ? `<currentSnapshot type="VirtualMachineSnapshot">${vm.currentSnapshot}</currentSnapshot>` : ''}${vm.snapshots.map(root => `<rootSnapshotList>${snapshotNode(root)}</rootSnapshotList>`).join('')}` : null;
+  const findSnapshot = (vm, id, list = vm.snapshots ?? [], parent = null) => { for (const node of list) { if (node.id === id) return { node, parent, siblings: list }; const hit = findSnapshot(vm, id, node.children, node); if (hit) return hit; } return null; };
+  const ownerOfSnapshot = id => [...state.vms.values()].find(vm => findSnapshot(vm, id));
   const hardwareXml = vm => [
     device('VirtualLsiLogicController', 1000, { label: 'SCSI controller 0', busNumber: 0 }),
-    ...vm.disks.map(d => device('VirtualDisk', d.key, { label: d.label, capacityInBytes: d.capacityInBytes, fileName: d.fileName, controllerKey: 1000, unitNumber: 0 })),
-    ...vm.nics.map(n => device('VirtualVmxnet3', n.key, { label: n.label, macAddress: n.macAddress, deviceName: n.deviceName, connected: n.connected, startConnected: n.startConnected })),
-    ...vm.cdroms.map(c => device('VirtualCdrom', c.key, { label: c.label, fileName: c.media, controllerKey: 200, unitNumber: 0, connected: c.connected, startConnected: c.startConnected })),
-    device('VirtualMachineVideoCard', 500, { label: 'Video card', videoRamSizeInKB: 8192, enable3DSupport: false })
+    ...vm.disks.map(d => device('VirtualDisk', d.key, { label: d.label, capacityInBytes: d.capacityInBytes, controllerKey: 1000, unitNumber: 0 }, { backing: { type: 'VirtualDiskFlatVer2BackingInfo', fields: { fileName: d.fileName, diskMode: 'persistent', thinProvisioned: true } } })),
+    ...vm.nics.map(n => device('VirtualVmxnet3', n.key, { label: n.label, macAddress: n.macAddress }, { backing: { type: 'VirtualEthernetCardNetworkBackingInfo', fields: { deviceName: n.deviceName } }, connectable: n })),
+    ...vm.cdroms.map(c => device('VirtualCdrom', c.key, { label: c.label, controllerKey: 200, unitNumber: 0 }, { backing: c.media ? { type: 'VirtualCdromIsoBackingInfo', fields: { fileName: c.media } } : { type: 'VirtualCdromRemoteAtapiBackingInfo', fields: { deviceName: '' } }, connectable: c })),
+    device('VirtualMachineVideoCard', 500, { label: 'Video card', videoRamSizeInKB: vm.video?.ramKB ?? 8192, enable3DSupport: vm.video?.enable3d ?? false })
   ].join('');
 
   const advance = vm => {
@@ -137,11 +157,74 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
         if (!vm) return fault('The object has already been deleted or has not been completely created', 'ManagedObjectNotFound');
         return soap(vm.noTicket ? '<AcquireTicketResponse><returnval/></AcquireTicketResponse>' : `<AcquireTicketResponse><returnval><ticket>cst-${vm.id}</ticket><host>${state.hostName}</host><port>443</port></returnval></AcquireTicketResponse>`);
       }
+      case 'CreateSnapshot_Task': {
+        const vm = vmOf();
+        if (!vm) return fault('The object has already been deleted or has not been completely created', 'ManagedObjectNotFound');
+        if (vm.snapshotsSupported === false) return fault('The operation is not supported on the object.', 'NotSupported');
+        const field = name => unesc(bodyText.match(new RegExp(`<vim25:${name}>([^<]*)</vim25:${name}>`))?.[1] ?? ''), memory = field('memory') === 'true';
+        const id = newTask(() => {
+          const node = { id: `snapshot-${++state.snapshotSeq}`, name: field('name'), description: field('description'), createTime: new Date(Date.UTC(2026, 9, 7, 12, 0, state.snapshotSeq)).toISOString(), state: memory && vm.power === 'poweredOn' ? 'poweredOn' : 'poweredOff', quiesced: field('quiesce') === 'true', children: [] };
+          const parent = vm.currentSnapshot ? findSnapshot(vm, vm.currentSnapshot).node : null;
+          (parent ? parent.children : (vm.snapshots ??= [])).push(node);
+          vm.currentSnapshot = node.id;
+        });
+        return soap(`<CreateSnapshot_TaskResponse><returnval type="Task">${id}</returnval></CreateSnapshot_TaskResponse>`);
+      }
+      case 'RevertToSnapshot_Task': case 'RemoveSnapshot_Task': {
+        const snapshotId = unesc(bodyText.match(/<vim25:_this type="VirtualMachineSnapshot">([^<]+)<\/vim25:_this>/)?.[1]), vm = ownerOfSnapshot(snapshotId);
+        if (!vm) return fault('The object has already been deleted or has not been completely created', 'ManagedObjectNotFound');
+        const id = newTask(() => {
+          if (method === 'RevertToSnapshot_Task') { vm.currentSnapshot = snapshotId; return; }
+          const { node, parent, siblings } = findSnapshot(vm, snapshotId);        // removing a snapshot hands its children to its parent
+          siblings.splice(siblings.indexOf(node), 1, ...node.children);
+          if (vm.currentSnapshot === snapshotId) vm.currentSnapshot = parent?.id ?? null;
+          if (!vm.snapshots.length) vm.currentSnapshot = null;
+        }, { error: vm.snapshotTaskError ?? null });
+        return soap(`<${method}Response><returnval type="Task">${id}</returnval></${method}Response>`);
+      }
+      case 'QueryConfigTarget':
+        return soap('<QueryConfigTargetResponse><returnval><network><network type="Network">network-1</network><name>VM Network</name></network><network><network type="Network">network-2</network><name>Storage Network</name></network><datastore><datastore type="Datastore">datastore-1</datastore><name>datastore1</name></datastore></returnval></QueryConfigTargetResponse>');
       case 'ReconfigVM_Task': {
-        const vm = vmOf(), key = Number(bodyText.match(/<vim25:key>(\d+)<\/vim25:key>/)?.[1]), drive = vm?.cdroms.find(c => c.key === key);
-        if (!drive) return fault('A specified parameter was not correct: spec.deviceChange.device', 'InvalidDeviceSpec');
-        const iso = bodyText.match(/<vim25:fileName>([^<]*)<\/vim25:fileName>/)?.[1], connected = /<vim25:connected>true<\/vim25:connected>/.test(bodyText), start = /<vim25:startConnected>true<\/vim25:startConnected>/.test(bodyText);
-        const id = newTask(() => { drive.media = iso ? unesc(iso) : null; drive.connected = connected; drive.startConnected = start; });
+        const vm = vmOf();
+        if (!vm) return fault('The object has already been deleted or has not been completely created', 'ManagedObjectNotFound');
+        const spec = bodyText.slice(bodyText.indexOf('<vim25:spec>')), changes = [...spec.matchAll(/<vim25:deviceChange>([\s\S]*?)<\/vim25:deviceChange>/g)].map(m => m[1]), scalarXml = spec.replace(/<vim25:deviceChange>[\s\S]*?<\/vim25:deviceChange>/g, '');
+        const scalar = name => { const hit = scalarXml.match(new RegExp(`<vim25:${name}>([^<]*)</vim25:${name}>`)); return hit ? unesc(hit[1]) : undefined; };
+        const cfg = configOf(vm), sent = scalar('changeVersion');
+        if (sent !== undefined && sent !== cfg.changeVersion) return fault('The configuration of the virtual machine has changed since the operation started.', 'ConcurrentAccess');
+        for (const change of changes) {                                  // every device must exist before anything is applied
+          const op = change.match(/<vim25:operation>(\w+)<\/vim25:operation>/)?.[1], key = Number(change.match(/<vim25:key>(-?\d+)<\/vim25:key>/)?.[1]);
+          if ((op === 'edit' || op === 'remove') && ![...vm.disks, ...vm.nics, ...vm.cdroms].some(d => d.key === key) && key !== 500) return fault('A specified parameter was not correct: spec.deviceChange.device', 'InvalidDeviceSpec');
+        }
+        const id = newTask(() => {
+          vm.config = { ...vm.config };
+          const set = (field, value) => { if (value !== undefined) vm.config[field] = value; }, flag = value => value === undefined ? undefined : value === 'true';
+          if (scalar('name') !== undefined) vm.name = scalar('name');
+          set('annotation', scalar('annotation'));
+          if (scalar('numCPUs') !== undefined) vm.cpu = Number(scalar('numCPUs'));
+          set('coresPerSocket', scalar('numCoresPerSocket') === undefined ? undefined : Number(scalar('numCoresPerSocket')));
+          if (scalar('memoryMB') !== undefined) vm.memoryMB = Number(scalar('memoryMB'));
+          set('firmware', scalar('firmware')); set('standbyAction', scalar('standbyAction')); set('cpuHotAdd', flag(scalar('cpuHotAddEnabled'))); set('memoryHotAdd', flag(scalar('memoryHotAddEnabled'))); set('nestedHV', flag(scalar('nestedHVEnabled')));
+          if (/<vim25:extraConfig>/.test(scalarXml)) {
+            const extra = new Map((cfg.extraConfig).map(o => [o.key, o.value]));
+            for (const m of scalarXml.matchAll(/<vim25:extraConfig><vim25:key>([^<]*)<\/vim25:key><vim25:value[^>]*>([^<]*)<\/vim25:value><\/vim25:extraConfig>/g)) { if (m[2] === '') extra.delete(unesc(m[1])); else extra.set(unesc(m[1]), unesc(m[2])); }
+            vm.config.extraConfig = [...extra].map(([key, value]) => ({ key, value }));
+          }
+          let nextKey = 5000;
+          for (const change of changes) {
+            const op = change.match(/<vim25:operation>(\w+)<\/vim25:operation>/)?.[1], type = change.match(/<vim25:device xsi:type="vim25:(\w+)"/)?.[1], key = Number(change.match(/<vim25:key>(-?\d+)<\/vim25:key>/)?.[1]);
+            const field = name => change.match(new RegExp(`<vim25:${name}>([^<]*)</vim25:${name}>`))?.[1];
+            const connected = /<vim25:connected>true<\/vim25:connected>/.test(change), start = /<vim25:startConnected>true<\/vim25:startConnected>/.test(change);
+            if (op === 'remove') { vm.disks = vm.disks.filter(d => d.key !== key); vm.nics = vm.nics.filter(d => d.key !== key); vm.cdroms = vm.cdroms.filter(d => d.key !== key); continue; }
+            if (op === 'add' && /Vmxnet|E1000|Ethernet/.test(type)) { vm.nics.push({ key: nextKey++, label: `Network adapter ${vm.nics.length + 1}`, macAddress: `00:0c:29:aa:bb:${String(vm.nics.length).padStart(2, '0')}`, deviceName: unesc(field('deviceName') ?? ''), connected, startConnected: start }); continue; }
+            if (op === 'add' && type === 'VirtualCdrom') { vm.cdroms.push({ key: nextKey++, label: `CD/DVD drive ${vm.cdroms.length + 1}`, media: null, connected: false, startConnected: false }); continue; }
+            if (op !== 'edit') continue;
+            if (type === 'VirtualDisk') vm.disks.find(d => d.key === key).capacityInBytes = Number(field('capacityInKB')) * 1024;
+            else if (type === 'VirtualCdrom') { const drive = vm.cdroms.find(c => c.key === key), iso = change.match(/<vim25:fileName>([^<]*)<\/vim25:fileName>/)?.[1]; drive.media = iso ? unesc(iso) : null; drive.connected = connected; drive.startConnected = start; }
+            else if (type === 'VirtualMachineVideoCard') vm.video = { ramKB: Number(field('videoRamSizeInKB')), enable3d: field('enable3DSupport') === 'true' };
+            else { const nic = vm.nics.find(n => n.key === key); nic.deviceName = unesc(field('deviceName') ?? nic.deviceName); nic.connected = connected; nic.startConnected = start; }
+          }
+          vm.config.changeVersion = `2026-10-07T00:00:${String(++state.configSeq).padStart(2, '0')}.000Z`;
+        }, { error: vm.reconfigError ?? null });
         return soap(`<ReconfigVM_TaskResponse><returnval type="Task">${id}</returnval></ReconfigVM_TaskResponse>`);
       }
       default: return fault(`The fake ESXi does not implement ${method}.`);
@@ -151,7 +234,7 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(input), body = init.body ? String(init.body) : '';
     const method = url.pathname === '/sdk' ? body.match(/<vim25:(\w+)[ >]/)?.[1] : init.method ?? 'GET';
-    calls.push({ http: init.method ?? 'GET', path: url.pathname, method, body: body.slice(0, 3000) });
+    calls.push({ http: init.method ?? 'GET', path: url.pathname, method, body: body.slice(0, 30000) });
     if (faults.unreachable) throw new TypeError('fetch failed: ECONNREFUSED');
     if (url.pathname === '/sdk') return sdk(body);
     if (url.pathname.startsWith('/folder/')) return datastoreFolderResponse(state.isos, url);

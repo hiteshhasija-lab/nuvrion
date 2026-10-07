@@ -20,7 +20,7 @@ async function settle(t, promise) {
 }
 const quick = fake => { fake.state.taskPolls = 1; fake.state.shutdownPolls = 1; fake.state.rebootPolls = 1; return fake; };
 
-defineProviderContract('EsxiProvider (simulated ESXi)', () => make(quick(fakeEsxi({ vms: [sampleEsxiVm('vm-1', { power: 'poweredOff' }), sampleEsxiVm('vm-2')] }))), { strictReferences: true, optional: ['media'] });
+defineProviderContract('EsxiProvider (simulated ESXi)', () => make(quick(fakeEsxi({ vms: [sampleEsxiVm('vm-1', { power: 'poweredOff' }), sampleEsxiVm('vm-2')] }))), { strictReferences: true, optional: ['media', 'snapshots'] });
 
 test('a standalone ESXi endpoint must use HTTPS, except on the local machine', () => {
   const fake = fakeEsxi();
