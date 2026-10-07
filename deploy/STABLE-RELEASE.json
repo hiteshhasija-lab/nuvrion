@@ -1,12 +1,12 @@
 {
   "product": "Nuvrion",
   "host": "NOVAAPP01 (10.0.0.100)",
-  "stableVersion": "0.1.165",
-  "markedStableAt": "2026-10-07T17:48:15Z",
+  "stableVersion": "0.1.166",
+  "markedStableAt": "2026-10-07T18:55:46Z",
   "markedBy": "upgrade-nuvrion.sh",
-  "image": "localhost/nuvrion:0.1.165",
-  "releaseDirectory": "/home/hiteshhasija/nuvrion-upgrades/releases/Nuvrion-v0.1.165",
-  "reason": "vCenter discovery now works for connections with more than 20 VMs, and a wrong ESXi password is reported as an authentication failure instead of a temporary outage.",
+  "image": "localhost/nuvrion:0.1.166",
+  "releaseDirectory": "/home/hiteshhasija/nuvrion-upgrades/releases/Nuvrion-v0.1.166",
+  "reason": "VM snapshot and VM settings requests on VMware hosts no longer retry a wrong password or a refused permission, and a request made in the wrong power state is reported as a conflict.",
   "pipelineNotes": {
     "gitIsNowAuthoritative": "As of 2026-09-24, main on hiteshhasija-lab/nuvrion genuinely reflects what's deployed (previously explicitly documented in HISTORY-RECONSTRUCTION.md as unrelated to reality). The repo was also made public that day so NOVAAPP01 could clone it with no stored credentials, matching how NovaConnect/NovaDesk-ITSM already work. The old, unrelated main history is preserved at the main-pre-replica-backup-20260924 branch on origin if ever needed. See HISTORY-RECONSTRUCTION.md's dated addendum for the full story.",
     "fileLayout": "Containerfile.base and Containerfile.overlay now live at repo root (Containerfile.overlay renamed from deploy/Containerfile.lab-overlay, which previously only existed inside individual release tarballs, not tracked anywhere canonical). package.json, contracts/, and tools/ are now git-tracked for the first time — previously base-image-only content with no canonical source.",
@@ -16,6 +16,6 @@
     "outOfScope": "Nuvrion's 4-container pod topology (Caddy TLS termination, rabbitmq, worker), deploy/Caddyfile, and the agent-signing PEM/CA infrastructure are legitimate Nuvrion-specific architecture, deliberately left untouched by this restructuring."
   },
   "concurrentDevelopment": "Other sessions/agents (e.g. Gemini Spark, per prior STABLE-RELEASE.json history) may also deploy this app — check `ls ~/nuvrion-upgrades/releases/` and this file fresh before assuming the next version number.",
-  "rollbackImage": "localhost/nuvrion:rollback-20261007T174811Z",
-  "sourceBaselineCommit": "6bd85f8da09c997acad8ac566167a09afd902e5d"
+  "rollbackImage": "localhost/nuvrion:rollback-20261007T185542Z",
+  "sourceBaselineCommit": "e0d028e9e6e449ad74847eae76525830c62cbb8b"
 }
