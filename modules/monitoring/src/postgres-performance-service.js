@@ -3,7 +3,17 @@ const map=row=>({id:row.sample_id,resourceId:row.resource_id,observedAt:row.obse
 export class PostgresPerformanceService{
   constructor(pool,{retentionMs=7*24*60*60_000}={}){this.pool=pool;this.retentionMs=retentionMs;}
   async record(connection,observations){let count=0;for(const item of observations){if(!item.metrics)continue;const resource=(await this.pool.query('SELECT resource_id FROM inventory.resources WHERE connection_id=$1 AND resource_type=$2 AND native_id=$3',[connection.id,item.resourceType,item.nativeId])).rows[0];if(!resource)continue;const sample=normalizeMetricSample(resource.resource_id,item.metrics);await this.pool.query('INSERT INTO monitoring.vm_metric_samples(sample_id,resource_id,observed_at,cpu_utilization_percent,cpu_usage_mhz,memory_utilization_percent,memory_used_bytes,memory_active_bytes,storage_used_bytes,network_rx_bytes_per_sec,network_tx_bytes_per_sec,source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',[randomUUID(),sample.resourceId,sample.observedAt,sample.cpuUtilizationPercent,sample.cpuUsageMhz,sample.memoryUtilizationPercent,sample.memoryUsedBytes,sample.memoryActiveBytes,sample.storageUsedBytes,sample.networkRxBytesPerSec,sample.networkTxBytesPerSec,sample.source]);count++;}await this.prune();return count;}
-  async history(resourceId,{since=new Date(Date.now()-24*60*60_000).toISOString(),limit=500}={}){const result=await this.pool.query('SELECT * FROM monitoring.vm_metric_samples WHERE resource_id=$1 AND observed_at>=$2 ORDER BY observed_at ASC LIMIT $3',[resourceId,since,Math.min(2000,Math.max(1,limit))]);return result.rows.map(map);}
+  // At most `limit` samples, oldest first, spread across the WHOLE window and always ending with the newest sample. When the window holds more samples
+  // than that it is cut into equal time slices and each slice contributes its newest sample; taking the first `limit` rows instead would show only the start
+  // of a long window and make the "latest" sample hours old.
+  async history(resourceId,{since=new Date(Date.now()-24*60*60_000).toISOString(),limit=500}={}){const cap=Math.min(2000,Math.max(1,Math.trunc(Number(limit))||1));
+const result=await this.pool.query(`WITH window_samples AS (SELECT * FROM monitoring.vm_metric_samples WHERE resource_id=$1 AND observed_at>=$2),
+span AS (SELECT count(*) total,min(observed_at) first_at,max(observed_at) last_at FROM window_samples),
+sliced AS (SELECT w.*,floor(extract(epoch FROM (w.observed_at-s.first_at))/GREATEST(1,ceil(extract(epoch FROM (s.last_at-s.first_at))/$3))) slice,s.total FROM window_samples w CROSS JOIN span s),
+chosen AS (SELECT DISTINCT ON (CASE WHEN total<=$3 THEN sample_id::text ELSE slice::text END) * FROM sliced ORDER BY CASE WHEN total<=$3 THEN sample_id::text ELSE slice::text END,observed_at DESC)
+SELECT * FROM (SELECT * FROM chosen ORDER BY observed_at DESC LIMIT $3) newest ORDER BY observed_at ASC`,[resourceId,since,cap]);
+return result.rows.map(map);
+}
   async latest(resourceId){const row=(await this.pool.query('SELECT * FROM monitoring.vm_metric_samples WHERE resource_id=$1 ORDER BY observed_at DESC LIMIT 1',[resourceId])).rows[0];return row?map(row):null;}
   async latestForResources(resourceIds=[]){if(!resourceIds.length)return [];const result=await this.pool.query('SELECT DISTINCT ON (resource_id) * FROM monitoring.vm_metric_samples WHERE resource_id=ANY($1::uuid[]) ORDER BY resource_id,observed_at DESC',[resourceIds]);return result.rows.map(map);}
   async prune(now=Date.now()){return (await this.pool.query('DELETE FROM monitoring.vm_metric_samples WHERE observed_at<$1',[new Date(now-this.retentionMs)])).rowCount;}
