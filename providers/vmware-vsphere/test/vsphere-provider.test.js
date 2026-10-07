@@ -4,6 +4,7 @@ import { VsphereProvider, VsphereProviderError } from '../src/vsphere-provider.j
 import { collectVsphereQuickStats } from '../src/vsphere-quickstats.js';
 import { defineProviderContract } from '../../test-support/provider-contract.js';
 import { fakeVcenter, sampleVm } from '../../test-support/fake-vcenter.js';
+import { fakeEsxi, sampleEsxiVm } from '../../test-support/fake-esxi.js';
 
 // The vSphere (vCenter) provider against a simulated vCenter: what it reads, what it sends, and how it reacts to failures. Nothing here touches
 // a network or a lab, so these tests check our mapping, state handling and error handling, not the behaviour of a real vCenter.
@@ -222,4 +223,36 @@ test('ejecting media disconnects a connected drive on a running VM and leaves it
   assert.deepEqual([result.code, result.drive.media, result.drive.connected], ['NUV_MEDIA_EJECTED', null, false]);
   assert.deepEqual(fake.calls.filter(c => c.method !== 'GET' && c.path.includes('cdrom')).map(c => `${c.method}${c.action ? `:${c.action}` : ''}`), ['POST:disconnect', 'PATCH']);
   await assert.rejects(() => make(fake).ejectMedia('vm-1', { driveId: 'no-such-drive' }), e => e.code === 'NUV_VMWARE_RESOURCE_NOT_FOUND');
+});
+
+// Snapshots and VM settings go through the shared VMware SOAP clients, which the vSphere provider builds from its own endpoint, credential, timeout and polling interval.
+// This lab sends the REST calls to the simulated vCenter and the SOAP calls (/sdk) to a simulated host that keeps the snapshots and configuration of the same VMs.
+function vcenterWithSoapHost({ ids = ['vm-1', 'vm-2'], password = CREDENTIAL.password } = {}) {
+  const vcenter = fakeVcenter({ vms: ids.map(id => sampleVm(id)) }), host = fakeEsxi({ vms: ids.map(id => sampleEsxiVm(id)), username: CREDENTIAL.username, password });
+  return { vcenter, host, fetch: (url, init) => new URL(url).pathname === '/sdk' ? host.fetch(url, init) : vcenter.fetch(url, init) };
+}
+
+defineProviderContract('VsphereProvider snapshots and settings (simulated vCenter + SOAP host)', () => make(vcenterWithSoapHost()), { strictReferences: true, optional: ['snapshots', 'settings'] });
+
+test('snapshot and settings requests use the provider\'s own credential, so a wrong password is an authentication failure that is not retried', async () => {
+  const lab = vcenterWithSoapHost({ password: 'another-password' }), provider = make(lab);                // secret-scan:allow (fake test credential)
+  await assert.rejects(() => provider.listSnapshots('vm-1'), e => e.code === 'NUV_SNAPSHOT_AUTH_FAILED' && e.retryable === false);
+  await assert.rejects(() => provider.getSettings('vm-1'), e => e.code === 'NUV_VM_SETTINGS_AUTH_FAILED' && e.retryable === false);
+  assert.equal(lab.host.openSessions(), 0);
+});
+
+test('snapshot waits use the provider\'s polling interval, and a snapshot that never completes ends as a retryable timeout', async () => {
+  const lab = vcenterWithSoapHost(); lab.host.state.taskPolls = 100000;
+  const started = Date.now();
+  await assert.rejects(() => make(lab, { pollIntervalMs: 1 }).createSnapshot('vm-1', { name: 'slow' }), e => e.code === 'NUV_SNAPSHOT_VERIFICATION_TIMEOUT' && e.retryable === true);
+  assert.ok(Date.now() - started < 8000, 'a 1 ms interval over 120 attempts does not take minutes');
+  assert.equal(lab.host.openSessions(), 0);
+});
+
+test('the SOAP clients talk to the provider\'s own endpoint', async () => {
+  const lab = vcenterWithSoapHost(), seen = [];
+  const provider = make({ fetch: (url, init) => { seen.push(new URL(url).host); return lab.fetch(url, init); } });
+  await provider.listSnapshots('vm-1');
+  await provider.getSettings('vm-1');
+  assert.deepEqual([...new Set(seen)], ['vcenter.example']);
 });
