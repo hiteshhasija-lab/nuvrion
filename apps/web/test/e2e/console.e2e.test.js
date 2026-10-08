@@ -286,4 +286,36 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.ok(await overflow() <= 1, `the overview overflows by ${await overflow()}px`);
     await page.close();
   });
+
+  test('when the Workstation agent stops reporting, a VM last seen running shows as unknown and can still be powered on; when it reports again the real state is back', async () => {
+    const agent = await lab.addWorkstationAgent();
+    const vm = (name, powerState) => ({ id: `D:\\VMs\\${name}\\${name}.vmx`, nativeId: `D:\\VMs\\${name}\\${name}.vmx`, name, path: `D:\\VMs\\${name}\\${name}.vmx`, powerState, vcpuCount: 2, memoryBytes: 4 * 1024 ** 3, privateIps: ['10.0.0.66'], toolsStatus: 'Running', hardware: { cdDvdDrives: [] } });
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    await agent.report([vm('ESXi8', 'running')], tenMinutesAgo);          // the last thing the agent said, a while ago: "ESXi8 is running"
+    await agent.discover();
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    await page.waitFor(() => [...document.querySelectorAll('#view-inventory tbody tr')].some(r => r.textContent.includes('ESXi8')));
+    assert.equal(await powerOf(page, 'ESXi8'), 'Power state: Unknown — provider unreachable', 'a state nobody has confirmed is not shown as Running');
+    await page.click('input[aria-label="Select ESXi8"]');
+    const powerOn = () => page.evaluate(() => { const b = [...document.querySelectorAll('#vm-action-toolbar button')].find(x => x.textContent.includes('Power on')); return b ? { disabled: b.disabled, title: b.title } : null; });
+    const offered = await powerOn();
+    assert.equal(offered.disabled, false, 'Power on is available although the last known state was Running');
+    assert.match(offered.title, /not known \(last known: running\)/);
+    await page.clickText('Power on', '#vm-action-toolbar');
+    await page.waitFor(() => document.getElementById('notice')?.innerText.includes('Power on queued'));
+    const tasks = (await lab.api('GET', '/api/v1/tasks')).json.items;
+    assert.ok(tasks.some(t => t.operation === 'start' && /ESXi8/.test(t.target?.name ?? t.targetId ?? JSON.stringify(t))), 'the operation was accepted and a task was created');
+
+    assert.equal(await agent.completeCommands('running'), 1, 'the agent was asked, once, to start it');
+    await agent.report([vm('ESXi8', 'running')]);                            // the agent is back, has started it, and says it is running
+    await agent.discover();
+    await page.click('#refresh');
+    await page.waitFor(() => [...document.querySelectorAll('#view-inventory tbody tr')].find(r => r.textContent.includes('ESXi8'))?.querySelector('.power-indicator')?.getAttribute('aria-label') === 'Power state: Running', { timeout: 15000 });
+    await page.click('input[aria-label="Select ESXi8"]');
+    assert.equal((await powerOn()).disabled, true, 'with a confirmed Running state, Power on is not offered');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
 });

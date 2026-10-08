@@ -1,14 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import {evaluateCapabilities,capabilityFor} from './resource-capabilities.js';
+import {capabilityFor} from './resource-capabilities.js';
+import {presentResource} from './observation.js';
 import {retainLastPoweredOnGuestMetadata} from './guest-metadata-retention.js';
 
 const clone = value => structuredClone(value);
 export class InventoryService {
-  #resources = new Map(); #file;
-  constructor({ file = null } = {}) {
-    this.#file = file;
+  #resources = new Map(); #file; #connectionHealth;
+  // connectionHealth(connectionId) -> { healthState, lastErrorCode } | null lets the service tell whether what it knows about a VM is still being observed.
+  constructor({ file = null, connectionHealth = null } = {}) {
+    this.#file = file; this.#connectionHealth = connectionHealth;
     if (file && existsSync(file)) {
       const state = JSON.parse(readFileSync(file, 'utf8'));
       this.#resources = new Map(state.resources ?? []);
@@ -57,9 +59,9 @@ export class InventoryService {
       (!resourceType || resource.resourceType === resourceType) &&
       (!lifecycleState || resource.lifecycleState === lifecycleState) &&
       (!term || resource.name.toLowerCase().includes(term) || resource.nativeId.toLowerCase().includes(term))
-    ).sort((a,b) => a.name.localeCompare(b.name)).map(resource=>({...clone(resource),capabilities:evaluateCapabilities(resource)}));
+    ).sort((a,b) => a.name.localeCompare(b.name)).map(resource=>presentResource(clone(resource),this.#connectionHealth?.(resource.connectionId)));
   }
-  get(id) { const resource = [...this.#resources.values()].find(item => item.id === id); return resource ? {...clone(resource),capabilities:evaluateCapabilities(resource)} : null; }
+  get(id) { const resource = [...this.#resources.values()].find(item => item.id === id); return resource ? presentResource(clone(resource),this.#connectionHealth?.(resource.connectionId)) : null; }
   retireConnection(connectionId){const now=new Date().toISOString();let retired=0;for(const resource of this.#resources.values()){if(resource.connectionId!==connectionId||resource.lifecycleState==='deleted')continue;resource.lifecycleState='deleted';resource.missingSince=resource.missingSince??now;resource.version++;retired++;}this.#persist();return retired;}
   validateOperation(id, operation) {
     const resource=this.get(id); if(!resource)return {ok:false,code:'NUV_RESOURCE_NOT_FOUND'};

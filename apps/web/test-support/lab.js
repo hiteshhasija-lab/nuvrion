@@ -36,8 +36,35 @@ export async function startConsole() {
     return { username, password };
   };
 
+  // A pretend Workstation agent: enrolled like the real one, it reports an inventory when asked to (`report`), and Nuvrion reads it with `discover`. Reporting VMs with an
+  // old observedAt (or not reporting at all) is what an agent that has stopped answering looks like.
+  const addWorkstationAgent = async ({ name = 'TECHY' } = {}) => {
+    const { token } = (await api('POST', '/api/v1/agents/enrollment-tokens')).json;
+    const enrolled = await (await fetch(`${url}/api/v1/agents/enroll`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, name, version: '0.1.46' }) })).json();
+    const report = (vms, observedAt = new Date().toISOString()) => fetch(`${url}/api/v1/agents/${enrolled.agentId}/heartbeat`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-secret': enrolled.secret }, body: JSON.stringify({ version: '0.1.46', inventory: vms.map(vm => ({ observedAt, ...vm })), diagnostics: null }) });
+    const connection = await api('POST', '/api/v1/connections', { name: `${name} Workstation`, providerType: 'vmware_workstation', connectionType: 'workstation_agent', endpointUri: null, credential: { username: 'agent', password: 'agent' }, configuration: { agentId: enrolled.agentId } }); // secret-scan:allow (fake test credential)
+    if (connection.status !== 201) throw new Error(`could not create the agent connection: HTTP ${connection.status} ${JSON.stringify(connection.json)}`);
+    const discover = () => api('POST', `/api/v1/connections/${connection.json.id}/discover`);
+    // The agent picks up the commands waiting for it and reports each as done (as the real one does once VMware has carried it out).
+    const completeCommands = async (powerState, { timeoutMs = 8000 } = {}) => {
+      const headers = { 'x-agent-secret': enrolled.secret };
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const pending = await (await fetch(`${url}/api/v1/agents/${enrolled.agentId}/commands`, { headers })).json();
+        const commands = pending.items ?? pending.commands ?? pending;
+        if (Array.isArray(commands) && commands.length) {
+          for (const envelope of commands) { const ack = await fetch(`${url}/api/v1/agents/${enrolled.agentId}/commands/${(envelope.payload ?? envelope).commandId}/ack`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ status: 'completed', result: { code: 'NUV_AGENT_OPERATION_VERIFIED', message: 'Done.', powerState } }) }); if (ack.status !== 200) throw new Error(`the command could not be acknowledged: HTTP ${ack.status} ${await ack.text()}`); }
+          return commands.length;
+        }
+        if (Date.now() > deadline) throw new Error('the agent was never asked to do anything');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    };
+    return { agentId: enrolled.agentId, connectionId: connection.json.id, report, discover, completeCommands };
+  };
+
   return {
-    url, api, createUser,
+    url, api, createUser, addWorkstationAgent,
     async close() { console.log = log; const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections?.(); await closed; rmSync(workDir, { recursive: true, force: true }); }
   };
 }

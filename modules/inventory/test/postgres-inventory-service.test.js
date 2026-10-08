@@ -191,3 +191,38 @@ test('metrics count resources by state', database, async () => {
   await inventory.retireConnection(connection.id);
   assert.deepEqual(await inventory.metrics(), { resourcesTotal: 3, resourcesActive: 0, resourcesMissing: 0 }, 'deleted resources are in the total but neither active nor missing');
 });
+
+// The same rule against the production tables: the connection's health, read in the same query as the resource, decides whether the power state is an observation.
+const setHealth = (id, healthState, errorCode = null) => db.pool.query('UPDATE connections.provider_connections SET health_state=$2, last_error_code=$3 WHERE connection_id=$1', [id, healthState, errorCode]);
+const oneVm = async () => (await inventory.list({ connectionId: connection.id }))[0];
+
+test('an unreachable connection makes a VM\'s power state unknown and keeps every power operation available; recovery brings the state back', database, async () => {
+  await inventory.synchronize(connection, [vm('a', 'A', { attributes: { powerState: 'running', guestOs: 'x', vcpuCount: 1, memoryBytes: 1, storageBytes: 1, privateIps: [] }, providerMetadata: { toolsStatus: 'Running' } })]);
+  const id = (await oneVm()).id;
+  assert.deepEqual([(await inventory.get(id)).attributes.powerState, (await inventory.validateOperation(id, 'start')).ok], ['running', false]);
+
+  await setHealth(connection.id, 'critical', 'NUV_AGENT_OFFLINE');
+  const stale = await inventory.get(id);
+  assert.deepEqual([stale.attributes.powerState, stale.attributes.lastKnownPowerState, stale.observation.state, stale.observation.reason], ['unknown', 'running', 'stale', 'NUV_AGENT_OFFLINE']);
+  assert.equal((await oneVm()).attributes.powerState, 'unknown', 'list and get agree');
+  assert.equal((await inventory.validateOperation(id, 'start')).ok, true);
+  assert.deepEqual((await db.pool.query('SELECT power_state FROM inventory.virtual_machines WHERE resource_id=$1', [id])).rows[0], { power_state: 'running' }, 'the stored value is untouched');
+
+  await setHealth(connection.id, 'healthy');
+  assert.deepEqual([(await inventory.get(id)).attributes.powerState, (await inventory.validateOperation(id, 'start')).ok], ['running', false]);
+});
+
+test('an agent that has not reported for over two minutes makes its VMs stale even while the connection looks healthy', database, async () => {
+  const seen = secondsAgo => ({ ...vm('a', 'A'), attributes: { powerState: 'running', guestOs: 'x', vcpuCount: 1, memoryBytes: 1, storageBytes: 1, privateIps: [] }, providerMetadata: { agentObservedAt: new Date(Date.now() - secondsAgo * 1000).toISOString() } });
+  await inventory.synchronize(connection, [seen(10)]);
+  assert.deepEqual([(await oneVm()).observation.state, (await oneVm()).attributes.powerState], ['live', 'running']);
+  await inventory.synchronize(connection, [seen(300)]);
+  const stale = await oneVm();
+  assert.deepEqual([stale.observation.state, stale.observation.reason, stale.attributes.powerState], ['stale', 'no_recent_agent_update', 'unknown']);
+});
+
+test('a connection that is only degraded or not yet checked does not make its VMs stale', database, async () => {
+  await inventory.synchronize(connection, [vm('a', 'A', { attributes: { powerState: 'running', guestOs: 'x', vcpuCount: 1, memoryBytes: 1, storageBytes: 1, privateIps: [] } })]);
+  for (const health of ['unknown', 'degraded', 'healthy']) { await setHealth(connection.id, health); assert.equal((await oneVm()).observation.state, 'live', health); }
+});
+

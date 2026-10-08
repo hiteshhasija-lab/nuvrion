@@ -11,7 +11,7 @@ test('power state decides which operations are enabled on VMware', () => {
   assert.deepEqual(enabled(vm('vmware_vsphere', 'stopped', { providerMetadata: tools })), ['start']);
   assert.deepEqual(enabled(vm('vmware_vsphere', 'running', { providerMetadata: tools })), ['pause', 'power_off', 'reboot_guest', 'restart', 'stop']);
   assert.deepEqual(enabled(vm('vmware_vsphere', 'suspended', { providerMetadata: tools })), ['power_off', 'start', 'stop']);
-  assert.deepEqual(enabled(vm('vmware_vsphere', 'unknown', { providerMetadata: tools })), [], 'nothing is allowed when the state is unknown');
+  assert.deepEqual(enabled(vm('vmware_vsphere', 'unknown', { providerMetadata: tools })), ['pause', 'power_off', 'reboot_guest', 'restart', 'start', 'stop'], 'when the state is unknown every operation the provider supports stays available');
 });
 
 test('a disabled operation says why', () => {
@@ -78,4 +78,19 @@ test('an unknown provider gets the generic operations with their own names', () 
 test('capabilityFor returns null for an operation that is not offered', () => {
   assert.equal(capabilityFor(vm('aws', 'running'), 'pause'), null);
   assert.equal(capabilityFor(vm('vmware_vsphere', 'running'), 'format_disk'), null);
+});
+
+test('an unknown power state offers the operations with a note that the state is not confirmed, and keeps the last known value in it', () => {
+  const unknown = vm('vmware_workstation', 'unknown', { attributes: { powerState: 'unknown', lastKnownPowerState: 'running' }, providerMetadata: { agentVersion: '0.1.46', toolsStatus: 'Running' } });
+  const start = capabilityFor(unknown, 'start');
+  assert.deepEqual([start.enabled, start.reason], [true, null]);
+  assert.match(start.advisory, /not known \(last known: running\).*verified/);
+  assert.equal(capabilityFor(vm('vmware_workstation', 'running'), 'stop').advisory, undefined, 'a known state carries no advisory');
+  assert.equal(capabilityFor(vm('vmware_workstation', 'stopped'), 'stop').advisory, undefined, 'a refusal carries no advisory either');
+});
+
+test('an unknown power state does not hide the VMware Tools requirement for a guest restart', () => {
+  const noTools = vm('vmware_vsphere', 'unknown', { providerMetadata: {} });
+  assert.equal(capabilityFor(noTools, 'reboot_guest').enabled, false);
+  assert.match(capabilityFor(noTools, 'reboot_guest').reason, /VMware Tools/);
 });

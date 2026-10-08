@@ -1193,6 +1193,7 @@ components:
         operation: { type: string }
         enabled: { type: boolean }
         providerSemantics: { type: string }
+        advisory: { type: string, description: 'Present when the operation is available although the power state is not known: the provider will be asked and the result verified' }
         reason: { type: [string, 'null'] }
     Resource:
       type: object
@@ -1211,9 +1212,16 @@ components:
         lastSeenAt: { type: string, format: date-time }
         missingSince: { type: [string, 'null'], format: date-time }
         version: { type: integer, minimum: 1 }
-        attributes: { type: object, properties: { powerState: { type: string }, guestOs: { type: [string, 'null'] }, vcpuCount: { type: [integer, 'null'] }, memoryBytes: { type: [integer, 'null'] }, storageBytes: { type: [integer, 'null'] }, privateIps: { type: array, items: { type: string } } } }
+        attributes: { type: object, properties: { powerState: { type: string, description: 'The power state as last observed, or unknown when the connection is not answering (see observation).' }, lastKnownPowerState: { type: string, description: 'Present only when powerState is unknown because the observation is stale: the state before the provider stopped answering.' }, guestOs: { type: [string, 'null'] }, vcpuCount: { type: [integer, 'null'] }, memoryBytes: { type: [integer, 'null'] }, storageBytes: { type: [integer, 'null'] }, privateIps: { type: array, items: { type: string } } } }
         providerMetadata: { type: object }
         providerMetadataHash: { type: string }
+        observation:
+          type: object
+          description: Whether the stored state is a current observation. It is stale when the connection is critical or unhealthy, or when the agent has not reported for two minutes; operations stay available then.
+          required: [state]
+          properties:
+            state: { type: string, enum: [live, stale] }
+            reason: { type: [string, 'null'], description: 'The connection error code, connection_unhealthy, or no_recent_agent_update when stale' }
         capabilities: { type: array, items: { $ref: '#/components/schemas/Capability' } }
     ResourceList:
       type: object
