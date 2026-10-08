@@ -22,14 +22,17 @@ const KEYS = { Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, Enter
 export async function launchBrowser({ width = 1366, height = 900 } = {}) {
   const { default: WebSocket } = await import('ws');
   const profile = mkdtempSync(join(tmpdir(), 'nuvrion-chrome-'));
-  const args = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-extensions', '--disable-background-networking', '--force-device-scale-factor=1', `--window-size=${width},${height}`, ...(process.env.CI || process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'];
-  const chrome = spawn(findChrome(), args, { stdio: 'ignore' });
+  const args = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--disable-dev-shm-usage', '--disable-extensions', '--disable-background-networking', '--force-device-scale-factor=1', `--window-size=${width},${height}`, ...(process.env.CI || process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'];
+  const chrome = spawn(findChrome(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  let errors = ''; chrome.stderr.on('data', chunk => { errors = (errors + chunk).slice(-1500); });
+  // A shared CI runner that is busy with other test files can take far longer than ten seconds to start Chrome. Wait up to a minute, and stop at once if Chrome has quit.
   let port = null, path = null;
-  for (let i = 0; i < 200 && !port; i++) {
+  for (let i = 0; i < 1200 && !port; i++) {
     await sleep(50);
+    if (chrome.exitCode !== null) throw new Error(`Chrome quit while starting (exit code ${chrome.exitCode}): ${errors.trim().split('\n').slice(-5).join(' | ')}`);
     try { [port, path] = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').trim().split('\n'); } catch { /* not written yet */ }
   }
-  if (!port) { chrome.kill(); throw new Error('Chrome did not start'); }
+  if (!port) { chrome.kill(); rmSync(profile, { recursive: true, force: true }); throw new Error(`Chrome did not start within a minute: ${errors.trim().split('\n').slice(-5).join(' | ')}`); }
   const socket = new WebSocket(`ws://127.0.0.1:${port}${path}`);
   await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
   let nextId = 0; const waiting = new Map(), listeners = [];

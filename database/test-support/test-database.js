@@ -43,6 +43,10 @@ export async function createTestDatabase({ migrate = true, poolSize = 20 } = {})
   url.pathname = `/${name}`;
   const { default: pg } = await import('pg');
   const pool = new pg.Pool({ connectionString: url.toString(), max: poolSize });
+  let dropping = false;
+  // While the database is being dropped, a connection that is still closing is told 'terminating connection due to administrator command'. That is expected, and
+  // without a listener the error escapes and the test runner blames whichever test happened to open that connection. Any other pool error is still reported.
+  pool.on('error', error => { if (!dropping) console.error(`test database pool error: ${error.message}`); });
   try {
     if (migrate) await applyMigrations(pool);
   } catch (error) {
@@ -55,6 +59,7 @@ export async function createTestDatabase({ migrate = true, poolSize = 20 } = {})
     pool,
     connectionString: url.toString(),
     async drop() {
+      dropping = true;
       await pool.end();
       await withAdmin(client => client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
     }
