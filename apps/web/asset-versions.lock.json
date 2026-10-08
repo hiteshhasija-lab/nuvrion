@@ -1,7 +1,7 @@
 {
   "app.js": {
-    "version": "20261006-116",
-    "sha256": "6bf7a66316b1b251fc4517a22cf7e759aeff123397795bd19833874065001675"
+    "version": "20261007-120",
+    "sha256": "7ddcb4139dfa5cca45283dfe1c2dcb44ea5e4ec0832e8cec354ec603656010d3"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -12,8 +12,8 @@
     "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
   },
   "styles.css": {
-    "version": "20261006-115",
-    "sha256": "86303455c1b5d5e63e10658fca39d383325fae7d3b64223c0003c33983416d5c"
+    "version": "20261007-117",
+    "sha256": "3abeebf7dc6178203074ec598f998a37af83146978d4525d3fba63c8ddea1a95"
   },
   "upgrade-center.js": {
     "version": "20260911",

@@ -58,11 +58,15 @@ jobs:
       # pins (and fails if it disagrees with package.json); lifecycle scripts are not run.
       - name: Install dependencies (from the lockfile)
         run: npm ci --ignore-scripts --no-audit --no-fund
-      # NUVRION_REQUIRE_DATABASE_TESTS makes the database tests fail, rather than skip, if the database is not reachable.
-      - name: Tests (including PostgreSQL migration and task-store tests)
+      # The browser tests drive the Google Chrome that the runner image already has (no browser is downloaded); say which one, so a missing browser is obvious.
+      - name: Browser used by the end-to-end tests
+        run: google-chrome --version
+      # NUVRION_REQUIRE_DATABASE_TESTS and NUVRION_REQUIRE_BROWSER_TESTS make those tests fail, rather than skip, if the database or Chrome is not there.
+      - name: Tests (including PostgreSQL, browser end-to-end and accessibility tests)
         env:
           NUVRION_TEST_DATABASE_URL: postgres://ci:ci-only-throwaway@127.0.0.1:5432/postgres # secret-scan:allow (disposable CI container)
           NUVRION_REQUIRE_DATABASE_TESTS: '1'
+          NUVRION_REQUIRE_BROWSER_TESTS: '1'
         run: npm test
 
   # Supply chain: what we ship is listed (SBOM), tied to its inputs (provenance), and free of known serious vulnerabilities.
