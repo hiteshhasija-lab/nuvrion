@@ -73,3 +73,31 @@ test('manual discover() ignores the backoff window', async () => {
   await scheduler.discover(connection);
   assert.deepEqual(calls.discover, ['m']);
 });
+
+// Only a running VM has measurements. A stopped or suspended VM reports empty or zero values (the Workstation agent does so every heartbeat), and recording them
+// every few seconds fills the history with points that say nothing: 100 rows per VM every 10 minutes.
+import { PerformanceService } from '../../monitoring/src/performance-service.js';
+
+test('performance samples are recorded for running VMs only', async () => {
+  const connection = { id: 'c1', status: 'enabled', consecutiveFailures: 0, nextRetryAt: null, providerType: 'vmware_workstation' };
+  const metrics = { cpuUsageMhz: 800, memoryUsedBytes: 1024, cpuUtilizationPercent: 5, source: 'workstation_agent' };
+  const emptyMetrics = { cpuUsageMhz: null, memoryUsedBytes: 0, source: 'workstation_agent' };
+  const observation = (nativeId, powerState, m) => ({ resourceType: 'virtual_machine', nativeId, name: nativeId, attributes: { powerState }, metrics: m });
+  const observations = [observation('on', 'running', metrics), observation('off', 'stopped', emptyMetrics), observation('paused', 'suspended', emptyMetrics), observation('odd', 'unknown', emptyMetrics), observation('booting', 'starting', emptyMetrics)];
+  const resources = observations.map((o, i) => ({ id: `r${i}`, nativeId: o.nativeId }));
+  const performance = new PerformanceService();
+  const { scheduler } = build({ connections: [connection], discover: async () => observations, performance, inventory: { synchronize: async () => ({ discovered: observations.length }), list: async () => resources } });
+  const summary = await scheduler.discover(connection);
+  assert.equal(summary.metricsRecorded, 1, 'one sample, for the running VM');
+  assert.equal(performance.history('r0').length, 1);
+  for (const id of ['r1', 'r2', 'r3', 'r4']) assert.equal(performance.history(id).length, 0, `${id} (${observations[Number(id.slice(1))].attributes.powerState}) has no samples`);
+  await scheduler.discover(connection);
+  assert.equal(performance.history('r0').length, 2, 'the running VM keeps being sampled on every run');
+});
+
+test('a running VM with no measurements, and a provider that sends none, record nothing and fail nothing', async () => {
+  const connection = { id: 'c1', status: 'enabled', consecutiveFailures: 0, nextRetryAt: null, providerType: 'aws' };
+  const observations = [{ resourceType: 'virtual_machine', nativeId: 'a', name: 'a', attributes: { powerState: 'running' } }, { resourceType: 'virtual_machine', nativeId: 'b', name: 'b' }];
+  const { scheduler } = build({ connections: [connection], discover: async () => observations, performance: new PerformanceService(), inventory: { synchronize: async () => ({ discovered: 2 }), list: async () => [{ id: 'ra', nativeId: 'a' }, { id: 'rb', nativeId: 'b' }] } });
+  assert.equal((await scheduler.discover(connection)).metricsRecorded, 0);
+});
