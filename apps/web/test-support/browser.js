@@ -83,41 +83,45 @@ export async function launchBrowser({ width = 1366, height = 900 } = {}) {
       },
       async waitFor(fn, ...args) {
         const options = typeof args.at(-1) === 'object' && args.at(-1) !== null && 'timeout' in args.at(-1) ? args.pop() : {};
-        const deadline = Date.now() + (options.timeout ?? 8000);
+        const deadline = Date.now() + (options.timeout ?? 15000);        // a shared CI runner can be several times slower than a laptop
         let last;
         while (Date.now() < deadline) { last = await page.evaluate(fn, ...args); if (last) return last; await sleep(25); }
         const body = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 300));
         throw new Error(`timed out waiting for ${typeof fn === 'function' ? fn.toString().slice(0, 160) : fn}; the page shows: ${body}`);
       },
       // Where to click: scrolled into view, and not moving (menus and panels animate, and a click at a position that is about to change lands on the wrong control).
-      async point(selector) {
-        const read = selector => { const e = document.querySelector(selector); if (!e) return null; e.scrollIntoView({ block: 'center', inline: 'center' }); const r = e.getBoundingClientRect(); const visible = r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; return visible ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), disabled: Boolean(e.disabled) } : null; };
+      // The element is looked up again on every read, because the page may redraw it (and replace it with a new one) while we wait.
+      async locate(finder, ...args) {
+        const read = (finderSource, args) => {
+          const e = new Function(`return (${finderSource})`)()(...args);
+          if (!e) return null;
+          e.scrollIntoView({ block: 'center', inline: 'center' });
+          const r = e.getBoundingClientRect();
+          const visible = r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+          return visible ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), disabled: Boolean(e.disabled) } : null;
+        };
         let previous = null;
-        const deadline = Date.now() + 8000;
+        const deadline = Date.now() + 15000;
         while (Date.now() < deadline) {
-          const now = await page.evaluate(read, selector);
-          if (now && previous && now.x === previous.x && now.y === previous.y) return now;
+          const now = await page.evaluate(read, String(finder), args);
+          if (now && previous && now.x === previous.x && now.y === previous.y && now.disabled === previous.disabled) return now;
           previous = now; await sleep(60);
         }
         const body = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 300));
-        throw new Error(`${selector} did not become visible and still; the page shows: ${body}`);
+        throw new Error(`${args.join(' ')} did not become visible and still; the page shows: ${body}`);
       },
-      async click(selector) {
-        const { x, y, disabled } = await page.point(selector);
-        if (disabled) throw new Error(`${selector} is disabled`);
+      point: selector => page.locate(selector => document.querySelector(selector), selector),
+      async mouseClick({ x, y, disabled }, what) {
+        if (disabled) throw new Error(`${what} is disabled`);
         await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
         await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
         await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       },
+      async click(selector) { await page.mouseClick(await page.point(selector), selector); },
       // Click the visible button or link in `scope` whose text contains `text`, the way a person looks for it.
       async clickText(text, scope = 'body') {
-        const marker = `data-e2e-${Math.random().toString(36).slice(2)}`;
-        await page.waitFor((text, scope, marker) => {
-          const found = [...document.querySelectorAll(`${scope} button, ${scope} a, ${scope} [role=button], ${scope} [role=tab]`)].find(e => e.textContent.replace(/\s+/g, ' ').includes(text) && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
-          if (!found) return false; found.setAttribute(marker, ''); return true;
-        }, text, scope, marker);
-        await page.click(`[${marker}]`);
-        await page.evaluate(marker => document.querySelector(`[${marker}]`)?.removeAttribute(marker), marker);
+        const target = await page.locate((text, scope) => [...document.querySelectorAll(`${scope} button, ${scope} a, ${scope} [role=button], ${scope} [role=tab]`)].find(e => e.textContent.replace(/\s+/g, ' ').includes(text) && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'), text, scope);
+        await page.mouseClick(target, `"${text}"`);
       },
       async fill(selector, text) {
         await page.point(selector);
