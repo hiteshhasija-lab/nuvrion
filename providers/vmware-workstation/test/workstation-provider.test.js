@@ -143,3 +143,23 @@ test('a VM id with spaces or slashes is encoded in the request path', async () =
   assert.equal((await provider.verify(providerReference)).observedFinalState, 'running');
   assert.ok(fake.calls.filter(call => call.method === 'GET' && call.path === '/api/vms/my%20vm%2F1/power').length >= 2, 'discovery and verification both encode the id');
 });
+
+test('an endpoint with a path (vmrest behind a reverse proxy) keeps that path in every request, with or without a trailing slash', async () => {
+  for (const endpointUri of ['https://proxy.lab.example/vmrest', 'https://proxy.lab.example/vmrest/', 'https://proxy.lab.example:8443/sites/lab/vmrest/']) {
+    const prefix = new URL(endpointUri).pathname.replace(/\/$/, ''), fake = fakeWorkstationRest({ prefix }), provider = new WorkstationProvider({ endpointUri, credential: CREDENTIAL, fetchImpl: fake.fetch, timeoutMs: 2000 });
+    const found = await provider.discover();
+    assert.equal(found.length, 2, endpointUri);
+    const { providerReference } = await provider.execute('start', 'vm-1');
+    assert.equal((await provider.verify(providerReference)).observedFinalState, 'running');
+    assert.ok(fake.calls.every(call => call.path.startsWith(`${prefix}/api/vms`)), `${endpointUri}: every request used ${prefix}/api/vms (${[...new Set(fake.calls.map(c => c.path))].join(', ')})`);
+    assert.ok(fake.calls.every(call => !call.path.includes('//')), 'no doubled slash');
+  }
+});
+
+test('an endpoint at the root of the host still works, with or without a trailing slash', async () => {
+  for (const endpointUri of ['https://workstation.lab.example:8697', 'https://workstation.lab.example:8697/']) {
+    const fake = fakeWorkstationRest(), provider = new WorkstationProvider({ endpointUri, credential: CREDENTIAL, fetchImpl: fake.fetch });
+    assert.equal((await provider.testConnection()).status, 'healthy');
+    assert.deepEqual([...new Set(fake.calls.map(c => c.path))], ['/api/vms'], endpointUri);
+  }
+});

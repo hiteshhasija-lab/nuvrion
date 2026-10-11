@@ -168,3 +168,14 @@ test('the signature is a plain HMAC-SHA256 over the JSON payload (the contract t
   const expected = createHmac('sha256', secret).update(JSON.stringify(envelope.payload)).digest('base64url');
   assert.equal(envelope.signature, expected);
 });
+
+test('revoking an agent again keeps the original time and reason: the first revocation is the record', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-06T00:00:00Z') });
+  const { registry, agentId } = enrolled();
+  const first = registry.revoke(agentId, { reason: 'host re-imaged' });
+  t.mock.timers.tick(3_600_000);
+  const again = registry.revoke(agentId, { reason: 'cleaning up' });
+  assert.deepEqual([again.status, again.revocationReason, again.revokedAt], ['revoked', 'host re-imaged', first.revokedAt]);
+  assert.equal(first.revokedAt, '2026-10-06T00:00:00.000Z');
+  assert.deepEqual([registry.list().find(a => a.id === agentId).revocationReason, registry.agent(agentId).revokedAt], ['host re-imaged', first.revokedAt]);
+});

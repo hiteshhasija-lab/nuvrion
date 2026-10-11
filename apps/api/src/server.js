@@ -79,7 +79,7 @@ vmSettingsInput=value=>{
 };
 const runtimeConfiguration=validateRuntimeConfiguration(process.env);
 const store = production?await PostgresTaskStore.connect(process.env.NUVRION_DATABASE_URL):new TaskStore({file:process.env.NUVRION_STATE_FILE ?? '.nuvrion/state.json'});
-const broker = production?await RabbitTaskBroker.connect(process.env.NUVRION_BROKER_URL):new LocalTaskBroker();
+const broker = production?await RabbitTaskBroker.connect(process.env.NUVRION_BROKER_URL,{onRejected:detail=>console.log(JSON.stringify({level:'warn',event:'broker.message_rejected',...detail}))}):new LocalTaskBroker();
 const mockProvider = new MockProvider();
 const identity = production?await PostgresIdentityService.create(store.pool,{idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs}):new IdentityService({idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs});
 const connectionAlertAudit=event=>safeAudit({actorType:'system',actorId:null,actorName:'Nuvrion',action:`connection.alert_${event.type}`,targetType:'provider_connection',targetId:event.connection?.id??event.alert.connectionId,correlationId:randomUUID(),outcome:event.type==='recovered'?'succeeded':event.alert.severity==='critical'?'failed':'warning',detail:{alertId:event.alert.id,severity:event.alert.severity,errorCode:event.alert.errorCode,occurrenceCount:event.alert.occurrenceCount}});

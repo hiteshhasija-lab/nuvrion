@@ -6,7 +6,7 @@ export const sampleWorkstationRestVm = (id = 'vm-1', over = {}) => ({
   ...over
 });
 
-export function fakeWorkstationRest({ vms = [sampleWorkstationRestVm('vm-1'), sampleWorkstationRestVm('vm-2')], username = 'admin', password = 'correct-password' } = {}) { // secret-scan:allow (fake test credential)
+export function fakeWorkstationRest({ vms = [sampleWorkstationRestVm('vm-1'), sampleWorkstationRestVm('vm-2')], username = 'admin', password = 'correct-password', prefix = '' } = {}) { // secret-scan:allow (fake test credential)
   const state = { vms: new Map(vms.map(vm => [vm.id, structuredClone(vm)])) };
   const calls = [], faults = { unreachable: false, status: new Map() };       // faults.status: 'METHOD /path' -> { status, body }
   const json = (body, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/vnd.vmware.vmw.rest-v1+json' } });
@@ -17,7 +17,8 @@ export function fakeWorkstationRest({ vms = [sampleWorkstationRestVm('vm-1'), sa
     const injected = faults.status.get(`${method} ${url.pathname}`) ?? faults.status.get(`* ${url.pathname}`);
     if (injected) return typeof injected.body === 'string' ? new Response(injected.body, { status: injected.status }) : json(injected.body ?? {}, injected.status);
     if (init.headers?.authorization !== `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`) return json({ Code: 107, Message: 'Authentication failed' }, 401);
-    const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);            // ['api','vms',id,'power']
+    if (prefix && !url.pathname.startsWith(`${prefix}/`)) return json({ Message: 'Not found' }, 404);   // behind a reverse proxy only the prefixed paths exist
+    const parts = url.pathname.slice(prefix.length).split('/').filter(Boolean).map(decodeURIComponent);   // ['api','vms',id,'power']
     if (parts[0] !== 'api' || parts[1] !== 'vms') return json({ Message: 'Not found' }, 404);
     if (parts.length === 2 && method === 'GET') return json([...state.vms.values()].map(vm => ({ id: vm.id, path: vm.path })));
     const vm = state.vms.get(parts[2]);

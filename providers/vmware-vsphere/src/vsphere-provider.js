@@ -36,7 +36,7 @@ export class VsphereProvider{
   async createSnapshot(nativeId,input){return this.#snapshotClient().create(nativeId,input);}
   async revertSnapshot(nativeId,snapshotId){return this.#snapshotClient().revert(nativeId,snapshotId);}
   async deleteSnapshot(nativeId,snapshotId){return this.#snapshotClient().remove(nativeId,snapshotId);}
-  #settingsClient(){return new VmwareSettingsClient({endpointUri:this.base,credential:this.credential,fetchImpl:this.fetch,timeoutMs:this.timeoutMs});}
+  #settingsClient(){return new VmwareSettingsClient({endpointUri:this.base,credential:this.credential,fetchImpl:this.fetch,timeoutMs:this.timeoutMs,pollIntervalMs:this.pollIntervalMs});}
   async getSettings(nativeId){return this.#settingsClient().get(nativeId);}
   async updateSettings(nativeId,input){return this.#settingsClient().update(nativeId,input);}
   #power(value){return ({POWERED_ON:'running',POWERED_OFF:'stopped',SUSPENDED:'suspended'})[value]??String(value??'unknown').toLowerCase();}

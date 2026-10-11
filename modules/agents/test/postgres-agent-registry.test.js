@@ -235,3 +235,15 @@ test('without a master key the registry refuses to start', database, async () =>
   const saved = process.env.NUVRION_MASTER_KEY; delete process.env.NUVRION_MASTER_KEY;
   try { assert.throws(() => new PostgresAgentRegistry(db.pool), /NUVRION_MASTER_KEY is required/); } finally { if (saved !== undefined) process.env.NUVRION_MASTER_KEY = saved; }
 });
+
+test('revoking an agent again keeps the original time and reason: the first revocation is the record', database, async () => {
+  const { agentId } = await enrolled();
+  const first = await registry.revoke(agentId, { reason: 'host retired' });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  const again = await registry.revoke(agentId, { reason: 'cleaning up' });
+  assert.deepEqual([again.status, again.revocationReason], ['revoked', 'host retired']);
+  assert.equal(new Date(again.revokedAt).getTime(), new Date(first.revokedAt).getTime(), 'the revocation time did not move');
+  const stored = (await db.pool.query('SELECT revocation_reason, revoked_at FROM agents.workstation_agents WHERE agent_id=$1', [agentId])).rows[0];
+  assert.equal(stored.revocation_reason, 'host retired');
+});
+

@@ -256,3 +256,12 @@ test('the SOAP clients talk to the provider\'s own endpoint', async () => {
   await provider.getSettings('vm-1');
   assert.deepEqual([...new Set(seen)], ['vcenter.example']);
 });
+
+test('the settings client waits for a configuration task at the provider\'s polling interval, and gives up with a retryable timeout', async () => {
+  const lab = vcenterWithSoapHost(); lab.host.state.taskPolls = 100000;
+  const started = Date.now();
+  await assert.rejects(() => make(lab, { pollIntervalMs: 1 }).updateSettings('vm-1', { cpuCount: 8 }), e => e.code === 'NUV_VM_SETTINGS_TIMEOUT' && e.retryable === true);
+  assert.ok(Date.now() - started < 8000, 'a 1 ms interval over 120 attempts does not take a minute (the default 500 ms would)');
+  assert.equal(lab.host.openSessions(), 0);
+});
+

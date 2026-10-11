@@ -222,3 +222,50 @@ test('the timer keeps retrying after a failure, and close() stops it', async () 
   await wait(40);
   assert.equal(attempts, after, 'no more attempts after close');
 });
+
+// A message that is not valid JSON (or carries no task id) can never be processed. Putting it back on the queue would redeliver it for ever, so it is rejected
+// and reported; only a handler failure, which may be temporary, is retried.
+test('a message that is not JSON is rejected and reported, never requeued, and the next message is still processed', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const rejected = [], received = [];
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl, onRejected: detail => rejected.push(detail) });
+  await broker.subscribe(async message => { received.push(message); });
+  const garbage = { content: Buffer.from('this is not json {'), properties: { messageId: 'm-1' } };
+  await state.consumers[0].handler(garbage);
+  assert.deepEqual(state.nacked, [{ message: garbage, all: false, requeue: false }]);
+  assert.deepEqual(rejected, [{ reason: 'not_json', messageId: 'm-1', bytes: 18 }]);
+  assert.deepEqual(received, [], 'the handler was never asked to process it');
+  await state.consumers[0].handler(delivery({ taskId: 'task-2' }));
+  assert.deepEqual(received, [{ taskId: 'task-2' }]);
+  assert.equal(state.acked.length, 1);
+  await broker.close();
+});
+
+test('JSON without a usable task id is rejected too: an empty body, null, a list, a number, a missing or non-text id', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const reasons = [];
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl, onRejected: detail => reasons.push(detail.reason) });
+  await broker.subscribe(async () => { throw new Error('must not be called'); });
+  for (const body of ['', 'null', '[]', '42', '{}', '{"taskId":7}', '{"taskId":""}', '{"task":"x"}']) await state.consumers[0].handler({ content: Buffer.from(body), properties: {} });
+  assert.equal(state.nacked.length, 8);
+  assert.ok(state.nacked.every(n => n.requeue === false && n.all === false));
+  assert.deepEqual(reasons, ['not_json', 'no_task_id', 'no_task_id', 'no_task_id', 'no_task_id', 'no_task_id', 'no_task_id', 'no_task_id']);
+  assert.equal(state.acked.length, 0);
+  await broker.close();
+});
+
+test('a failing report of a rejected message does not stop the consumer, and a handler failure is still requeued', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl, onRejected: () => { throw new Error('the log is full'); } });
+  let fail = true;
+  await broker.subscribe(async () => { if (fail) throw new Error('database unavailable'); });
+  await state.consumers[0].handler({ content: Buffer.from('nope'), properties: {} });
+  assert.deepEqual(state.nacked.map(n => n.requeue), [false]);
+  const transient = delivery({ taskId: 'task-3' });
+  await state.consumers[0].handler(transient);
+  assert.deepEqual(state.nacked.at(-1), { message: transient, all: false, requeue: true }, 'a temporary failure is retried');
+  fail = false;
+  await state.consumers[0].handler(delivery({ taskId: 'task-3' }));
+  assert.equal(state.acked.length, 1);
+  await broker.close();
+});

@@ -22,7 +22,7 @@ export class WorkstationProvider{
   }
   async #request(path,{method='GET',body,expected=[200]}={}){
     const headers={accept:'application/vnd.vmware.vmw.rest-v1+json',authorization:`Basic ${Buffer.from(`${this.credential.username}:${this.credential.password}`).toString('base64')}`};if(body!==undefined)headers['content-type']='application/vnd.vmware.vmw.rest-v1+json';
-    let response;try{response=await this.fetch(new URL(path,this.base),{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(this.timeoutMs)});}catch(error){throw new WorkstationProviderError('NUV_WORKSTATION_UNREACHABLE',error.message,{retryable:true});}
+    let response;try{response=await this.fetch(new URL(`${this.base.pathname.replace(/\/$/,'')}${path}`,this.base.origin),{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(this.timeoutMs)});}catch(error){throw new WorkstationProviderError('NUV_WORKSTATION_UNREACHABLE',error.message,{retryable:true});}
     if(!expected.includes(response.status)){let detail={};try{detail=await response.json();}catch{}const message=detail.message??detail.Message??`VMware Workstation API returned HTTP ${response.status}.`;const code=response.status===401?'NUV_WORKSTATION_AUTH_FAILED':response.status===403?'NUV_WORKSTATION_PERMISSION_DENIED':response.status===404?'NUV_WORKSTATION_RESOURCE_NOT_FOUND':response.status===409?'NUV_WORKSTATION_STATE_CONFLICT':response.status>=500?'NUV_WORKSTATION_UNAVAILABLE':'NUV_WORKSTATION_REQUEST_FAILED';throw new WorkstationProviderError(code,message,{status:response.status,retryable:response.status>=500});}
     if(response.status===204)return null;return response.json();
   }
