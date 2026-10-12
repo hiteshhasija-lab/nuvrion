@@ -14,7 +14,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (condition, ms = 1500) => { const end = Date.now() + ms; while (Date.now() < end) { if (condition()) return true; await wait(5); } return condition(); };
 
 function fakeRabbit({ failFirst = 0 } = {}) {
-  const state = { connects: 0, connections: [], sent: [], asserted: [], consumers: [], acked: [], nacked: [], confirms: 0, closed: 0 };
+  const state = { connects: 0, connections: [], channels: [], sent: [], asserted: [], consumers: [], acked: [], nacked: [], confirms: 0, closed: 0, channelOpen: true, closeFails: false };
   const connectImpl = async url => {
     state.connects++;
     if (state.connects <= failFirst) throw new Error('connection refused');
@@ -24,11 +24,15 @@ function fakeRabbit({ failFirst = 0 } = {}) {
       sendToQueue: (queue, body, options) => { state.sent.push({ queue, body, options }); },
       waitForConfirms: async () => { state.confirms++; },
       consume: async (queue, handler, options) => { state.consumers.push({ queue, handler, options }); },
-      ack: message => state.acked.push(message),
-      nack: (message, all, requeue) => state.nacked.push({ message, all, requeue }),
-      close: async () => { state.closed++; }
+      // once the broker has gone away, settling a message throws, as amqplib's IllegalOperationError does
+      ack: message => { if (!state.channelOpen) throw new Error('Channel closed'); state.acked.push(message); },
+      nack: (message, all, requeue) => { if (!state.channelOpen) throw new Error('Channel closed'); state.nacked.push({ message, all, requeue }); },
+      on: (event, handler) => { channel.handlers[event] = handler; },
+      handlers: {},
+      close: async () => { state.closed++; if (state.closeFails) throw new Error('Channel closed'); }
     };
-    const connection = { url, handlers, createConfirmChannel: async () => channel, on: (event, handler) => { handlers[event] = handler; }, close: async () => { state.closed++; } };
+    state.channels.push(channel);
+    const connection = { url, handlers, createConfirmChannel: async () => channel, on: (event, handler) => { handlers[event] = handler; }, close: async () => { state.closed++; if (state.closeFails) throw new Error('Connection closed'); } };
     state.connections.push(connection);
     return connection;
   };
@@ -268,4 +272,64 @@ test('a failing report of a rejected message does not stop the consumer, and a h
   await state.consumers[0].handler(delivery({ taskId: 'task-3' }));
   assert.equal(state.acked.length, 1);
   await broker.close();
+});
+
+test('the broker goes away while a message is being handled: settling it fails quietly and the message is left for the broker to redeliver', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl, reconnectMs: 5 });
+  await broker.subscribe(async task => { await wait(1); if (task.taskId === 'fails') throw new Error('database unavailable'); });
+  // found by a live RabbitMQ restart: ack/nack threw IllegalOperationError out of the consumer callback, an unhandled rejection that ends the process
+  for (const taskId of ['succeeds', 'fails']) {
+    state.channelOpen = true;
+    const pending = state.consumers[0].handler(delivery({ taskId }));
+    state.channelOpen = false;                     // the broker went away during the work
+    await assert.doesNotReject(pending, `${taskId}: the consumer callback must not reject`);
+    assert.equal(state.acked.length + state.nacked.length, 0, `${taskId}: nothing was settled on a closed channel`);
+  }
+  await assert.doesNotReject(state.consumers[0].handler(delivery('not json')), 'a rejected message on a closed channel does not throw either');
+  state.channelOpen = true;
+  await broker.close();
+});
+
+test('a channel that closes while the connection stays open is replaced: the broker reconnects and consumes again', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl, reconnectMs: 5 });
+  await broker.subscribe(async () => {});
+  assert.equal(state.consumers.length, 1);
+  state.channels[0].handlers.error?.(new Error('PRECONDITION_FAILED - delivery acknowledgement timed out'));   // an unhandled channel error would throw
+  state.channels[0].handlers.close();
+  assert.equal(broker.status, 'unhealthy');
+  assert.ok(await until(() => broker.status === 'healthy'), 'healthy again');
+  assert.equal(state.connects, 2);
+  assert.ok(await until(() => state.consumers.length === 2), 'the consumer was attached again');
+  assert.ok(state.closed >= 1, 'the old connection was closed');
+  await broker.publishTaskQueued(randomUUID());
+  assert.equal(state.sent.length, 1);
+  await broker.close();
+});
+
+test('a connection attempt that never answers is given up and tried again, and a late answer is closed', async () => {
+  const { state, connectImpl: working } = fakeRabbit();
+  let late;
+  const hangs = new Promise(resolve => { late = resolve; });
+  let attempts = 0;
+  const connectImpl = async url => { attempts++; if (attempts === 1) return hangs; return working(url); };
+  const broker = new RabbitTaskBroker('amqp://broker.invalid', { connectImpl, reconnectMs: 5, connectTimeoutMs: 30 });
+  await assert.rejects(() => broker.open(), /timed out/);
+  assert.equal(broker.status, 'unhealthy');
+  assert.ok(await until(() => broker.status === 'healthy'), 'the next attempt was made and succeeded');
+  const closedBefore = state.closed;
+  let lateClosed = 0;
+  late({ createConfirmChannel: async () => ({ assertQueue: async () => {}, close: async () => {} }), on() {}, close: async () => { lateClosed++; } });
+  assert.ok(await until(() => lateClosed === 1), 'the connection that answered too late was closed, not leaked');
+  assert.equal(state.closed, closedBefore);
+  await broker.close();
+});
+
+test('closing never throws because the broker is already gone', async () => {
+  const { state, connectImpl } = fakeRabbit();
+  const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl });
+  state.closeFails = true;
+  await assert.doesNotReject(() => broker.close());
+  assert.equal(broker.status, 'stopped');
 });

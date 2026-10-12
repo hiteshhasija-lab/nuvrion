@@ -159,6 +159,16 @@ test('a crashed worker is recovered: an expired lease puts the task back in the 
   assert.equal(store.attempts(t.id).length, 2);
 });
 
+test('a recovered task is announced again: its first message was consumed by the process that died', () => {
+  const store = new TaskStore(), t = inState.running(store);
+  for (const message of store.pendingOutbox()) store.markOutboxPublished(message.id);
+  assert.equal(store.pendingOutbox().length, 0);
+  assert.equal(store.recoverExpired(Date.now() + 31_000), 1);
+  assert.deepEqual(store.pendingOutbox().map(message => [message.topic, message.payload]), [['task.queued', { taskId: t.id }]]);
+  assert.equal(store.recoverExpired(Date.now() + 31_000), 0);
+  assert.equal(store.pendingOutbox().length, 1);
+});
+
 test('activeForTarget finds queued or running work only', () => {
   const store = new TaskStore();
   const q = create(store, { targetId: 'vm-q' }), r = inState.running(store), d = inState.completed(store);

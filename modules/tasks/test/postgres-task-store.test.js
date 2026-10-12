@@ -294,6 +294,18 @@ test('a crashed worker is recovered: an expired lease puts the task back in the 
   assert.equal((await s.attempts(t.id)).length, 2);
 });
 
+test('a recovered task is announced again: its first message was consumed by the process that died, so a new outbox message is written with the recovery', database, async () => {
+  const s = store(), t = await inState.running(s);
+  for (const message of await s.pendingOutbox()) await s.markOutboxPublished(message.id);          // the message that carried it to the worker
+  assert.equal((await s.pendingOutbox()).length, 0);
+  await db.pool.query("UPDATE operations.task_leases SET expires_at = now() - interval '1 second' WHERE task_id = $1", [t.id]);
+  assert.equal(await s.recoverExpired(), 1);
+  const pending = await s.pendingOutbox();
+  assert.deepEqual(pending.map(message => [message.topic, message.payload]), [['task.queued', { taskId: t.id }]]);
+  assert.equal(await s.recoverExpired(), 0, 'a second pass finds nothing and announces nothing more');
+  assert.equal((await s.pendingOutbox()).length, 1);
+});
+
 test('recovery leaves tasks whose lease is still valid alone', database, async () => {
   const s = store(), healthy = await inState.running(s), crashed = await inState.running(s);
   await db.pool.query("UPDATE operations.task_leases SET expires_at = now() - interval '1 second' WHERE task_id = $1", [crashed.id]);

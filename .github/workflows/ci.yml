@@ -20,7 +20,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     # A real PostgreSQL, the same major version production runs (postgres:16-alpine), pinned by digest. It is used only by
     # the database tests, which create and drop their own throwaway databases; it holds no real data and is gone after the run.
     services:
@@ -61,12 +61,14 @@ jobs:
       # The browser tests drive the Google Chrome that the runner image already has (no browser is downloaded); say which one, so a missing browser is obvious.
       - name: Browser used by the end-to-end tests
         run: google-chrome --version
-      # NUVRION_REQUIRE_DATABASE_TESTS and NUVRION_REQUIRE_BROWSER_TESTS make those tests fail, rather than skip, if the database or Chrome is not there.
-      - name: Tests (including PostgreSQL, browser end-to-end and accessibility tests)
+      # NUVRION_REQUIRE_DATABASE_TESTS, NUVRION_REQUIRE_BROWSER_TESTS and NUVRION_REQUIRE_BROKER_TESTS make those tests fail, rather than skip, if the database, Chrome or
+      # a container tool is not there. The broker tests start a RabbitMQ container of their own (the runner image has Docker) and stop, kill and restart it.
+      - name: Tests (including PostgreSQL, browser end-to-end, accessibility and live-broker restart tests)
         env:
           NUVRION_TEST_DATABASE_URL: postgres://ci:ci-only-throwaway@127.0.0.1:5432/postgres # secret-scan:allow (disposable CI container)
           NUVRION_REQUIRE_DATABASE_TESTS: '1'
           NUVRION_REQUIRE_BROWSER_TESTS: '1'
+          NUVRION_REQUIRE_BROKER_TESTS: '1'
         run: npm test
 
   # Supply chain: what we ship is listed (SBOM), tied to its inputs (provenance), and free of known serious vulnerabilities.
