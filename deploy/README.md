@@ -35,9 +35,7 @@ that was scanned: CI builds it (on arm64, the host's architecture), scans it, si
    `gh attestation verify <archive> --bundle <bundle> --repo hiteshhasija-lab/nuvrion`.)
 
 Older releases (without `server.imageArchive`) are built on the host from the overlay archive and `localhost/nuvrion:base-arm64`; the script still does that for
-them. A CI-built image is in Docker format, so it carries its `HEALTHCHECK` (the host builds with podman's OCI format, which ignores it): `podman ps` shows
-the container as healthy or unhealthy.
-
+them.
 Image archives are large; the upgrade script deletes the ones in release directories older than 14 days. A release can be assembled again from the CI evidence for
 30 days (the image archive artifact is kept 30 days; the rest 90).
 
