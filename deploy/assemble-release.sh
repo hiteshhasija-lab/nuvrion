@@ -6,7 +6,8 @@
 #   deploy/assemble-release.sh VERSION COMMIT CHANGE_FILE [OUTPUT_DIRECTORY]
 #
 #   VERSION       0.1.N
-#   COMMIT        the 40-character commit that CI built (must be the checked-out HEAD, so that the scan exceptions are the ones CI used)
+#   COMMIT        the 40-character commit that CI built (must be the checked-out HEAD, so that the scan exceptions are the ones CI used); its VERSION
+#                 file must say VERSION, because the image CI built carries that release version
 #   CHANGE_FILE   JSON with sourceAuthority, summary, details (list), verification, filesChanged (list) and optionally requiredMigration
 #   OUTPUT        default ./Nuvrion-v<VERSION>; the directory is created and must not exist
 #
@@ -29,6 +30,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 workflow="$repo/.github/workflows/ci.yml"
 
+[[ "$(git -C "$repo_root" show "$commit:VERSION" 2>/dev/null | tr -d '[:space:]')" == "$version" ]] \
+  || { echo "The VERSION file of $commit does not say $version; the image CI built carries that version. Change VERSION in a commit and let CI build it." >&2; exit 1; }
 jq -e '.summary and (.details|type=="array") and .verification and (.filesChanged|type=="array") and .sourceAuthority' "$change_file" >/dev/null \
   || { echo "The change file needs sourceAuthority, summary, details, verification and filesChanged." >&2; exit 2; }
 
@@ -53,12 +56,33 @@ for file in "$archive" nuvrion-sbom.cdx.json nuvrion-build-provenance.json image
 done
 if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then echo "The archive contains an unsafe path." >&2; exit 1; fi
 
+# The image CI built and scanned. Present for every commit since the image archive was added to CI; older commits have none and are released the old way.
+image_tar="Nuvrion-Image-$commit.tar"
+image_id=""
+if [[ -f "$image_tar" ]]; then
+  for file in image-sbom.cdx.json image-sbom.attestation.sigstore.json image-id.txt; do
+    [[ -f "$file" ]] || { echo "The evidence is missing $file (needed with the image archive)." >&2; exit 1; }
+  done
+  image_id="$(tr -d '[:space:]' < image-id.txt)"
+  [[ "$image_id" =~ ^[0-9a-f]{64}$ ]] || { echo "image-id.txt does not hold an image id." >&2; exit 1; }
+  # the id CI recorded must be the id of the configuration inside the archive, so that what is loaded on the host is what was scanned
+  archive_config="$(tar -xOf "$image_tar" manifest.json | jq -r '.[0].Config' | sed -E 's#.*/##; s#\.json$##; s#^sha256:##')"
+  [[ "$archive_config" == "$image_id" ]] || { echo "The image archive holds image $archive_config, not $image_id." >&2; exit 1; }
+fi
+
 echo "Verifying the build-provenance attestation (signed by $workflow for $commit)..."
 gh attestation verify "$archive" --bundle build-provenance.attestation.sigstore.json --repo "$repo" \
   --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://slsa.dev/provenance/v1 >/dev/null
 echo "Verifying the SBOM attestation..."
 gh attestation verify "$archive" --bundle sbom.attestation.sigstore.json --repo "$repo" \
   --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://cyclonedx.org/bom >/dev/null
+if [[ -n "$image_id" ]]; then
+  echo "Verifying the image archive and its SBOM (same workflow, same commit)..."
+  gh attestation verify "$image_tar" --bundle build-provenance.attestation.sigstore.json --repo "$repo" \
+    --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://slsa.dev/provenance/v1 >/dev/null
+  gh attestation verify "$image_tar" --bundle image-sbom.attestation.sigstore.json --repo "$repo" \
+    --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://cyclonedx.org/bom >/dev/null
+fi
 
 echo "Checking the SBOM and build provenance against this checkout, and the image scan policy..."
 (cd "$repo_root" && node tools/generate-sbom.js verify "$work/evidence/nuvrion-sbom.cdx.json" >/dev/null)
@@ -74,23 +98,33 @@ mkdir "$final"
 cp "$archive" "$final/Nuvrion-Server-Overlay-$version.tar.gz"
 cp nuvrion-sbom.cdx.json nuvrion-build-provenance.json image-scan.json build-provenance.attestation.sigstore.json sbom.attestation.sigstore.json "$final/"
 cp "$work/scan-summary.json" "$final/image-scan-summary.json"
+evidence_files='["nuvrion-sbom.cdx.json","nuvrion-build-provenance.json","image-scan.json","image-scan-summary.json","build-provenance.attestation.sigstore.json","sbom.attestation.sigstore.json"]'
+image_json='null'
+scan_note="the image that was scanned was built in CI from the same commit and the same Containerfiles, on arm64; the image on the host is built there from the signed archive"
+if [[ -n "$image_id" ]]; then
+  cp "$image_tar" "$final/Nuvrion-Image-$version.tar"
+  cp image-sbom.cdx.json image-sbom.attestation.sigstore.json "$final/"
+  evidence_files="$(jq -c '. + ["image-sbom.cdx.json","image-sbom.attestation.sigstore.json"]' <<< "$evidence_files")"
+  image_json="$(jq -nc --arg file "Nuvrion-Image-$version.tar" --arg sha "$(sha "$image_tar")" --arg id "$image_id" '{file:$file,sha256:$sha,imageId:$id}')"
+  scan_note="the image that was scanned is the image that is deployed: the archive is signed, and the host checks the id of the image it loads against the id recorded here"
+fi
 
 jq -n --arg version "$version" --arg commit "$commit" --arg sha "$archive_sha" --arg date "$(date -u +%F)" --arg runUrl "https://github.com/$repo/actions/runs/$run_id" \
-  --arg workflow "$workflow" --arg verifiedAt "$(date -u +%FT%TZ)" --slurpfile change "$change_file" --slurpfile scan "$final/image-scan-summary.json" '
+  --arg workflow "$workflow" --arg verifiedAt "$(date -u +%FT%TZ)" --slurpfile change "$change_file" --slurpfile scan "$final/image-scan-summary.json" \
+  --argjson files "$evidence_files" --argjson image "$image_json" --arg scanNote "$scan_note" '
   {
     product: "Nuvrion", version: $version, channel: "lab", preparedDate: $date, sourceBaselineCommit: $commit,
     sourceAuthority: $change[0].sourceAuthority,
-    server: { artifact: "Nuvrion-Server-Overlay-\($version).tar.gz", sha256: $sha, image: "localhost/nuvrion:\($version)",
-              requiredMigration: ($change[0].requiredMigration // "0028"), health: "pending-post-deploy-check" },
+    server: ({ artifact: "Nuvrion-Server-Overlay-\($version).tar.gz", sha256: $sha, image: "localhost/nuvrion:\($version)",
+               requiredMigration: ($change[0].requiredMigration // "0028"), health: "pending-post-deploy-check" } + (if $image then {imageArchive: $image} else {} end)),
     change: { summary: $change[0].summary, details: $change[0].details, verification: $change[0].verification, filesChanged: $change[0].filesChanged },
     supplyChain: {
       archiveSha256: $sha,
       builtBy: $workflow, ciRun: $runUrl,
-      files: ["nuvrion-sbom.cdx.json", "nuvrion-build-provenance.json", "image-scan.json", "image-scan-summary.json",
-              "build-provenance.attestation.sigstore.json", "sbom.attestation.sigstore.json"],
+      files: $files,
       attestations: { buildProvenance: "https://slsa.dev/provenance/v1", sbom: "https://cyclonedx.org/bom", verifiedWith: "gh attestation verify", verifiedAt: $verifiedAt },
       imageScan: { scanner: "trivy", status: $scan[0].status, blockingFindings: $scan[0].blocking, acceptedFindings: ($scan[0].accepted | length), counts: $scan[0].counts,
-                   note: "the image that was scanned was built in CI from the same commit and the same Containerfiles, on arm64; the image on the host is built there from the signed archive" }
+                   note: $scanNote }
     }
   }' > "$final/release-manifest.json"
 
@@ -103,4 +137,5 @@ echo "Release directory: $output"
 echo "  archive sha256   $archive_sha"
 echo "  commit           $commit (CI run $run_id)"
 echo "  image scan       $(jq -r '"\(.status), \(.blocking) blocking, \(.accepted|length) accepted"' "$output/image-scan-summary.json")"
+[[ -z "$image_id" ]] || echo "  image archive    Nuvrion-Image-$version.tar (image id ${image_id:0:12}, signed, the image that was scanned)"
 echo "Next: copy it to the host's releases directory, then run upgrade-nuvrion.sh <dir> --check and read it before --yes."

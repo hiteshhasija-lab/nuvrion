@@ -104,7 +104,17 @@ podman container exists "$postgres_container" || { echo "The PostgreSQL containe
 podman pod exists "$pod_name" || { echo "The Nuvrion pod was not found." >&2; exit 1; }
 [[ -f "$environment_file" && -f "$ca_file" ]] || { echo "The Nuvrion environment file or CA certificate is missing." >&2; exit 1; }
 [[ -f "$agent_signing_private_key_file" && -f "$agent_signing_public_key_file" ]] || { echo "The agent signing key files are missing (these are NOT in the env file — PEM values don't survive --env-file)." >&2; exit 1; }
-podman image exists "$base_image" || { echo "The base image is unavailable: $base_image" >&2; exit 1; }
+image_archive="$(jq -r '.server.imageArchive.file // empty' "$manifest")"
+image_archive_id="$(jq -r '.server.imageArchive.imageId // empty' "$manifest")"
+if [[ -n "$image_archive" ]]; then
+  [[ "$image_archive" == "Nuvrion-Image-$version.tar" && "$image_archive_id" =~ ^[0-9a-f]{64}$ && -f "$release_dir/$image_archive" ]] \
+    || { echo "The image archive named by the manifest is missing or malformed." >&2; exit 1; }
+  grep -q -- "  $image_archive\$" "$checksums" || { echo "The image archive is not covered by SHA256SUMS.txt." >&2; exit 1; }
+  [[ "$(jq -r '.server.imageArchive.sha256' "$manifest")" == "$(sha256sum "$release_dir/$image_archive" | cut -d' ' -f1)" ]] \
+    || { echo "The image archive does not match the digest in the manifest." >&2; exit 1; }
+else
+  podman image exists "$base_image" || { echo "The base image is unavailable: $base_image" >&2; exit 1; }
+fi
 systemctl --user is-active --quiet "$systemd_service" || { echo "The systemd unit is not active: $systemd_service" >&2; exit 1; }
 
 current_image="$(podman inspect "$api_container" --format '{{.Image}}')"
@@ -160,6 +170,22 @@ record_stable_release() {
   mv "$temporary" "$stable_record"
 }
 
+# A release with server.imageArchive carries the image CI built and scanned, signed together with the release. It is loaded, not built: the id of what was
+# loaded must be the id the manifest names (so it is the scanned image), and the image must report this release's version.
+# usage: load_ci_image ARCHIVE EXPECTED_IMAGE_ID TAG EXPECTED_VERSION
+load_ci_image() {
+  local archive="$1" expected_id="$2" tag="$3" expected_version="$4" ref id version_in_image
+  ref="$(podman load -q -i "$archive" | sed -n 's/^Loaded image: //p' | head -n 1)"
+  [[ -n "$ref" ]] || { echo "The image archive did not load." >&2; return 1; }
+  id="$(podman image inspect "$ref" --format '{{.Id}}')"
+  id="${id#sha256:}"
+  [[ "$id" == "$expected_id" ]] || { echo "The loaded image ($id) is not the image the release names ($expected_id)." >&2; return 1; }
+  podman tag "$ref" "$tag"
+  if [[ "$ref" != "$tag" ]]; then podman rmi "$ref" >/dev/null 2>&1 || true; fi
+  version_in_image="$(podman run --rm --entrypoint cat "$tag" /opt/nuvrion/RELEASE_VERSION)"
+  [[ "$version_in_image" == "$expected_version" ]] || { echo "The image reports release $version_in_image, not $expected_version." >&2; return 1; }
+}
+
 # Version tags (localhost/nuvrion:X.Y.Z) other than the newest $1 and the one just deployed. Reads tags on stdin.
 stale_version_tags() {
   grep -E '^localhost/nuvrion:[0-9]+\.[0-9]+\.[0-9]+$' | sort -t: -k2 -V -r | tail -n +"$(($1 + 1))" | grep -vxF "$target_image" || true
@@ -172,6 +198,8 @@ cleanup_after_deploy() {
   local tag
   rm -rf "$build_dir"
   find "$upgrade_root/builds" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+  # an image archive is about 250 MB; the release can be assembled again from CI evidence for 30 days, and the running image does not depend on the file
+  find "$upgrade_root/releases" -mindepth 2 -maxdepth 2 -name 'Nuvrion-Image-*.tar' -mtime +14 -delete 2>/dev/null || true
   while IFS= read -r tag; do
     if [[ -n "$tag" ]]; then podman rmi "$tag" >/dev/null 2>&1 || true; fi
   done < <(podman images --format '{{.Repository}}:{{.Tag}}' | stale_version_tags 5)
@@ -216,8 +244,13 @@ containerfile="$build_dir/Containerfile.overlay"
 migration_files=("$build_dir/database/migrations/${required_migration}_"*.sql)
 [[ ${#migration_files[@]} -eq 1 && -f "${migration_files[0]}" ]] || { echo "Migration $required_migration is missing or ambiguous." >&2; false; }
 migration_file="${migration_files[0]}"
-podman build --build-arg "BASE_IMAGE=$base_image" --build-arg "RELEASE_VERSION=$version" \
-  -f "$containerfile" -t "$target_image" "$build_dir"
+if [[ -n "$image_archive" ]]; then
+  echo "Loading the image CI built and scanned (not building one here)..."
+  load_ci_image "$release_dir/$image_archive" "$image_archive_id" "$target_image" "$version"
+else
+  podman build --build-arg "BASE_IMAGE=$base_image" --build-arg "RELEASE_VERSION=$version" \
+    -f "$containerfile" -t "$target_image" "$build_dir"
+fi
 
 echo "Applying migration $required_migration..."
 podman cp "$migration_file" "$postgres_container:/tmp/nuvrion-release-migration.sql"

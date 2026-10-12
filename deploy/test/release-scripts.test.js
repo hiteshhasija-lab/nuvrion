@@ -77,3 +77,85 @@ test('the assemble script refuses a malformed version, commit or change file bef
     assert.equal(run('0.1.171').status, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- a release that carries the image CI built: the preflight, and the loading of the image ----
+const sectionBetween = (startMarker, endMarker) => { const a = upgradeScript.indexOf(startMarker), b = upgradeScript.indexOf(endMarker, a); assert.ok(a > 0 && b > a, `${startMarker} not found`); return upgradeScript.slice(a, b + endMarker.length); };
+const preflight = sectionBetween('image_archive="$(jq -r', '\nfi\n');
+const loader = sectionBetween('load_ci_image() {', '\n}\n');
+const ID = 'a'.repeat(64);
+
+function imageRelease({ archiveName = 'Nuvrion-Image-0.1.173.tar', id = ID, tamper = false, uncovered = false, missing = false, noArchive = false } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-image-release-'));
+  const bytes = Buffer.from('image archive');
+  if (!missing) writeFileSync(join(dir, archiveName), tamper ? Buffer.from('other bytes') : bytes);
+  const server = { artifact: 'Nuvrion-Server-Overlay-0.1.173.tar.gz', ...(noArchive ? {} : { imageArchive: { file: archiveName, sha256: sha(bytes), imageId: id } }) };
+  writeFileSync(join(dir, 'release-manifest.json'), JSON.stringify({ version: '0.1.173', server }));
+  writeFileSync(join(dir, 'SHA256SUMS.txt'), uncovered ? '' : `${sha(bytes)}  ${archiveName}\n`);
+  return dir;
+}
+const runPreflight = (dir, { baseImage = true } = {}) => spawnSync('bash', ['-c', `set -Eeuo pipefail\npodman() { ${baseImage ? 'return 0' : 'return 1'}; }\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"; version="0.1.173"; base_image="localhost/nuvrion:base-arm64"\n${preflight}\necho "image_archive=[$image_archive]"`], { env: { ...process.env, D: dir }, encoding: 'utf8' });
+const withImageRelease = (options, run, check) => { const dir = imageRelease(options); try { check(runPreflight(dir, run)); } finally { rmSync(dir, { recursive: true, force: true }); } };
+
+test('a release with an image archive passes the preflight without needing a base image on the host', () => {
+  withImageRelease({}, { baseImage: false }, result => { assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /image_archive=\[Nuvrion-Image-0\.1\.173\.tar\]/); });
+});
+
+test('a release without an image archive still needs the base image it will build on', () => {
+  withImageRelease({ noArchive: true }, { baseImage: true }, result => { assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /image_archive=\[\]/); });
+  withImageRelease({ noArchive: true }, { baseImage: false }, result => { assert.equal(result.status, 1); assert.match(result.stderr, /base image is unavailable/); });
+});
+
+test('an image archive that is missing, misnamed, malformed, uncovered or does not match its digest is refused', () => {
+  for (const [label, options, pattern] of [
+    ['missing', { missing: true }, /missing or malformed/],
+    ['misnamed', { archiveName: 'Nuvrion-Image-9.9.9.tar' }, /missing or malformed/],
+    ['bad id', { id: 'not-an-id' }, /missing or malformed/],
+    ['not in the checksum list', { uncovered: true }, /not covered by SHA256SUMS/],
+    ['bytes differ from the manifest', { tamper: true }, /does not match the digest/]
+  ]) withImageRelease(options, {}, result => { assert.equal(result.status, 1, label); assert.match(result.stderr, pattern, label); });
+});
+
+function runLoader({ loaded = 'Loaded image: localhost/nuvrion:ci-image', id = `sha256:${ID}`, version = '0.1.173' } = {}) {
+  const log = join(mkdtempSync(join(tmpdir(), 'nuvrion-loader-')), 'calls.log');
+  const script = `set -Eeuo pipefail
+podman() { case "$1" in
+  load) printf '%s' "$FAKE_LOADED" ;;
+  image) printf '%s\\n' "$FAKE_ID" ;;
+  tag|rmi) echo "$*" >> "$LOG" ;;
+  run) printf '%s' "$FAKE_VERSION" ;;
+esac; }
+${loader}
+load_ci_image /releases/image.tar ${ID} localhost/nuvrion:0.1.173 0.1.173
+echo done`;
+  const result = spawnSync('bash', ['-c', script], { env: { ...process.env, FAKE_LOADED: loaded, FAKE_ID: id, FAKE_VERSION: version, LOG: log }, encoding: 'utf8' });
+  let calls = ''; try { calls = readFileSync(log, 'utf8'); } catch { /* nothing was tagged */ }
+  rmSync(join(log, '..'), { recursive: true, force: true });
+  return { ...result, calls };
+}
+
+test('the CI image is loaded, tagged for the release, and the CI tag removed, when its id and version are the expected ones', () => {
+  const result = runLoader();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /done/);
+  assert.match(result.calls, /tag localhost\/nuvrion:ci-image localhost\/nuvrion:0\.1\.173/);
+  assert.match(result.calls, /rmi localhost\/nuvrion:ci-image/);
+});
+
+test('an image whose id is not the one the release names is refused before it is tagged', () => {
+  const result = runLoader({ id: `sha256:${'b'.repeat(64)}` });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not the image the release names/);
+  assert.equal(result.calls, '', 'nothing was tagged');
+});
+
+test('an image that reports another release version is refused', () => {
+  const result = runLoader({ version: '0.1.172' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /reports release 0\.1\.172, not 0\.1\.173/);
+});
+
+test('an archive that loads nothing is refused', () => {
+  const result = runLoader({ loaded: '' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /did not load/);
+});

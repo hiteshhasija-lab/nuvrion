@@ -1,47 +1,4 @@
 {
   "policy": "A HIGH or CRITICAL finding that has a fix blocks the build. A finding may be accepted here for a short time (at most 45 days ahead) with a reason; an expired entry blocks again, so renew one deliberately or take the fix by bumping the pinned base image in Containerfile.base.",
-  "exceptions": [
-    {
-      "id": "CVE-2026-13221",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-42496",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-8376",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-42497",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-48962",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-57432",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    },
-    {
-      "id": "CVE-2026-57433",
-      "packages": ["perl-base"],
-      "reason": "Perl is in the slim base image only because dpkg depends on it; the container runs node and nothing invokes perl. The fixed package (5.36.0-7+deb12u4) is not yet in the pinned node base image; take it by bumping the digest when the node image is rebuilt.",
-      "expires": "2026-10-26"
-    }
-  ]
+  "exceptions": []
 }

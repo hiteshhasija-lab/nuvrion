@@ -132,10 +132,14 @@ jobs:
           node-version: '24'
       - name: Build the images
         run: |
+          version="$(cat VERSION)"
           docker build -f Containerfile.base -t nuvrion-base:ci .
-          docker build -f Containerfile.overlay --build-arg BASE_IMAGE=nuvrion-base:ci --build-arg RELEASE_VERSION=0.1.0-ci.${{ github.run_number }} -t nuvrion-app:ci .
-          docker save nuvrion-app:ci -o "$RUNNER_TEMP/nuvrion-app.tar"
-          docker run --rm nuvrion-app:ci sh -c 'node --version; test ! -e /usr/local/lib/node_modules/npm && echo "npm is not in the image"'
+          docker build -f Containerfile.overlay --build-arg BASE_IMAGE=nuvrion-base:ci --build-arg "RELEASE_VERSION=$version" -t localhost/nuvrion:ci-image .
+          mkdir -p evidence image
+          docker save localhost/nuvrion:ci-image -o "image/Nuvrion-Image-${GITHUB_SHA}.tar"
+          docker image inspect localhost/nuvrion:ci-image --format '{{.Id}}' | sed 's/^sha256://' > evidence/image-id.txt
+          cp "image/Nuvrion-Image-${GITHUB_SHA}.tar" "$RUNNER_TEMP/nuvrion-app.tar"
+          docker run --rm localhost/nuvrion:ci-image sh -c 'node --version; cat /opt/nuvrion/RELEASE_VERSION; test ! -e /usr/local/lib/node_modules/npm && echo "npm is not in the image"; echo "perl-base: $(dpkg-query -W -f="\${Version}" perl-base)"'
       - name: Scan the image (Trivy, operating-system packages and Node packages)
         env:
           TRIVY_IMAGE: docker.io/aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
@@ -146,6 +150,8 @@ jobs:
             image --input /in/nuvrion-app.tar --scanners vuln --format json --output /out/image-scan.json
           docker run --rm -e TRIVY_DB_REPOSITORY -v "$RUNNER_TEMP:/in:ro" -v "$PWD/evidence:/out" "$TRIVY_IMAGE" \
             image --input /in/nuvrion-app.tar --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --format table --output /out/image-scan-high-fixable.txt
+          docker run --rm -e TRIVY_DB_REPOSITORY -v "$RUNNER_TEMP:/in:ro" -v "$PWD/evidence:/out" "$TRIVY_IMAGE" \
+            image --input /in/nuvrion-app.tar --format cyclonedx --output /out/image-sbom.cdx.json
           cat evidence/image-scan-high-fixable.txt | head -60
       - name: Policy (a fixable high or critical finding blocks)
         run: node tools/evaluate-image-scan.js evidence/image-scan.json --exceptions deploy/image-scan-exceptions.json --summary evidence/image-scan-summary.json
@@ -157,6 +163,15 @@ jobs:
           path: evidence/
           if-no-files-found: error
           retention-days: 90
+      # The image that was scanned is the image that is deployed: the release carries this archive (signed by the release-evidence job) and the host loads it.
+      - name: Keep the scanned image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-archive-${{ github.sha }}
+          path: image/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
   # What a release is made of, signed. Runs only for a commit on main whose tests, supply-chain checks and image scan all passed: the release
   # archive is built from that commit (git archive, which is reproducible), its SBOM and build provenance are made and verified, and GitHub
@@ -197,21 +212,35 @@ jobs:
         with:
           name: image-scan-evidence-${{ github.sha }}
           path: release/
-      - name: Attest the release archive (build provenance)
+      - name: The image that was scanned
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-archive-${{ github.sha }}
+          path: release/
+      - name: Attest the release archive and the image archive (build provenance)
         id: provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: release/Nuvrion-Server-Overlay-*.tar.gz
+          subject-path: |
+            release/Nuvrion-Server-Overlay-*.tar.gz
+            release/Nuvrion-Image-*.tar
       - name: Attest the SBOM of the release archive
         id: sbom
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: release/Nuvrion-Server-Overlay-*.tar.gz
           sbom-path: release/nuvrion-sbom.cdx.json
+      - name: Attest the SBOM of the image archive (operating-system and Node packages)
+        id: image-sbom
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: release/Nuvrion-Image-*.tar
+          sbom-path: release/image-sbom.cdx.json
       - name: Keep the signed release evidence
         run: |
           cp "${{ steps.provenance.outputs.bundle-path }}" release/build-provenance.attestation.sigstore.json
           cp "${{ steps.sbom.outputs.bundle-path }}" release/sbom.attestation.sigstore.json
+          cp "${{ steps.image-sbom.outputs.bundle-path }}" release/image-sbom.attestation.sigstore.json
           (cd release && sha256sum * > SHA256SUMS.evidence.txt && cat SHA256SUMS.evidence.txt)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -18,7 +18,30 @@ test('the image that ships is the slim one, without a package manager or a compi
   assert.match(runtime, /^FROM node:[0-9.]+-bookworm-slim@sha256:/m);
   assert.match(runtime, /rm -rf [^\n]*node_modules\/npm\b/);
   assert.match(runtime, /COPY --from=build /);
-  assert.doesNotMatch(runtime, /apt-get|npm (ci|install)/);
+  assert.doesNotMatch(runtime, /npm (ci|install)/);
+  // the only package change allowed in the runtime stage: the fixed version of one package, nothing else upgraded
+  const aptCommands = runtime.match(/apt-get [^\n]*/g) ?? [];
+  assert.deepEqual(aptCommands.length, 1);
+  assert.match(aptCommands[0], /^apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base && rm -rf \/var\/lib\/apt\/lists\/\*$/);
+  assert.doesNotMatch(runtime, /apt-get (upgrade|dist-upgrade)/);
+});
+
+test('the release version lives in the VERSION file, and CI builds the image with it', () => {
+  const version = read('VERSION').trim();
+  assert.match(version, /^0\.1\.\d+$/);
+  const job = workflow.slice(workflow.indexOf('\n  image-scan:'), workflow.indexOf('\n  release-evidence:'));
+  assert.match(job, /version="\$\(cat VERSION\)"/);
+  assert.match(job, /--build-arg "RELEASE_VERSION=\$version"/);
+});
+
+test('the image that is scanned is the image that is kept, signed and shipped', () => {
+  const scan = workflow.slice(workflow.indexOf('\n  image-scan:'), workflow.indexOf('\n  release-evidence:'));
+  const evidence = workflow.slice(workflow.indexOf('\n  release-evidence:'), workflow.indexOf('\n  api-compatibility:'));
+  assert.match(scan, /docker save localhost\/nuvrion:ci-image -o "image\/Nuvrion-Image-\$\{GITHUB_SHA\}\.tar"/);
+  assert.match(scan, /--input \/in\/nuvrion-app\.tar/, 'Trivy scans a copy of the saved archive, not another build');
+  assert.match(scan, /name: image-archive-\$\{\{ github\.sha \}\}/);
+  assert.match(evidence, /release\/Nuvrion-Image-\*\.tar/, 'the image archive is a subject of the provenance attestation');
+  assert.match(evidence, /sbom-path: release\/image-sbom\.cdx\.json/, 'the image SBOM is attested for the image archive');
 });
 
 test('container builds install exactly the locked dependencies, with the lockfile in the build context', () => {
