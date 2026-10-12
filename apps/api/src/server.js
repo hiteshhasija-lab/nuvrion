@@ -103,8 +103,12 @@ const operationalMetrics=new OperationalMetrics();
 const consoleSessions=new Map();
 const terminalSessions=new Map();
 const consoleWebSockets=new WebSocketServer({noServer:true});
-const outboxRelay=production?new OutboxRelay({store,broker,onError:error=>console.error(JSON.stringify({level:'error',event:'outbox.publish_failed',error:error.message}))}):null;outboxRelay?.start();
-const recovered=await store.recoverExpired();if(recovered&&!production)await worker.notify();
+const outboxRelay=production?new OutboxRelay({store,broker,onError:(error,detail)=>console.error(JSON.stringify({level:'error',event:'outbox.publish_failed',error:error.message,...detail})),onRecovered:detail=>console.log(JSON.stringify({level:'info',event:'outbox.publish_recovered',...detail}))}):null;outboxRelay?.start();
+// Tasks that would otherwise be stranded: a task whose worker died (its lease, renewed by the worker while it works, has expired) is queued again, or sent to
+// verification when the provider had already accepted it, and a queued task that has waited too long with no message for it is announced again (a message lost with the broker).
+const taskRecovery=async()=>{try{const result=await store.recoverStranded({reannounceAfterMs:Number(process.env.NUVRION_TASK_REANNOUNCE_AFTER_MS??120000)});if(result.requeued||result.verificationRequired||result.reannounced){console.log(JSON.stringify({level:'warn',event:'tasks.recovered',...result}));if(production)outboxRelay.kick();else await worker.notify();}}catch(error){console.error(JSON.stringify({level:'error',event:'tasks.recovery_failed',error:error.message}));}};
+await taskRecovery();
+const taskRecoveryTimer=setInterval(taskRecovery,Number(process.env.NUVRION_TASK_RECOVERY_INTERVAL_MS??30000));taskRecoveryTimer.unref?.();
 discoveryScheduler.start();
 // History tables prune themselves by age (discovery runs 30d, health events 90d by default; see retention-service.js).
 const retention=production?new RetentionService({pool:store.pool,policies:retentionPoliciesFromEnv(process.env),intervalMs:Number(process.env.NUVRION_RETENTION_INTERVAL_MS??6*60*60_000),onPruned:(table,rows)=>console.log(JSON.stringify({level:'info',event:'retention.pruned',table,rows})),onError:(error,policy)=>console.error(JSON.stringify({level:'error',event:'retention.failed',table:policy.name,error:error.message}))}):null;retention?.start();
@@ -317,6 +321,6 @@ export function createServer() { const server=http.createServer(handler);server.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const host = process.env.NUVRION_HOST ?? '127.0.0.1'; const port = Number(process.env.NUVRION_PORT ?? 4100);
   const server=createServer();server.listen(port, host, () => console.log(JSON.stringify({ level: 'info', event: 'server.started', profile:production?'production':'local',url: `http://${host}:${port}` })));
-  const shutdown=async signal=>{console.log(JSON.stringify({level:'info',event:'server.stopping',signal}));server.close();discoveryScheduler.close();retention?.close();agentMaintenance.close();outboxRelay?.close();await worker.close();await store.close?.();};
+  const shutdown=async signal=>{console.log(JSON.stringify({level:'info',event:'server.stopping',signal}));server.close();discoveryScheduler.close();retention?.close();agentMaintenance.close();outboxRelay?.close();clearInterval(taskRecoveryTimer);await worker.close();await store.close?.();};
   process.once('SIGTERM',()=>shutdown('SIGTERM'));process.once('SIGINT',()=>shutdown('SIGINT'));
 }

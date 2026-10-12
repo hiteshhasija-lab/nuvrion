@@ -129,3 +129,32 @@ test('the provider is called with the native identifier, not the internal one', 
   assert.deepEqual(seen, [['start', 'D:\\VMs\\X\\X.vmx']]);
   assert.equal(store.get(task.id).status, 'completed');
 });
+
+// ---- the lease is renewed while a task is being worked on ----
+test('the worker renews the task lease for as long as it works on the task, and stops when it is done', async () => {
+  const { TaskStore } = await import('../../../modules/tasks/src/task-store.js');
+  const store = new TaskStore();
+  const beats = [];
+  const original = store.heartbeat.bind(store);
+  store.heartbeat = id => { beats.push(Date.now()); return original(id); };
+  const provider = { execute: async () => { await new Promise(resolve => setTimeout(resolve, 120)); return { providerReference: 'ref' }; }, verify: async () => ({ state: 'done' }) };
+  const worker = new Worker({ store, provider, heartbeatMs: 15 });
+  const { task } = store.create({ operation: 'start', targetId: 'vm-hb', providerNativeId: 'n', connectionId: 'c', correlationId: 'corr', idempotencyKey: 'hb' });
+  await worker.tick(task.id);
+  assert.equal(store.get(task.id).status, 'completed');
+  assert.ok(beats.length >= 4, `renewed while the provider call ran (${beats.length})`);
+  const after = beats.length;
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(beats.length, after, 'no renewal after the task finished');
+});
+
+test('a failing renewal never fails the task', async () => {
+  const { TaskStore } = await import('../../../modules/tasks/src/task-store.js');
+  const store = new TaskStore();
+  store.heartbeat = () => { throw new Error('database unavailable'); };
+  const provider = { execute: async () => { await new Promise(resolve => setTimeout(resolve, 60)); return { providerReference: 'ref' }; }, verify: async () => ({ state: 'done' }) };
+  const worker = new Worker({ store, provider, heartbeatMs: 10 });
+  const { task } = store.create({ operation: 'start', targetId: 'vm-hb2', providerNativeId: 'n', connectionId: 'c', correlationId: 'corr', idempotencyKey: 'hb2' });
+  await worker.tick(task.id);
+  assert.equal(store.get(task.id).status, 'completed');
+});

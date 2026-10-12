@@ -18,9 +18,11 @@ export class RabbitTaskBroker {
 }
 
 export class OutboxRelay{
-  constructor({store,broker,intervalMs=500,onError=()=>{}}){this.store=store;this.broker=broker;this.intervalMs=intervalMs;this.onError=onError;this.timer=null;this.running=false;this.status='starting';}
-  start(){this.status='healthy';this.timer=setInterval(()=>this.tick().catch(this.onError),this.intervalMs);this.timer.unref?.();this.tick().catch(this.onError);}
-  async tick(){if(this.running)return;this.running=true;try{for(const message of await this.store.pendingOutbox()){if(message.topic!=='task.queued')continue;await this.broker.publishTaskQueued(message.payload.taskId);await this.store.markOutboxPublished(message.id);}}finally{this.running=false;}}
-  kick(){queueMicrotask(()=>this.tick().catch(this.onError));}   // a failed publish is reported and retried by the timer; it must never become an unhandled rejection, which would end the process
+  constructor({store,broker,intervalMs=500,onError=()=>{},onRecovered=()=>{},reportEveryMs=60000}){this.store=store;this.broker=broker;this.intervalMs=intervalMs;this.onError=onError;this.onRecovered=onRecovered;this.reportEveryMs=reportEveryMs;this.failures=null;this.timer=null;this.running=false;this.status='starting';}
+  /* A broker that is down fails every tick. The first failure is reported, then a different failure, then the same one at most once per reportEveryMs; when a tick works again the recovery is reported once. */
+  #report(error){const now=Date.now(),f=this.failures??(this.failures={since:now,count:0,lastReportedAt:0,message:null});f.count++;if(f.message!==error.message||now-f.lastReportedAt>=this.reportEveryMs){f.message=error.message;f.lastReportedAt=now;try{this.onError(error,{consecutiveFailures:f.count,since:new Date(f.since).toISOString()});}catch{/* reporting must not stop the relay */}}}
+  start(){this.status='healthy';this.timer=setInterval(()=>this.tick().catch(error=>this.#report(error)),this.intervalMs);this.timer.unref?.();this.tick().catch(error=>this.#report(error));}
+  async tick(){if(this.running)return;this.running=true;try{if(this.broker.status!==undefined&&this.broker.status!=='healthy')throw new Error('Task broker is unavailable.');for(const message of await this.store.pendingOutbox()){if(message.topic!=='task.queued')continue;await this.broker.publishTaskQueued(message.payload.taskId);await this.store.markOutboxPublished(message.id);}if(this.failures){const failures=this.failures;this.failures=null;try{this.onRecovered({consecutiveFailures:failures.count,since:new Date(failures.since).toISOString()});}catch{/* reporting must not stop the relay */}}}finally{this.running=false;}}
+  kick(){queueMicrotask(()=>this.tick().catch(error=>this.#report(error)));}   // a failed publish is reported and retried by the timer; it must never become an unhandled rejection, which would end the process
   close(){if(this.timer)clearInterval(this.timer);this.status='stopped';}
 }

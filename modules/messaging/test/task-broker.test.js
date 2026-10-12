@@ -333,3 +333,39 @@ test('closing never throws because the broker is already gone', async () => {
   await assert.doesNotReject(() => broker.close());
   assert.equal(broker.status, 'stopped');
 });
+
+test('a broker that is down is reported once, not on every tick; the database is not read meanwhile; the recovery is reported once', async () => {
+  const reported = [], recovered = [];
+  let healthy = false, reads = 0;
+  const store = { pendingOutbox: async () => { reads++; return []; }, markOutboxPublished: async () => {} };
+  const broker = { get status() { return healthy ? 'healthy' : 'unhealthy'; }, publishTaskQueued: async () => {} };
+  const relay = new OutboxRelay({ store, broker, intervalMs: 5, reportEveryMs: 60_000, onError: (error, detail) => reported.push({ message: error.message, count: detail.consecutiveFailures }), onRecovered: detail => recovered.push(detail.consecutiveFailures) });
+  relay.start();
+  await wait(120);                                          // about twenty failing ticks
+  assert.equal(reads, 0, 'the broker is known to be down, so the database is not read');
+  assert.deepEqual(reported, [{ message: 'Task broker is unavailable.', count: 1 }], 'one report for all of them');
+  healthy = true;
+  assert.ok(await until(() => recovered.length === 1));
+  await wait(40);
+  assert.equal(recovered.length, 1, 'reported once');
+  assert.ok(recovered[0] >= 5, 'with the number of failed ticks');
+  relay.close();
+});
+
+test('a failure that goes on is reported again after reportEveryMs, and a different failure is reported at once', async () => {
+  const reported = [];
+  let message = 'first problem', ticks = 0;
+  const store = { pendingOutbox: async () => { ticks++; return [{ id: 'm', topic: 'task.queued', payload: { taskId: 't' } }]; }, markOutboxPublished: async () => {} };
+  const broker = { status: 'healthy', publishTaskQueued: async () => { throw new Error(message); } };
+  const relay = new OutboxRelay({ store, broker, intervalMs: 5, reportEveryMs: 80, onError: error => reported.push(error.message) });
+  relay.start();
+  await wait(250);
+  assert.ok(ticks > 15, `many ticks failed (${ticks})`);
+  assert.ok(reported.length >= 2 && reported.length <= 5, `a few reports, not one per tick (${reported.length})`);
+  assert.ok(reported.every(text => text === 'first problem'));
+  const before = reported.length;
+  message = 'second problem';
+  assert.ok(await until(() => reported.length > before, 500));
+  assert.equal(reported.at(-1), 'second problem');
+  relay.close();
+});

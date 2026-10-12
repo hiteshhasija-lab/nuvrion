@@ -213,3 +213,44 @@ test('metrics reflect the current mix of states', () => {
   const m = store.metrics();
   assert.deepEqual([m.tasksTotal, m.tasksCompleted, m.tasksFailed, m.tasksRunning, m.tasksQueued], [4, 1, 1, 1, 1]);
 });
+
+// ---- tasks that would otherwise be stranded (the same rules as the PostgreSQL store) ----
+test('a worker renews its lease, so a task being worked on is not recovered', () => {
+  const store = new TaskStore(), t = inState.running(store);
+  assert.equal(store.heartbeat(t.id), true);
+  assert.equal(store.recoverExpired(Date.now() + 25_000), 0, 'renewed: the lease runs 30 s from now');
+  assert.equal(store.recoverExpired(Date.now() + 31_000), 1);
+  assert.equal(store.heartbeat(t.id), false, 'no lease any more');
+  assert.equal(store.heartbeat('unknown'), false);
+});
+
+test('an expired lease on a task the provider had accepted goes to verification and is not announced', () => {
+  const store = new TaskStore(), t = inState.running(store);
+  store.running(t.id, 'provider-ref');
+  for (const message of store.pendingOutbox()) store.markOutboxPublished(message.id);
+  const result = store.recoverStranded({ now: Date.now() + 31_000 });
+  assert.deepEqual([result.requeued, result.verificationRequired], [0, 1]);
+  assert.equal(store.get(t.id).status, 'verification_required');
+  assert.equal(store.get(t.id).error.code, 'NUV_TASK_LEASE_EXPIRED');
+  assert.equal(store.pendingOutbox().length, 0);
+  assert.equal(store.claim('w2', t.id), null);
+});
+
+test('a queued task whose message is gone is announced again once it has waited long enough', () => {
+  const store = new TaskStore();
+  const lost = create(store), recent = create(store);
+  for (const message of store.pendingOutbox()) store.markOutboxPublished(message.id);
+  const later = Date.now() + 600_000;
+  assert.equal(store.reannounceStale({ olderThanMs: 120_000, now: Date.now() }), 0, 'nothing has waited yet');
+  assert.equal(store.reannounceStale({ olderThanMs: 120_000, now: later }), 2, 'both have been queued for ten minutes with no waiting message');
+  assert.deepEqual(store.pendingOutbox().map(m => m.payload.taskId).sort(), [lost.id, recent.id].sort());
+  assert.equal(store.reannounceStale({ olderThanMs: 120_000, now: later }), 0, 'a message is waiting: nothing is added');
+});
+
+test('a claim starts without the provider reference of an earlier attempt', () => {
+  const store = new TaskStore(), t = inState.running(store);
+  store.running(t.id, 'old');
+  store.fail(t.id, ERR);
+  assert.equal(store.manualRetry(t.id).ok, true);
+  assert.equal(store.claim('w2', t.id).providerReference, null);
+});

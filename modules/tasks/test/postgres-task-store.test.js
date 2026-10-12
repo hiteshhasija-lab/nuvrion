@@ -390,3 +390,88 @@ test('closing the store ends its connections', database, async () => {
   assert.equal(s.status, 'stopped');
   await assert.rejects(() => s.metrics());
 });
+
+// ---- tasks that would otherwise be stranded: lease renewal, recovery after a worker died, and announcing a task whose message was lost ----
+const publishedSecondsAgo = (task, seconds) => db.pool.query("UPDATE operations.outbox_messages SET published_at = now() - make_interval(secs => $2), occurred_at = now() - make_interval(secs => $2) WHERE message_key = $1", [task.id, seconds]);
+const expireLease = task => db.pool.query("UPDATE operations.task_leases SET expires_at = now() - interval '1 second' WHERE task_id = $1", [task.id]);
+const pendingFor = async (s, task) => (await s.pendingOutbox(500)).filter(message => message.payload.taskId === task.id).length;
+
+test('a worker renews its lease: a task that is being worked on is not recovered, and a lease that is gone cannot be renewed', database, async () => {
+  const s = store(), t = await inState.running(s);
+  await expireLease(t);
+  assert.equal(await s.heartbeat(t.id), true, 'the lease row still exists, so it can be renewed');
+  assert.equal(await s.recoverExpired(), 0, 'renewed in time: nothing is recovered');
+  assert.equal((await s.get(t.id)).status, 'running');
+  const lease = (await db.pool.query('SELECT expires_at > now() AS valid FROM operations.task_leases WHERE task_id = $1', [t.id])).rows[0];
+  assert.equal(lease.valid, true);
+  await s.complete(t.id, OK);
+  assert.equal(await s.heartbeat(t.id), false, 'a finished task has no lease to renew');
+  assert.equal(await s.heartbeat(randomUUID()), false);
+});
+
+test('an expired lease on a task the provider had accepted goes to verification, and is never run a second time', database, async () => {
+  const s = store(), t = await inState.running(s);
+  await s.running(t.id, 'provider-ref-1');
+  for (const message of await s.pendingOutbox()) await s.markOutboxPublished(message.id);
+  await expireLease(t);
+  const result = await s.recoverStranded();
+  assert.deepEqual([result.requeued, result.verificationRequired], [0, 1]);
+  const after = await s.get(t.id);
+  assert.equal(after.status, 'verification_required');
+  assert.equal(after.error.code, 'NUV_TASK_LEASE_EXPIRED');
+  assert.equal(await pendingFor(s, t), 0, 'nothing is announced: it will not be claimed again');
+  assert.equal(await s.claim('w2', t.id), null);
+  assert.equal(await scalar("SELECT count(*)::int FROM audit.audit_events WHERE task_id = $1 AND action = 'task.verification_required'", [t.id]), 1);
+  assert.equal(await scalar("SELECT count(*)::int FROM operations.task_attempts WHERE task_id = $1 AND completed_at IS NULL", [t.id]), 0, 'the abandoned attempt is closed');
+});
+
+test('an expired lease on a task the provider had not accepted is queued and announced again, in one transaction', database, async () => {
+  const s = store(), accepted = await inState.running(s), notAccepted = await inState.running(s);
+  await s.running(accepted.id, 'ref');
+  for (const message of await s.pendingOutbox()) await s.markOutboxPublished(message.id);
+  await expireLease(accepted); await expireLease(notAccepted);
+  const result = await s.recoverStranded();
+  assert.deepEqual([result.requeued, result.verificationRequired], [1, 1]);
+  assert.equal((await s.get(notAccepted.id)).status, 'queued');
+  assert.equal(await pendingFor(s, notAccepted), 1);
+  assert.equal(await pendingFor(s, accepted), 0);
+});
+
+test('a task claimed again starts without the provider reference of an earlier attempt', database, async () => {
+  const s = store(), t = await inState.running(s);
+  await s.running(t.id, 'old-reference');
+  await s.fail(t.id, ERR);
+  assert.equal((await s.manualRetry(t.id)).ok, true);
+  const again = await s.claim('w2', t.id);
+  assert.equal(again.providerReference, null);
+});
+
+test('a queued task whose message was lost is announced again, once, and only when it has waited long enough with no message about', database, async () => {
+  const s = store();
+  const lost = await inState.queued(s), recent = await inState.queued(s), pending = await inState.queued(s), later = await inState.queued(s), working = await inState.running(s);
+  await s.markOutboxPublished((await s.pendingOutbox(500)).find(m => m.payload.taskId === lost.id).id);
+  await s.markOutboxPublished((await s.pendingOutbox(500)).find(m => m.payload.taskId === recent.id).id);
+  await publishedSecondsAgo(lost, 600); await queuedSecondsAgo(lost, 600);       // published ten minutes ago, still queued: its message is gone
+  await publishedSecondsAgo(recent, 5); await queuedSecondsAgo(recent, 600);     // published seconds ago: still on its way
+  await queuedSecondsAgo(pending, 600);                                          // its message has not been published yet (however old): the relay has it
+  await db.pool.query("UPDATE operations.outbox_messages SET occurred_at = now() - interval '600 seconds' WHERE message_key = $1", [pending.id]);
+  await db.pool.query("UPDATE operations.tasks SET retry_at = now() + interval '1 hour' WHERE task_id = $1", [later.id]);   // waiting out a back-off
+  await queuedSecondsAgo(later, 600); await queuedSecondsAgo(working, 600);
+  assert.equal(await s.reannounceStale({ olderThanMs: 120_000 }), 1);
+  assert.equal(await pendingFor(s, lost), 1);
+  assert.equal(await pendingFor(s, recent), 0, 'published seconds ago: left alone');
+  for (const other of [pending, later, working]) assert.equal(await pendingFor(s, other), 1, 'only its original message, nothing added');
+  assert.equal(await s.reannounceStale({ olderThanMs: 120_000 }), 0, 'a second pass finds a message waiting and adds nothing');
+  assert.equal(await pendingFor(s, lost), 1);
+});
+
+test('re-announcing stops at the limit, oldest first', database, async () => {
+  const s = store();
+  const tasks = [];
+  for (let i = 0; i < 3; i++) { const t = await inState.queued(s); await queuedSecondsAgo(t, 600 + i * 10); tasks.push(t); }
+  await db.pool.query('UPDATE operations.outbox_messages SET published_at = now(), occurred_at = now() - interval \'600 seconds\'');
+  assert.equal(await s.reannounceStale({ olderThanMs: 120_000, limit: 2 }), 2);
+  assert.equal(await pendingFor(s, tasks[2]), 1, 'the oldest first');
+  assert.equal(await pendingFor(s, tasks[1]), 1);
+  assert.equal(await pendingFor(s, tasks[0]), 0);
+});

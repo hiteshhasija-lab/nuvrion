@@ -75,22 +75,28 @@ async function restartContainer(mode) {
 after(() => {
   process.off('unhandledRejection', onProcessError);
   process.off('uncaughtException', onProcessError);
-  if (broker) { try { run('rm', '-f', container.name); } catch { /* already gone */ } }
+  if (broker) { try { run('rm', '-f', '-v', container.name); } catch { /* already gone */ } }
 });
 
 // The production chain, with a provider that counts how often each task was really executed.
-async function chain({ providerDelayMs = 0, reconnectMs = 250 } = {}) {
+async function chain({ providerDelayMs = 0, reconnectMs = 250, startWorker = true, heartbeatMs = 10_000, scripted = {} } = {}) {
   if (!broker) await startContainer();
   const db = await createTestDatabase();
   const store = new PostgresTaskStore(db.pool);
-  const executions = new Map(), relayErrors = [];
+  const executions = new Map(), verifies = new Map(), relayErrors = [];
   const provider = {
-    execute: async (operation, nativeId, task) => { executions.set(task.id, (executions.get(task.id) ?? 0) + 1); if (providerDelayMs) await wait(providerDelayMs); return { providerReference: `ref-${task.id}` }; },
-    verify: async () => ({ state: 'done' })
+    // `scripted.execute(callNumber, task)` and `scripted.verify(callNumber, reference)` let a test make a call hang, to stand for a process that dies in the middle of it
+    execute: async (operation, nativeId, task) => {
+      const call = (executions.get(task.id) ?? 0) + 1; executions.set(task.id, call);
+      if (scripted.execute) return scripted.execute(call, task);
+      if (providerDelayMs) await wait(providerDelayMs);
+      return { providerReference: `ref-${task.id}` };
+    },
+    verify: async reference => { const call = (verifies.get(reference) ?? 0) + 1; verifies.set(reference, call); return scripted.verify ? scripted.verify(call, reference) : { state: 'done' }; }
   };
   const messageBroker = await RabbitTaskBroker.connect(url(), { reconnectMs });
-  const worker = new Worker({ store, provider, broker: messageBroker });
-  await worker.start();
+  const worker = new Worker({ store, provider, broker: messageBroker, heartbeatMs });
+  if (startWorker) await worker.start();
   const relay = new OutboxRelay({ store, broker: messageBroker, intervalMs: 100, onError: error => relayErrors.push(error.message) });
   relay.start();
   let n = 0;
@@ -99,7 +105,7 @@ async function chain({ providerDelayMs = 0, reconnectMs = 250 } = {}) {
   const pendingOutbox = async () => (await db.pool.query('SELECT count(*)::int AS n FROM operations.outbox_messages WHERE published_at IS NULL')).rows[0].n;
   const completed = async () => (await statuses()).completed ?? 0;
   const close = async () => { relay.close(); await worker.close(); await db.drop(); };
-  return { db, store, messageBroker, executions, relayErrors, create, statuses, pendingOutbox, completed, close };
+  return { db, store, worker, messageBroker, executions, relayErrors, create, statuses, pendingOutbox, completed, close };
 }
 const exactlyOnce = (executions, tasks) => {
   const counts = tasks.map(task => executions.get(task.id) ?? 0);
@@ -168,5 +174,53 @@ test('the broker crashes (killed, not shut down) under load: nothing is lost and
     t.diagnostic(`statuses ${JSON.stringify(await c.statuses())}; ${JSON.stringify(counts)}; errors that would end the process: ${errors.length}`);
     assert.deepEqual(errors.map(String), []);
     assert.deepEqual(counts, { missing: 0, duplicated: 0 });
+  } finally { await c.close(); }
+});
+
+test('tasks whose messages were lost with the broker are announced again, and completed once each', options, async t => {
+  const c = await chain({ startWorker: false });
+  try {
+    const tasks = [];
+    for (let i = 0; i < 5; i++) tasks.push(await c.create());
+    await until(async () => (await c.pendingOutbox()) === 0, 15_000, 'the relay to publish all five');
+    run('exec', container.name, 'rabbitmqctl', 'purge_queue', 'nuvrion.tasks');       // the broker loses what it was holding
+    await c.worker.start();
+    await wait(1500);
+    assert.equal(await c.completed(), 0, 'nothing will ever arrive: the messages are gone');
+    assert.equal(await c.store.reannounceStale({ olderThanMs: 1000 }), 5, 'the five tasks are queued, due, and have no message about');
+    await until(async () => (await c.completed()) === 5, 30_000, 'five tasks to complete');
+    assert.deepEqual(exactlyOnce(c.executions, tasks), { missing: 0, duplicated: 0 });
+    assert.equal(await c.store.reannounceStale({ olderThanMs: 1000 }), 0, 'nothing is queued, so nothing more is announced');
+    assert.deepEqual(errors.map(String), []);
+  } finally { await c.close(); }
+});
+
+test('a worker that died before the provider accepted the operation: after the lease expires the task is queued again and completes', options, async t => {
+  // the first provider call never returns and the lease is never renewed, which is what a process that was killed in the middle of it looks like
+  const c = await chain({ heartbeatMs: 3_600_000, scripted: { execute: (call, task) => call === 1 ? new Promise(() => {}) : { providerReference: `ref-${task.id}-second` } } });
+  try {
+    const task = await c.create();
+    await until(async () => (await c.statuses()).running === 1, 15_000, 'the task to be running');
+    assert.equal((await c.store.recoverStranded()).requeued, 0, 'the lease is still valid: nothing is recovered');
+    await c.db.pool.query("UPDATE operations.task_leases SET expires_at = now() - interval '1 second' WHERE task_id = $1", [task.id]);
+    assert.deepEqual(await c.store.recoverStranded(), { requeued: 1, verificationRequired: 0, reannounced: 0 });
+    await until(async () => (await c.completed()) === 1, 30_000, 'the task to complete the second time');
+    assert.equal(c.executions.get(task.id), 2);
+    const outcomes = (await c.store.attempts(task.id)).map(attempt => attempt.outcome);
+    assert.deepEqual(outcomes, ['lease_expired', 'completed']);
+  } finally { await c.close(); }
+});
+
+test('a worker that died after the provider accepted the operation: the task goes to verification and the operation is not run again', options, async t => {
+  const c = await chain({ heartbeatMs: 3_600_000, scripted: { verify: () => new Promise(() => {}) } });
+  try {
+    const task = await c.create();
+    await until(async () => (await c.store.get(task.id)).providerReference, 15_000, 'the provider to have accepted the operation');
+    await c.db.pool.query("UPDATE operations.task_leases SET expires_at = now() - interval '1 second' WHERE task_id = $1", [task.id]);
+    assert.deepEqual(await c.store.recoverStranded(), { requeued: 0, verificationRequired: 1, reannounced: 0 });
+    await wait(2000);
+    assert.equal((await c.store.get(task.id)).status, 'verification_required');
+    assert.equal(c.executions.get(task.id), 1, 'the operation was executed once and not again');
+    assert.equal(await c.pendingOutbox(), 0);
   } finally { await c.close(); }
 });

@@ -88,6 +88,20 @@ After a validated deploy the script also tidies up (best effort, same rule: it n
 Measured on NOVAAPP01 (17 GB root disk): the one-time cleanup freed about 0.5 GB. Most of the rest of the container storage
 (about 4.4 GB) belongs to the NovaDesk and NovaConnect images and their build layers, which this script does not touch.
 
+## Task recovery
+
+Every 30 seconds (and once at start) the API looks for tasks that would otherwise be stranded:
+
+| Situation | What happens |
+|---|---|
+| A task is `running` but its lease expired (the worker renews its lease every 10 s while it works, so this means the process died) and the provider had **not** accepted the operation | It is queued again and announced again. |
+| The same, but the provider **had** accepted the operation | It becomes `verification_required`, so the operation is not executed a second time; the next discovery of that connection compares the provider's real state with the expected one. |
+| A task is `queued`, due, has waited more than 2 minutes, and has no message waiting or published in that time (a message lost with the broker) | It is announced again. A duplicate message is harmless: a task that is no longer queued is not claimed. |
+
+The log line is `tasks.recovered` with the counts. Environment variables (API env file): `NUVRION_TASK_RECOVERY_INTERVAL_MS` (default 30000) and
+`NUVRION_TASK_REANNOUNCE_AFTER_MS` (default 120000). The outbox relay reports a broker outage once (then at most once a minute) and logs
+`outbox.publish_recovered` when it works again.
+
 ## Data retention
 
 The API prunes two history tables on a schedule (every 6 hours, first run a minute after start), in batches, always
