@@ -78,6 +78,19 @@ after(() => {
   if (broker) { try { run('rm', '-f', '-v', container.name); } catch { /* already gone */ } }
 });
 
+// Takes every message out of the task queue and drops it, over AMQP: unlike a CLI purge, it is finished when it returns, and it says how many it removed.
+async function drainQueue() {
+  const { connect } = await import('amqplib');
+  const connection = await connect(url());
+  try {
+    const channel = await connection.createChannel();
+    let removed = 0;
+    for (;;) { const message = await channel.get('nuvrion.tasks', { noAck: true }); if (!message) break; removed++; }
+    const { messageCount } = await channel.checkQueue('nuvrion.tasks');
+    return { removed, left: messageCount };
+  } finally { await connection.close(); }
+}
+
 // The production chain, with a provider that counts how often each task was really executed.
 async function chain({ providerDelayMs = 0, reconnectMs = 250, startWorker = true, heartbeatMs = 10_000, scripted = {} } = {}) {
   if (!broker) await startContainer();
@@ -183,7 +196,9 @@ test('tasks whose messages were lost with the broker are announced again, and co
     const tasks = [];
     for (let i = 0; i < 5; i++) tasks.push(await c.create());
     await until(async () => (await c.pendingOutbox()) === 0, 15_000, 'the relay to publish all five');
-    run('exec', container.name, 'rabbitmqctl', 'purge_queue', 'nuvrion.tasks');       // the broker loses what it was holding
+    const drained = await drainQueue();                                                  // the broker loses what it was holding
+    assert.ok(drained.removed >= 5, `the five messages were in the queue (${drained.removed} removed)`);
+    assert.equal(drained.left, 0, 'nothing is left in the queue');
     await c.worker.start();
     await wait(1500);
     assert.equal(await c.completed(), 0, 'nothing will ever arrive: the messages are gone');
