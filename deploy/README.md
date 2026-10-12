@@ -8,7 +8,46 @@ so changing them never needs a release.
 |---|---|---|
 | `upgrade-nuvrion.sh` | `~/nuvrion-upgrades/upgrade-nuvrion.sh` | Verifies a release directory, backs up, builds, migrates, swaps the container via systemd, validates health, rolls back on failure, then records the stable release. |
 | `STABLE-RELEASE.json` | `~/nuvrion-upgrades/STABLE-RELEASE.json` | The record of the current stable release plus the pipeline notes. **Written by the upgrade script; do not edit the dynamic fields by hand.** |
+| `assemble-release.sh` | run on the workstation, not copied to the host | Turns the evidence CI produced for a commit into a release directory, after verifying it (signatures, checksums, SBOM, provenance, image scan). |
+| `image-scan-exceptions.json` | read by CI and by `assemble-release.sh` | Time-limited, reasoned acceptances of fixable HIGH/CRITICAL image findings. |
 | `Caddyfile` | the pod's Caddy container | TLS termination. |
+
+## Making a release (from v0.1.171)
+
+A release is **assembled from what CI built and signed**, not rebuilt on a workstation.
+
+1. Commit and push to `main`; wait for CI to pass on that exact commit (`gh run list --commit <sha>`). Four jobs matter:
+   `checks` (tests), `supply-chain` (lockfile, SBOM, build provenance, dependency audit), `image-scan` (the image is built
+   the way production builds it and scanned with Trivy; a HIGH or CRITICAL finding that has a fix blocks), and
+   `release-evidence` (builds the release archive from the commit with `git archive`, and GitHub signs its build provenance and
+   its SBOM through Sigstore with the workflow's own identity; there is no signing key to keep).
+2. Write a small change file: `{ "sourceAuthority", "summary", "details": [...], "verification", "filesChanged": [...], "requiredMigration" }`.
+3. With that commit checked out: `deploy/assemble-release.sh 0.1.171 <commit> change.json`. It finds the CI run, downloads the
+   evidence, checks the checksums, runs `gh attestation verify` for both attestations (signer workflow, source commit, predicate type),
+   re-verifies the SBOM and build provenance against the checkout, re-evaluates the scan policy, and writes `Nuvrion-v0.1.171/`
+   with the archive, `release-manifest.json` (with a `supplyChain` section), `SHA256SUMS.txt` covering every file, the SBOM,
+   the provenance, both signed bundles and the scan report.
+4. `scp -r` it to `~/nuvrion-upgrades/releases/`, then `upgrade-nuvrion.sh <dir> --check`, read it, then `--yes`. The script verifies the
+   checksums, that the evidence is complete and belongs to the archive, and that the scan passed. (The host has no signature
+   verifier; signatures are verified where the release is assembled. Verify again anywhere with
+   `gh attestation verify <archive> --bundle <bundle> --repo hiteshhasija-lab/nuvrion`.)
+
+What is and is not signed: the **release archive** and its **SBOM** are signed and verifiable. The container image is built on the host
+from the signed archive and the digest-pinned base images; it is scanned in CI (same commit, same Containerfiles, arm64) but is not
+itself signed or published, because it never leaves the host. Signing the image itself needs a registry (see the roadmap note in the
+status document).
+
+### The base image
+
+`Containerfile.base` has two stages: the full Node image (compilers, used only to install dependencies) and the slim image of the same Node
+version, which is what ships; npm and corepack are removed from it. Rebuilding the base on the host is a deliberate step (the upgrade
+script builds only the overlay on `localhost/nuvrion:base-arm64`): `podman build -f Containerfile.base -t localhost/nuvrion:base-arm64 .`
+in a checkout of the release commit, before running the upgrade. Bump the pinned digests deliberately, keeping the Node version in step.
+
+### Image findings
+
+`image-scan-exceptions.json` accepts a finding for at most 45 days, with a written reason; an expired entry blocks again. Prefer taking the fix.
+Findings with no fix are reported in `image-scan-summary.json` and do not block.
 
 ## After every release
 

@@ -49,7 +49,9 @@ jobs:
       - name: Syntax check (browser scripts)
         run: for file in apps/web/*.js; do node --check "$file"; done
       - name: Syntax check (deploy script)
-        run: bash -n deploy/upgrade-nuvrion.sh
+        run: |
+          bash -n deploy/upgrade-nuvrion.sh
+          bash -n deploy/assemble-release.sh
       - name: Database migrations are well formed
         run: npm run migrate:check
       - name: Secret scan
@@ -110,6 +112,111 @@ jobs:
         with:
           name: supply-chain-evidence-${{ github.sha }}
           path: evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  # The container image, built the way production builds it (the two-stage Containerfile.base, then Containerfile.overlay) and on production's
+  # architecture (arm64), is scanned for known vulnerabilities in its operating-system packages and in anything installed as a Node package.
+  # A HIGH or CRITICAL finding that has a fix blocks; one with no fix yet is reported; an acceptance needs a reason and an expiry
+  # (deploy/image-scan-exceptions.json). The weekly run catches vulnerabilities published after the last push. The scanner is a container
+  # image pinned by digest; its vulnerability database is downloaded fresh on each run, which is the point of scanning.
+  image-scan:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+      - name: Build the images
+        run: |
+          docker build -f Containerfile.base -t nuvrion-base:ci .
+          docker build -f Containerfile.overlay --build-arg BASE_IMAGE=nuvrion-base:ci --build-arg RELEASE_VERSION=0.1.0-ci.${{ github.run_number }} -t nuvrion-app:ci .
+          docker save nuvrion-app:ci -o "$RUNNER_TEMP/nuvrion-app.tar"
+          docker run --rm nuvrion-app:ci sh -c 'node --version; test ! -e /usr/local/lib/node_modules/npm && echo "npm is not in the image"'
+      - name: Scan the image (Trivy, operating-system packages and Node packages)
+        env:
+          TRIVY_IMAGE: docker.io/aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+        run: |
+          mkdir -p evidence
+          docker run --rm -e TRIVY_DB_REPOSITORY -v "$RUNNER_TEMP:/in:ro" -v "$PWD/evidence:/out" "$TRIVY_IMAGE" \
+            image --input /in/nuvrion-app.tar --scanners vuln --format json --output /out/image-scan.json
+          docker run --rm -e TRIVY_DB_REPOSITORY -v "$RUNNER_TEMP:/in:ro" -v "$PWD/evidence:/out" "$TRIVY_IMAGE" \
+            image --input /in/nuvrion-app.tar --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --format table --output /out/image-scan-high-fixable.txt
+          cat evidence/image-scan-high-fixable.txt | head -60
+      - name: Policy (a fixable high or critical finding blocks)
+        run: node tools/evaluate-image-scan.js evidence/image-scan.json --exceptions deploy/image-scan-exceptions.json --summary evidence/image-scan-summary.json
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-scan-evidence-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  # What a release is made of, signed. Runs only for a commit on main whose tests, supply-chain checks and image scan all passed: the release
+  # archive is built from that commit (git archive, which is reproducible), its SBOM and build provenance are made and verified, and GitHub
+  # attests the archive (SLSA build provenance) and its SBOM, signed with Sigstore through this workflow's own identity, so no signing key exists
+  # to be kept or stolen. A release is assembled from these files (deploy/assemble-release.sh), not rebuilt on a workstation, and verified with
+  # `gh attestation verify` before it is copied to the host.
+  release-evidence:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [checks, supply-chain, image-scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+      - name: Install dependencies (from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Release archive, SBOM and build provenance
+        env:
+          NUVRION_SOURCE_REVISION: ${{ github.sha }}
+          NUVRION_BUILD_VERSION: 0.1.0-ci.${{ github.run_number }}
+        run: |
+          mkdir -p release
+          git archive --format=tar.gz -o "release/Nuvrion-Server-Overlay-${GITHUB_SHA}.tar.gz" HEAD apps database modules providers Containerfile.overlay
+          node tools/generate-sbom.js create release/nuvrion-sbom.cdx.json
+          node tools/generate-sbom.js verify release/nuvrion-sbom.cdx.json
+          node tools/create-build-provenance.js create release/nuvrion-build-provenance.json
+          node tools/create-build-provenance.js verify release/nuvrion-build-provenance.json
+      - name: The image scan report of this commit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-scan-evidence-${{ github.sha }}
+          path: release/
+      - name: Attest the release archive (build provenance)
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/Nuvrion-Server-Overlay-*.tar.gz
+      - name: Attest the SBOM of the release archive
+        id: sbom
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: release/Nuvrion-Server-Overlay-*.tar.gz
+          sbom-path: release/nuvrion-sbom.cdx.json
+      - name: Keep the signed release evidence
+        run: |
+          cp "${{ steps.provenance.outputs.bundle-path }}" release/build-provenance.attestation.sigstore.json
+          cp "${{ steps.sbom.outputs.bundle-path }}" release/sbom.attestation.sigstore.json
+          (cd release && sha256sum * > SHA256SUMS.evidence.txt && cat SHA256SUMS.evidence.txt)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: release/
           if-no-files-found: error
           retention-days: 90
 

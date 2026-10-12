@@ -53,6 +53,25 @@ fi
 echo "Verifying release payloads..."
 (cd "$release_dir" && sha256sum -c SHA256SUMS.txt)
 
+# A release assembled by deploy/assemble-release.sh carries its SBOM, build provenance, signed attestations and image scan report, all covered by
+# SHA256SUMS.txt above. Their signatures were verified where the release was assembled (this host has no verifier); here it is confirmed that
+# the evidence is complete, belongs to this archive, and that the image scan passed. A release without the section (before v0.1.171) is accepted
+# with a notice.
+if jq -e '.supplyChain' "$manifest" >/dev/null 2>&1; then
+  archive_digest="$(sha256sum "$release_dir/$server_artifact" | cut -d' ' -f1)"
+  [[ "$(jq -r '.supplyChain.archiveSha256' "$manifest")" == "$archive_digest" && "$(jq -r '.server.sha256' "$manifest")" == "$archive_digest" ]] \
+    || { echo "The supply-chain evidence does not describe this server archive." >&2; exit 1; }
+  while IFS= read -r evidence_file; do
+    [[ -f "$release_dir/$evidence_file" ]] || { echo "The supply-chain evidence file is missing: $evidence_file" >&2; exit 1; }
+    grep -q -- "  $evidence_file\$" "$checksums" || { echo "The supply-chain evidence file is not covered by SHA256SUMS.txt: $evidence_file" >&2; exit 1; }
+  done < <(jq -r '.supplyChain.files[]' "$manifest")
+  [[ "$(jq -r '.status' "$release_dir/image-scan-summary.json")" == "passed" && "$(jq -r '.blocking' "$release_dir/image-scan-summary.json")" == "0" ]] \
+    || { echo "The image scan of this release did not pass." >&2; exit 1; }
+  echo "Supply-chain evidence present and consistent: SBOM, build provenance, signed attestations, image scan ($(jq -r '"\(.status), \(.blocking) blocking, \(.accepted|length) accepted"' "$release_dir/image-scan-summary.json"))."
+else
+  echo "NOTICE: this release carries no supply-chain evidence (SBOM, signed provenance, image scan); releases assembled by deploy/assemble-release.sh do." >&2
+fi
+
 api_container="${NUVRION_API_CONTAINER:-nuvrion-api}"
 postgres_container="${NUVRION_POSTGRES_CONTAINER:-nuvrion-postgres}"
 pod_name="${NUVRION_POD_NAME:-nuvrion-lab}"

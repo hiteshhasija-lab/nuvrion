@@ -7,8 +7,18 @@ const read = path => readFileSync(new URL(`../../../${path}`, import.meta.url), 
 const containerBase = read('Containerfile.base');
 const workflow = read('.github/workflows/ci.yml');
 
-test('the base image is pinned by digest, so a moved tag cannot change what is built', () => {
-  assert.match(containerBase, /^FROM node:[0-9a-z.-]+@sha256:[0-9a-f]{64}$/m);
+test('every base image is pinned by digest, so a moved tag cannot change what is built', () => {
+  const stages = [...containerBase.matchAll(/^FROM\s+(\S+)(?:\s+AS\s+\S+)?$/gm)].map(m => m[1]);
+  assert.equal(stages.length, 2, 'a build stage and a runtime stage');
+  for (const image of stages) assert.match(image, /^node:[0-9a-z.-]+@sha256:[0-9a-f]{64}$/, `${image} must be pinned to a digest`);
+});
+
+test('the image that ships is the slim one, without a package manager or a compiler', () => {
+  const runtime = containerBase.slice(containerBase.lastIndexOf('\nFROM '));
+  assert.match(runtime, /^FROM node:[0-9.]+-bookworm-slim@sha256:/m);
+  assert.match(runtime, /rm -rf [^\n]*node_modules\/npm\b/);
+  assert.match(runtime, /COPY --from=build /);
+  assert.doesNotMatch(runtime, /apt-get|npm (ci|install)/);
 });
 
 test('container builds install exactly the locked dependencies, with the lockfile in the build context', () => {
@@ -42,4 +52,25 @@ test('CI checks every API description change for breaking changes against the pr
   assert.match(workflow, /check-api-compat\.js/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /contracts\/messages\/\*\.json/, 'message schemas are checked too');
+});
+
+test('the image scan runs a scanner pinned by digest, blocks on the policy, and keeps its report', () => {
+  const job = workflow.slice(workflow.indexOf('\n  image-scan:'), workflow.indexOf('\n  release-evidence:'));
+  assert.match(job, /TRIVY_IMAGE: \S+@sha256:[0-9a-f]{64}/);
+  assert.match(job, /docker build -f Containerfile\.base/);
+  assert.match(job, /node tools\/evaluate-image-scan\.js evidence\/image-scan\.json --exceptions deploy\/image-scan-exceptions\.json/);
+  assert.match(job, /name: image-scan-evidence-\$\{\{ github\.sha \}\}/);
+  assert.match(job, /runs-on: ubuntu-24\.04-arm/, 'scanned on production architecture');
+});
+
+test('signing is confined to one job that runs only for main after every check passed, and no other job may write attestations or mint tokens', () => {
+  const start = workflow.indexOf('\n  release-evidence:'), end = workflow.indexOf('\n  api-compatibility:');
+  const job = workflow.slice(start, end), rest = workflow.slice(0, start) + workflow.slice(end);
+  assert.match(job, /needs: \[checks, supply-chain, image-scan\]/);
+  assert.match(job, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
+  assert.match(job, /id-token: write/);
+  assert.match(job, /attestations: write/);
+  assert.match(job, /actions\/attest-build-provenance@[0-9a-f]{40}/);
+  assert.match(job, /actions\/attest-sbom@[0-9a-f]{40}/);
+  assert.doesNotMatch(rest, /id-token|attestations: write/);
 });
