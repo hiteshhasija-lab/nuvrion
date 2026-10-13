@@ -44,7 +44,9 @@ Image archives are large; the upgrade script deletes the ones in release directo
 `Containerfile.base` has two stages: the full Node image (compilers, used only to install dependencies) and the slim image of the same Node version, which is what
 ships; npm and corepack are removed from it, and one package that has a Debian security fix the pinned image lacks (`perl-base`) is upgraded. Bump the pinned digests
 deliberately, keeping the Node version in step; when the pinned image already has the fix, delete the `apt-get` line (the image-scan job names acceptances that are
-no longer needed). Nothing is rebuilt on the host any more: the base image tag `localhost/nuvrion:base-arm64` is only used for a release without an image archive.
+no longer needed). Nothing is built on the host any more, and no base image is kept there. A release without an image archive (the old way) needs `localhost/nuvrion:base-arm64`,
+which the script refuses to proceed without; build it from a checkout of the release commit at a quiet moment (`podman build -f Containerfile.base -t localhost/nuvrion:base-arm64 .`,
+which loads the host for about a minute) or, better, release through CI so that the image is built and scanned there.
 
 ### Image findings
 
