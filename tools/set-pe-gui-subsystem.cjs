@@ -1,0 +1,13 @@
+const fs=require('node:fs');
+const file=process.argv[2];
+if(!file)throw new Error('Usage: node tools/set-pe-gui-subsystem.cjs <windows-executable>');
+const bytes=fs.readFileSync(file);
+if(bytes.toString('ascii',0,2)!=='MZ')throw new Error('Input is not a Windows PE executable.');
+const peOffset=bytes.readUInt32LE(0x3c);
+if(bytes.toString('ascii',peOffset,peOffset+4)!=='PE\0\0')throw new Error('PE signature is invalid.');
+const optionalHeader=peOffset+24,magic=bytes.readUInt16LE(optionalHeader);
+if(![0x10b,0x20b].includes(magic))throw new Error('Unsupported PE optional header.');
+const subsystemOffset=optionalHeader+68;
+bytes.writeUInt16LE(2,subsystemOffset);
+fs.writeFileSync(file,bytes);
+console.log(JSON.stringify({file,subsystem:'windows_gui'}));
