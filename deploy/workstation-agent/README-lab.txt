@@ -1,9 +1,9 @@
-Nuvrion Workstation Agent 0.1.47 (unsigned lab build)
+Nuvrion Workstation Agent 0.1.48 (unsigned lab build)
 
 Extract the entire ZIP, then double-click Setup.exe.
 
 Setup supports a new installation or an in-place upgrade. Existing enrollment
-and connection settings are preserved during upgrades. Workstation Agent 0.1.47
+and connection settings are preserved during upgrades. Workstation Agent 0.1.48
 uses VMware Workstation's native vmcli interface for powered-on VM ISO mount and
 eject operations, without keyboard or window automation.
 
@@ -17,12 +17,13 @@ for five minutes to reduce repeated disk access and VMware helper launches. Powe
 state remains monitored every five seconds and incomplete guest data is retried
 every minute.
 
-Starting or resuming a VM: by default the agent starts a VM that is not running without a
-Workstation window, so a VM resumed from a suspended state runs unseen and the Workstation
-window keeps showing the state it last had. To have it started in Workstation instead, add
-"startMode": "gui" to bootstrap.json (next to the agent) and restart the agent. Remove the
-setting to return to the default. The agent must be running in the signed-in user's desktop
-session, which is how Setup installs it.
+Starting or resuming a VM: Setup (new installs and upgrades) sets "startMode": "gui" in
+bootstrap.json, so a VM that is not running, including one resumed from a suspended state,
+is started in Workstation and shows in your open Workstation window. An existing "startMode"
+is never overwritten. Set "startMode": "nogui" (and restart the agent) to start VMs without a
+Workstation window, which is also what the agent does when the setting is absent. The agent
+must be running in the signed-in user's desktop session, which is how Setup installs it.
+The commands the agent runs against VMware are written to agent.log (agent.vmrun events).
 
 VMware Workstation must be installed. VMware Tools enables native guest hostname,
 operating-system, and tools-status reporting for running VMs. CPU usage in MHz

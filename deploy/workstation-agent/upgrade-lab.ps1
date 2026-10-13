@@ -40,6 +40,7 @@ try{
   if($null -eq $bootstrap.PSObject.Properties['autoConfigureConsole']){$bootstrap|Add-Member -NotePropertyName autoConfigureConsole -NotePropertyValue $true}
   if($null -eq $bootstrap.PSObject.Properties['consolePortRange']){$bootstrap|Add-Member -NotePropertyName consolePortRange -NotePropertyValue ([pscustomobject]@{start=5900;end=5999})}
   if($null -eq $bootstrap.PSObject.Properties['isoSearchRoots']){$bootstrap|Add-Member -NotePropertyName isoSearchRoots -NotePropertyValue @($bootstrap.vmSearchRoots)}
+  if($null -eq $bootstrap.PSObject.Properties['startMode']){$bootstrap|Add-Member -NotePropertyName startMode -NotePropertyValue 'gui'}
   $bootstrap|Add-Member -NotePropertyName allowHostDriveBrowsing -NotePropertyValue $true -Force
   $bootstrap|Add-Member -NotePropertyName uiMediaHelperPath -NotePropertyValue $targetHelper -Force
   $desktopMediaQueue=Join-Path $env:LOCALAPPDATA 'Nuvrion\WorkstationAgent\desktop-media'
