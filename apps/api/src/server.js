@@ -28,6 +28,7 @@ import { AgentUpgradeService } from '../../../modules/agents/src/agent-upgrade-s
 import { PostgresAgentUpgradeService } from '../../../modules/agents/src/postgres-agent-upgrade-service.js';
 import { validateRuntimeConfiguration } from '../../../modules/platform/src/runtime-configuration.js';
 import { ReadinessService } from '../../../modules/platform/src/readiness-service.js';
+import { latestMigrationVersion } from '../../../modules/platform/src/migrations.js';
 import { RetentionService, retentionPoliciesFromEnv } from '../../../modules/platform/src/retention-service.js';
 import { VerificationReconciler } from '../../../modules/tasks/src/verification-reconciler.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
@@ -95,7 +96,7 @@ const platformUpgrades=new PlatformUpgradeService({root:process.env.NUVRION_UPGR
 const provider = new ProviderRouter({connections,agents,mock:mockProvider});
 const worker = new Worker({ store, provider, broker, onCompleted:async(task,result)=>{if(task.target.type==='virtual_machine'&&await inventory.get(task.target.id))await inventory.applyOperation(task.target.id,task.operation,result);} });
 await worker.start();
-const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:'0027'});
+const readiness=new ReadinessService({production,store,broker,worker,agentMaintenance,requiredMigration:latestMigrationVersion()});
 const verificationReconciler=new VerificationReconciler({store,connections,inventory,provider});
 const discoveryScheduler=new DiscoveryScheduler({connections,inventory,provider,reconciler:verificationReconciler,performance,intervalMs:Number(process.env.NUVRION_DISCOVERY_INTERVAL_MS??5000),onError:(error,connection)=>console.error(JSON.stringify({level:'error',event:'discovery.failed',connectionId:connection.id,error:error.message}))});
 const loginLimiter=new LoginRateLimiter({limit:Number(process.env.NUVRION_LOGIN_ATTEMPT_LIMIT??5),windowMs:Number(process.env.NUVRION_LOGIN_WINDOW_MS??300000),...(process.env.NUVRION_MASTER_KEY?{keySecret:process.env.NUVRION_MASTER_KEY}:{})});

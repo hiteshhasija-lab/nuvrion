@@ -3,6 +3,15 @@
 `migrations/` holds the numbered, transactional PostgreSQL migrations (`0001_…sql`, `0002_…sql`, …). Production applies the
 migration named by each release's manifest (see `deploy/README.md`); the tests below apply all of them to an empty database.
 
+## The migration ledger
+
+`platform.schema_migrations` records which migrations have been applied (version, description, SHA-256 of the file, time). Migration `0029` recorded
+`0001`–`0028` and created the habit: **every migration from `0029` on ends with an `INSERT INTO platform.schema_migrations ... ON CONFLICT DO NOTHING` for its own
+version** (`tools/check-migrations.js`, run in CI, fails otherwise, and also fails on a gap or duplicate number). The API reports itself ready only when the ledger's
+newest version is at least the newest migration file that ships in the image (`modules/platform/src/migrations.js`); the version is read from the files, so there is
+no constant to forget. A release names the migration it applies in its manifest (`requiredMigration`); `deploy/assemble-release.sh` refuses a change file that names
+anything but the newest migration of the release commit.
+
 ## Database tests
 
 `database/test/` and `modules/tasks/test/postgres-task-store.test.js` run against a real PostgreSQL server:

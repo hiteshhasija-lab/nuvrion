@@ -1,4 +1,23 @@
 export class ReadinessService{
-  constructor({production,store,broker,worker,agentMaintenance,requiredMigration='0018'}){this.production=production;this.store=store;this.broker=broker;this.worker=worker;this.agentMaintenance=agentMaintenance;this.requiredMigration=requiredMigration;}
-  async check(){const components={database:'healthy',broker:this.broker.status??'unknown',worker:this.worker.status,agentMaintenance:this.agentMaintenance.timer?'healthy':'stopped'},issues=[];if(this.production){try{await this.store.pool.query('SELECT 1');this.store.status='healthy';const schema=(await this.store.pool.query("SELECT 1 FROM information_schema.columns WHERE (table_schema='agents' AND table_name='upgrade_releases' AND column_name='signing_key_id') OR (table_schema='operations' AND table_name='tasks' AND column_name='retry_at') OR (table_schema='identity' AND table_name='users' AND column_name='recovery_code_hash') OR (table_schema='connections' AND table_name='health_events' AND column_name='event_id') OR (table_schema='connections' AND table_name='provider_connections' AND column_name='next_retry_at') OR (table_schema='connections' AND table_name='health_alerts' AND column_name='alert_id') OR (table_schema='monitoring' AND table_name='vm_metric_samples' AND column_name='sample_id')")).rowCount;if(schema<7){components.migrations='outdated';issues.push(`Required migration ${this.requiredMigration} is not applied.`);}else components.migrations='current';}catch{this.store.status='unhealthy';components.database='unhealthy';issues.push('Database readiness check failed.');}}if(components.broker!=='healthy')issues.push('Task broker is not healthy.');if(components.worker!=='healthy')issues.push('Worker is not healthy.');if(components.agentMaintenance!=='healthy')issues.push('Agent maintenance scheduler is not running.');return {status:issues.length?'not_ready':'ready',components,issues};}
+  /* requiredMigration is the newest migration that ships with this build (see migrations.js). The platform is ready only when the database has recorded it in
+     platform.schema_migrations, which every migration from 0029 on does for itself. */
+  constructor({production,store,broker,worker,agentMaintenance,requiredMigration}){
+    if(!/^\d{4}$/.test(requiredMigration??''))throw new Error('ReadinessService needs the required migration version (four digits).');
+    this.production=production;this.store=store;this.broker=broker;this.worker=worker;this.agentMaintenance=agentMaintenance;this.requiredMigration=requiredMigration;
+  }
+  async check(){
+    const components={database:'healthy',broker:this.broker.status??'unknown',worker:this.worker.status,agentMaintenance:this.agentMaintenance.timer?'healthy':'stopped'},issues=[];
+    if(this.production){
+      try{
+        await this.store.pool.query('SELECT 1');this.store.status='healthy';
+        const recorded=(await this.store.pool.query('SELECT max(version) AS version FROM platform.schema_migrations')).rows[0]?.version??null;
+        if(!recorded||recorded<this.requiredMigration){components.migrations='outdated';issues.push(`Required migration ${this.requiredMigration} is not applied (newest recorded: ${recorded??'none'}).`);}
+        else components.migrations='current';
+      }catch{this.store.status='unhealthy';components.database='unhealthy';issues.push('Database readiness check failed.');}
+    }
+    if(components.broker!=='healthy')issues.push('Task broker is not healthy.');
+    if(components.worker!=='healthy')issues.push('Worker is not healthy.');
+    if(components.agentMaintenance!=='healthy')issues.push('Agent maintenance scheduler is not running.');
+    return {status:issues.length?'not_ready':'ready',components,issues};
+  }
 }

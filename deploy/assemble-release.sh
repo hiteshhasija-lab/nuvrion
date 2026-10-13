@@ -32,6 +32,12 @@ workflow="$repo/.github/workflows/ci.yml"
 
 [[ "$(git -C "$repo_root" show "$commit:VERSION" 2>/dev/null | tr -d '[:space:]')" == "$version" ]] \
   || { echo "The VERSION file of $commit does not say $version; the image CI built carries that version. Change VERSION in a commit and let CI build it." >&2; exit 1; }
+# the migration the release applies is the newest one in the commit; a change file that names another is a mistake (the readiness check requires the newest)
+latest_migration="$(git -C "$repo_root" ls-tree --name-only "$commit" database/migrations/ | sed -E 's#.*/([0-9]{4})_.*\.sql$#\1#' | grep -E '^[0-9]{4}$' | sort | tail -n 1)"
+[[ "$latest_migration" =~ ^[0-9]{4}$ ]] || { echo "No migrations found in $commit." >&2; exit 1; }
+named_migration="$(jq -r '.requiredMigration // empty' "$change_file")"
+[[ -z "$named_migration" || "$named_migration" == "$latest_migration" ]] \
+  || { echo "The change file says requiredMigration $named_migration, but the newest migration in $commit is $latest_migration." >&2; exit 1; }
 jq -e '.summary and (.details|type=="array") and .verification and (.filesChanged|type=="array") and .sourceAuthority' "$change_file" >/dev/null \
   || { echo "The change file needs sourceAuthority, summary, details, verification and filesChanged." >&2; exit 2; }
 
@@ -111,12 +117,12 @@ fi
 
 jq -n --arg version "$version" --arg commit "$commit" --arg sha "$archive_sha" --arg date "$(date -u +%F)" --arg runUrl "https://github.com/$repo/actions/runs/$run_id" \
   --arg workflow "$workflow" --arg verifiedAt "$(date -u +%FT%TZ)" --slurpfile change "$change_file" --slurpfile scan "$final/image-scan-summary.json" \
-  --argjson files "$evidence_files" --argjson image "$image_json" --arg scanNote "$scan_note" '
+  --argjson files "$evidence_files" --argjson image "$image_json" --arg scanNote "$scan_note" --arg migration "$latest_migration" '
   {
     product: "Nuvrion", version: $version, channel: "lab", preparedDate: $date, sourceBaselineCommit: $commit,
     sourceAuthority: $change[0].sourceAuthority,
     server: ({ artifact: "Nuvrion-Server-Overlay-\($version).tar.gz", sha256: $sha, image: "localhost/nuvrion:\($version)",
-               requiredMigration: ($change[0].requiredMigration // "0028"), health: "pending-post-deploy-check" } + (if $image then {imageArchive: $image} else {} end)),
+               requiredMigration: $migration, health: "pending-post-deploy-check" } + (if $image then {imageArchive: $image} else {} end)),
     change: { summary: $change[0].summary, details: $change[0].details, verification: $change[0].verification, filesChanged: $change[0].filesChanged },
     supplyChain: {
       archiveSha256: $sha,
