@@ -67,7 +67,19 @@ export function deploymentSummary(deployment) {
   }
 }
 
-export function agentRowHtml(agent, deployment, { esc, when, canManage = true, available = null }) {
+// One line about an agent's automatic-upgrade policy: what it is set to, and, when it is on, why it is not acting if that is because the build
+// it would install already failed on this agent.
+export function autoUpgradeNote(policy, deployment, available, agent) {
+  if (!policy?.autoUpgrade) return '';
+  const when = policy.windowStart && policy.windowEnd && policy.windowStart !== policy.windowEnd ? ` only between ${policy.windowStart} and ${policy.windowEnd} (${policy.windowTimezone})` : '';
+  const version = available?.manifest?.version;
+  if (version && isNewerVersion(version, agent?.version) && deployment?.version === version && ['failed', 'rolled_back'].includes(deployment.status)) {
+    return `Automatic upgrades will not try ${version} again: it ${deployment.status === 'rolled_back' ? 'was rolled back' : 'failed or was cancelled'} on this agent. Upgrade it by hand, or add a newer build.`;
+  }
+  return `Upgrades automatically${when}.`;
+}
+
+export function agentRowHtml(agent, deployment, { esc, when, canManage = true, available = null, policy = null }) {
   const summary = deploymentSummary(deployment), online = agent.status === 'online', revoked = agent.status === 'revoked';
   const offered = available?.manifest?.version && !summary.active && !revoked && isNewerVersion(available.manifest.version, agent.version) ? available.manifest.version : null;
   const actions = !canManage ? '' : summary.active
@@ -76,8 +88,8 @@ export function agentRowHtml(agent, deployment, { esc, when, canManage = true, a
   return `<tr data-agent-row="${esc(agent.id)}"><td><strong>${esc(agent.name)}</strong><small class="block">${esc(agent.id)}</small></td>`
     + `<td><code>${esc(agent.version ?? '—')}</code>${offered ? `<small class="block"><span class="badge good">${esc(offered)} available</span></small>` : ''}</td>`
     + `<td><span class="badge ${online ? 'good' : revoked ? 'bad' : 'warn'}">${esc(agent.status ?? 'unknown')}</span><small class="block">${agent.lastHeartbeatAt ? `Last seen ${when(agent.lastHeartbeatAt)}` : 'Never seen'}</small></td>`
-    + `<td><span class="badge ${summary.tone}">${esc(summary.label)}</span>${summary.detail ? `<small class="block">${esc(summary.detail)}</small>` : ''}${deployment?.completedAt ? `<small class="block">${when(deployment.completedAt)}</small>` : ''}</td>`
-    + `<td class="row-actions right">${actions}</td></tr>`;
+    + `<td><span class="badge ${summary.tone}">${esc(summary.label)}</span>${summary.detail ? `<small class="block">${esc(summary.detail)}</small>` : ''}${deployment?.completedAt ? `<small class="block">${when(deployment.completedAt)}</small>` : ''}${policy?.autoUpgrade ? `<small class="block"><span class="badge neutral">Automatic</span> ${esc(autoUpgradeNote(policy, deployment, available, agent))}</small>` : ''}</td>`
+    + `<td class="row-actions right">${actions}${canManage && !revoked ? `<button type="button" data-agent-policy="${esc(agent.id)}">Automatic…</button>` : ''}</td></tr>`;
 }
 
 export function buildRowHtml(release, { esc, when }) {
@@ -138,18 +150,31 @@ export function startAgentFleet({ root = document, win = window } = {}) {
       <p id="agent-upgrade-error" role="alert" class="span-2"></p>
       <div class="form-actions span-2"><button type="submit" class="primary" id="agent-upgrade-confirm">Upgrade now</button><button type="button" id="agent-upgrade-close" class="text-button">Cancel</button></div>
     </form>
+  </dialog>
+  <dialog id="agent-policy-dialog" aria-labelledby="agent-policy-title">
+    <form method="dialog" id="agent-policy-form" class="form-grid">
+      <div class="form-title"><div><p class="eyebrow">AUTOMATIC UPGRADES</p><h2 id="agent-policy-title">Automatic upgrades</h2></div></div>
+      <label class="span-2"><input type="checkbox" id="agent-policy-on"> Upgrade this agent automatically when a newer build is on the platform</label>
+      <label class="span-2"><input type="checkbox" id="agent-policy-window"> Only during a daily time window</label>
+      <label>From<input type="time" id="agent-policy-start" value="01:00"></label>
+      <label>Until<input type="time" id="agent-policy-end" value="05:00"></label>
+      <label class="span-2">Time zone<input id="agent-policy-zone" autocomplete="off" placeholder="America/Chicago"></label>
+      <p class="span-2 muted">The platform upgrades one agent at a time, only while this agent is online, never a build that already failed or was cancelled on it, and the agent still checks the signature and returns to its previous version by itself if the new one does not come up healthy.</p>
+      <p id="agent-policy-error" role="alert" class="span-2"></p>
+      <div class="form-actions span-2"><button type="submit" class="primary" id="agent-policy-save">Save</button><button type="button" id="agent-policy-close" class="text-button">Cancel</button></div>
+    </form>
   </dialog>`);
 
   const $ = id => root.getElementById(id);
   const section = $('agent-fleet'), dialog = $('agent-upgrade-dialog');
-  const state = { agents: [], releases: [], latest: new Map(), key: null, target: null, busy: false, allowed: null, settings: null };
+  const state = { agents: [], releases: [], latest: new Map(), key: null, target: null, busy: false, allowed: null, settings: null, policies: new Map() };
   $('agent-build-base').value = win.location.origin;
 
   function render() {
     section.hidden = false;
     $('agent-empty').hidden = state.agents.length > 0;
     const available = newestAvailable(state.releases);
-    $('agent-table').innerHTML = state.agents.map(agent => agentRowHtml(agent, state.latest.get(agent.id), { esc, when, available })).join('');
+    $('agent-table').innerHTML = state.agents.map(agent => agentRowHtml(agent, state.latest.get(agent.id), { esc, when, available, policy: state.policies.get(agent.id) ?? null })).join('');
     if (win.document.activeElement !== $('agent-address')) $('agent-address').value = state.settings?.publicBaseUrl ?? '';
     $('agent-address-note').textContent = state.settings?.publicBaseUrl
       ? `Agents download builds from ${state.settings.publicBaseUrl}. New agent versions are registered automatically when a platform release that carries one is applied.`
@@ -168,8 +193,9 @@ export function startAgentFleet({ root = document, win = window } = {}) {
         state.allowed = (me.user?.permissions ?? []).includes('platform.manage');
       }
       if (!state.allowed) { section.hidden = true; return; }
-      const [agents, releases, settings] = await Promise.all([api('/agents'), api('/agent-upgrades/releases'), api('/agent-upgrades/settings')]);
+      const [agents, releases, settings, policies] = await Promise.all([api('/agents'), api('/agent-upgrades/releases'), api('/agent-upgrades/settings'), api('/agent-upgrades/policies')]);
       state.settings = settings;
+      state.policies = new Map((policies.items ?? []).map(item => [item.agentId, item]));
       state.agents = (agents.items ?? []).filter(agent => agent.status !== 'revoked' || state.latest.has(agent.id));
       state.releases = releases.items ?? [];
       const histories = await Promise.all(state.agents.map(agent => api(`/agents/${agent.id}/upgrade-deployments?limit=1`).then(result => [agent.id, result.items?.[0] ?? null], () => [agent.id, null])));
@@ -245,6 +271,41 @@ export function startAgentFleet({ root = document, win = window } = {}) {
       await refresh();
     }
   });
+  const policyDialog = $('agent-policy-dialog');
+  const syncWindowFields = () => { for (const id of ['agent-policy-start', 'agent-policy-end', 'agent-policy-zone']) $(id).disabled = !$('agent-policy-window').checked; };
+  $('agent-policy-window').onchange = syncWindowFields;
+  section.addEventListener('click', event => {
+    const button = event.target.closest('[data-agent-policy]');
+    if (!button) return;
+    const agent = state.agents.find(item => item.id === button.dataset.agentPolicy);
+    if (!agent) return;
+    state.policyTarget = agent;
+    const policy = state.policies.get(agent.id);
+    $('agent-policy-title').textContent = `Automatic upgrades for ${agent.name}`;
+    $('agent-policy-on').checked = Boolean(policy?.autoUpgrade);
+    $('agent-policy-window').checked = Boolean(policy?.windowStart && policy?.windowEnd);
+    $('agent-policy-start').value = policy?.windowStart ?? '01:00';
+    $('agent-policy-end').value = policy?.windowEnd ?? '05:00';
+    $('agent-policy-zone').value = policy?.windowTimezone && policy.windowTimezone !== 'UTC' ? policy.windowTimezone : (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } })();
+    $('agent-policy-error').textContent = '';
+    syncWindowFields();
+    policyDialog.showModal();
+  });
+  $('agent-policy-close').onclick = () => policyDialog.close();
+  $('agent-policy-form').onsubmit = async event => {
+    event.preventDefault();
+    if (!state.policyTarget || state.busy) return;
+    state.busy = true; $('agent-policy-save').disabled = true;
+    try {
+      const windowed = $('agent-policy-window').checked;
+      const body = { autoUpgrade: $('agent-policy-on').checked, windowStart: windowed ? $('agent-policy-start').value : null, windowEnd: windowed ? $('agent-policy-end').value : null, windowTimezone: windowed ? $('agent-policy-zone').value.trim() || 'UTC' : 'UTC' };
+      await api(`/agents/${state.policyTarget.id}/upgrade-policy`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      policyDialog.close();
+      message(body.autoUpgrade ? `${state.policyTarget.name} will be upgraded automatically.` : `Automatic upgrades are off for ${state.policyTarget.name}.`);
+      await refresh();
+    } catch (error) { $('agent-policy-error').textContent = error.message; }
+    finally { state.busy = false; $('agent-policy-save').disabled = false; }
+  };
   $('agent-upgrade-close').onclick = () => dialog.close();
   $('agent-upgrade-form').onsubmit = async event => {
     event.preventDefault();

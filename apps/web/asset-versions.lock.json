@@ -1,7 +1,7 @@
 {
   "agent-fleet.js": {
-    "version": "20261014-5",
-    "sha256": "fd27ab3d835750e08704eae230be0e2034fd2a0f7397b0347d11fcc97e249724"
+    "version": "20261014-6",
+    "sha256": "997c5d0c7973e9c1b3a10bfbb4bbffee161098babf2c0bda6fc8893daf44cfdb"
   },
   "app.js": {
     "version": "20261008-122",

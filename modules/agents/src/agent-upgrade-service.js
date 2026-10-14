@@ -10,6 +10,7 @@ export class AgentUpgradeService{
   pending(agentId){return [...this.#deployments.values()].filter(item=>item.agentId===agentId&&['staged','downloading','ready'].includes(item.status)).map(item=>({...structuredClone(item),release:structuredClone(this.#releases.get(item.releaseId)),trustedPublicKey:this.publicKey}));}
   releaseByVersion(version){const found=[...this.#releases.values()].filter(item=>item.manifest.version===version).sort((x,y)=>y.manifest.createdAt.localeCompare(x.manifest.createdAt))[0];return found?structuredClone(found):null;}
   release(releaseId){const value=this.#releases.get(releaseId);return value?structuredClone(value):null;}
+  listUnfinished(){return [...this.#deployments.values()].filter(item=>['staged','downloading','ready'].includes(item.status)).map(item=>structuredClone(item));}
   listReleases({limit=50}={}){return [...this.#releases.values()].map(item=>structuredClone(item)).sort((a,b)=>b.manifest.createdAt.localeCompare(a.manifest.createdAt)).slice(0,Math.min(Math.max(Number(limit)||50,1),200));}
   listDeployments(agentId,{limit=20}={}){return [...this.#deployments.values()].filter(item=>item.agentId===agentId).sort((a,b)=>b.stagedAt.localeCompare(a.stagedAt)).slice(0,Math.min(Math.max(Number(limit)||20,1),100)).map(item=>{const manifest=this.#releases.get(item.releaseId)?.manifest;return {...structuredClone(item),version:manifest?.version??null,sha256:manifest?.sha256??null};});}
   cancel(agentId,deploymentId,{detail='Cancelled by an operator.'}={}){return this.report(agentId,deploymentId,{status:'failed',detail});}

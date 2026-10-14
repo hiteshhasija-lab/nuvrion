@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -720,6 +720,50 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     const audit = await call('listAuditEvents', { query: { limit: '100' }, expect: 200 });
     assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_build_published' && event.outcome === 'succeeded'));
     assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_settings_changed'));
+  });
+
+  test('listAgentUpgradePolicies, setAgentUpgradePolicy: automatic upgrades are off until an administrator turns them on, then stage the newest build for an online agent', async () => {
+    const policiesBefore = await call('listAgentUpgradePolicies', { expect: 200 });
+    assert.equal(policiesBefore.json.items.some(item => item.agentId === ctx.agent.id), false, 'no agent is upgraded automatically by default');
+    await call('listAgentUpgradePolicies', { as: 'operator', expect: 403 });
+    await call('listAgentUpgradePolicies', { as: null, expect: 401 });
+    for (const body of [{}, { autoUpgrade: 'yes' }, { autoUpgrade: true, windowStart: '01:00' }, { autoUpgrade: true, windowStart: '25:00', windowEnd: '02:00' }, { autoUpgrade: true, windowStart: '01:00', windowEnd: '02:00', windowTimezone: 'Mars/Olympus' }]) {
+      await call('setAgentUpgradePolicy', { params: { agentId: ctx.agent.id }, body, invalid: true, expect: 422 });
+    }
+    await call('setAgentUpgradePolicy', { params: { agentId: ABSENT }, body: { autoUpgrade: true }, expect: 404 });
+    await call('setAgentUpgradePolicy', { params: { agentId: ctx.agent.id }, as: 'operator', body: { autoUpgrade: true }, expect: 403 });
+    await call('setAgentUpgradePolicy', { params: { agentId: ctx.agent.id }, csrf: 'wrong', body: { autoUpgrade: true }, expect: 403 });
+
+    // a build newer than the agent (0.1.46) is on the platform; the agent has just reported, so it is online
+    const exe = Buffer.concat([Buffer.from('MZ'), Buffer.from('a-build-for-automatic-upgrades')]);
+    await call('uploadAgentBuild', { query: { version: '0.1.200-lab.1', baseUrl: 'https://platform.invalid' }, headers: { 'content-type': 'application/octet-stream' }, rawBody: exe, expect: 201 });
+    await call('agentHeartbeat', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, body: { version: '0.1.46' }, expect: 200 });
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.equal((await call('listAgentPendingUpgrades', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, expect: 200 })).json.items.length, 0, 'nothing is staged while the switch is off');
+
+    const policy = await call('setAgentUpgradePolicy', { params: { agentId: ctx.agent.id }, body: { autoUpgrade: true, windowStart: '00:00', windowEnd: '00:00', windowTimezone: 'America/Chicago' }, expect: 200 });
+    assert.deepEqual([policy.json.autoUpgrade, policy.json.windowTimezone], [true, 'America/Chicago']);
+    assert.equal((await call('listAgentUpgradePolicies', { expect: 200 })).json.items.find(item => item.agentId === ctx.agent.id).autoUpgrade, true);
+
+    let staged = null;
+    for (let attempt = 0; attempt < 40 && !staged; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      staged = (await call('listAgentPendingUpgrades', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, expect: 200 })).json.items[0];
+    }
+    assert.ok(staged, 'the platform staged the build by itself');
+    assert.equal(staged.release.manifest.version, '0.1.200-lab.1');
+
+    const audit = await call('listAuditEvents', { query: { limit: '100' }, expect: 200 });
+    const automatic = audit.json.items.find(event => event.action === 'agent.upgrade_auto_staged');
+    assert.ok(automatic, 'the automatic staging is on the record');
+    assert.equal(automatic.actorName, 'Nuvrion');
+    assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_policy_changed'));
+
+    // switch it off and clean up: the deployment is cancelled, and nothing is staged again
+    await call('setAgentUpgradePolicy', { params: { agentId: ctx.agent.id }, body: { autoUpgrade: false }, expect: 200 });
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: staged.deploymentId }, expect: 200 });
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.equal((await call('listAgentPendingUpgrades', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, expect: 200 })).json.items.length, 0);
   });
 
   test('sweepAgents, rotateAgentSecret, revokeAgent', async () => {

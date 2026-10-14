@@ -386,6 +386,22 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.waitFor(id => document.querySelector(`[data-agent-cancel="${id}"]`), agent.agentId, { timeout: 15000 });
     await page.click(`[data-agent-cancel="${agent.agentId}"]`);
     await page.waitFor(id => /failed/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 20000 });
+    // automatic upgrades: switch on for this agent with a window; the build was cancelled on this agent a moment ago, so the row says it will not be tried again; switch off
+    await page.click(`[data-agent-policy="${agent.agentId}"]`);
+    await page.waitFor(() => document.getElementById('agent-policy-dialog').open);
+    await page.evaluate(() => { document.getElementById('agent-policy-on').click(); document.getElementById('agent-policy-window').click(); });
+    await page.fill('#agent-policy-start', '01:00');
+    await page.fill('#agent-policy-end', '05:00');
+    await page.fill('#agent-policy-zone', 'America/Chicago');
+    await page.click('#agent-policy-save');
+    await page.waitFor(id => /automatic upgrades will not try 0\.1\.88-lab\.1 again/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 15000 });
+    const policies = (await lab.api('GET', '/api/v1/agent-upgrades/policies')).json.items;
+    assert.deepEqual(policies.map(item => [item.agentId, item.autoUpgrade, item.windowStart, item.windowEnd, item.windowTimezone]), [[agent.agentId, true, '01:00', '05:00', 'America/Chicago']]);
+    await page.click(`[data-agent-policy="${agent.agentId}"]`);
+    await page.waitFor(() => document.getElementById('agent-policy-dialog').open);
+    await page.evaluate(() => { document.getElementById('agent-policy-on').click(); });
+    await page.click('#agent-policy-save');
+    await page.waitFor(id => !/automatic upgrades will not try|upgrades automatically/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 15000 });
     assert.deepEqual(unexpected(page.problems()), []);
     await page.close();
 

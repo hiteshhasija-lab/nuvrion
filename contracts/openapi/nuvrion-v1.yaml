@@ -928,6 +928,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+  /agent-upgrades/policies:
+    get:
+      tags: [Agents]
+      operationId: listAgentUpgradePolicies
+      summary: Which agents are set to upgrade automatically, and their time windows
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: The policies (an agent with none is not upgraded automatically), content: { application/json: { schema: { type: object, required: [items, count], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentUpgradePolicy' } }, count: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agents/{agentId}/upgrade-policy:
+    put:
+      tags: [Agents]
+      operationId: setAgentUpgradePolicy
+      summary: Turn automatic upgrades on or off for an agent, optionally within a daily time window
+      description: When on, the platform stages the newest build on the platform for this agent when it is online, behind, inside the window, no other agent is being upgraded, and that build has not already failed on it.
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [autoUpgrade], properties: { autoUpgrade: { type: boolean }, windowStart: { type: [string, 'null'], pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }, windowEnd: { type: [string, 'null'], pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }, windowTimezone: { type: string } } } } }
+      responses:
+        '200': { description: The policy, content: { application/json: { schema: { $ref: '#/components/schemas/AgentUpgradePolicy' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /agent-upgrades/signing-key:
     get:
       tags: [Agents]
@@ -1538,6 +1566,17 @@ components:
       type: object
       required: [commandId, agentId, operation, issuedAt, expiresAt, nonce, status, completedAt]
       properties: { commandId: { type: string, format: uuid }, agentId: { type: string, format: uuid }, operation: { type: string }, targetId: { type: [string, 'null'] }, issuedAt: { type: string }, expiresAt: { type: string }, nonce: { type: string }, requestedBy: { type: [string, 'null'] }, status: { type: string, enum: [completed, failed, rejected] }, result: { type: [object, 'null'] }, completedAt: { type: string, format: date-time } }
+    AgentUpgradePolicy:
+      type: object
+      required: [agentId, autoUpgrade, windowStart, windowEnd, windowTimezone]
+      properties:
+        agentId: { type: string, format: uuid }
+        autoUpgrade: { type: boolean }
+        windowStart: { type: [string, 'null'] }
+        windowEnd: { type: [string, 'null'] }
+        windowTimezone: { type: string }
+        updatedAt: { type: string, format: date-time }
+        updatedBy: { type: [string, 'null'] }
     AgentUpgradeDeployment:
       type: object
       required: [deploymentId, agentId, releaseId, status, stagedAt]

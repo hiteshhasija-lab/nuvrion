@@ -114,6 +114,20 @@ Each upload, stage and cancel is in the audit history (`agent.upgrade_build_adde
 `agent.upgrade_cancelled`) with who did it. An agent has one upgrade at a time: staging a second is refused until the first has
 finished or been cancelled.
 
+**Automatic upgrades.** Per agent, on the panel (*Automatic…*): the platform stages the newest build on the platform for that agent without a
+click. It is **off by default** and these rules apply every minute the platform considers it:
+
+- only agents switched on, and only while the agent is online and behind the newest build;
+- **one upgrade at a time** across all agents: the next agent goes only when the previous upgrade has finished;
+- only inside the agent's daily time window, when it has one (a window may cross midnight; its time zone is named);
+- **never a build that already failed, was rolled back or was cancelled on that agent**: the panel says so, and one audit event
+  (`agent.upgrade_auto_blocked`) records it. A newer build is tried; the same one is not;
+- the newest build only, and only if its file is really on the platform.
+
+What it stages is the same signed, verified upgrade a person would start, so the agent still checks the signature and its own
+self-check, and returns to the previous version by itself if the new one does not come up healthy. Every automatic staging is audited
+(`agent.upgrade_auto_staged`, actor *Nuvrion*), and every change of the setting (`agent.upgrade_policy_changed`) names who made it.
+
 **To upgrade an agent from the command line:**
 
 1. **Pin the signing key once per agent.** As an administrator get the key (`GET /api/v1/agent-upgrades/signing-key`, or

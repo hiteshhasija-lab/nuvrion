@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVersion, isNewerVersion, formatBytes, plainFailure, deploymentSummary, agentRowHtml, buildRowHtml, newestAvailable } from '../agent-fleet.js';
+import { parseVersion, isNewerVersion, formatBytes, plainFailure, deploymentSummary, agentRowHtml, buildRowHtml, newestAvailable, autoUpgradeNote } from '../agent-fleet.js';
 
 const esc = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const when = iso => `<${iso}>`;
@@ -90,4 +90,29 @@ test('an agent behind the newest build is told so; one that is current, busy or 
   assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1' }), { deploymentId: 'd', status: 'downloading', version: '0.1.51-lab.1' }, { esc, when, available: newest }), /available/, 'not while it is upgrading');
   assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1', status: 'revoked' }), null, { esc, when, available: newest }), /available/);
   assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1' }), null, { esc, when, available: null }), /available/);
+});
+
+test('the automatic-upgrade line says what the policy is, and why it will not act when the build already failed on that agent', () => {
+  const on = { autoUpgrade: true, windowStart: null, windowEnd: null, windowTimezone: 'UTC' };
+  const newest = build('0.1.52-lab.1');
+  assert.equal(autoUpgradeNote(null, null, newest, agent()), '');
+  assert.equal(autoUpgradeNote({ ...on, autoUpgrade: false }, null, newest, agent()), '');
+  assert.equal(autoUpgradeNote(on, null, newest, agent()), 'Upgrades automatically.');
+  assert.equal(autoUpgradeNote({ ...on, windowStart: '01:00', windowEnd: '05:00', windowTimezone: 'America/Chicago' }, null, newest, agent()), 'Upgrades automatically only between 01:00 and 05:00 (America/Chicago).');
+  assert.equal(autoUpgradeNote({ ...on, windowStart: '08:00', windowEnd: '08:00' }, null, newest, agent()), 'Upgrades automatically.', 'equal ends are the whole day');
+  const rolledBack = autoUpgradeNote(on, { version: '0.1.52-lab.1', status: 'rolled_back' }, newest, agent({ version: '0.1.50-lab.1' }));
+  assert.match(rolledBack, /will not try 0\.1\.52-lab\.1 again.*rolled back/);
+  assert.match(autoUpgradeNote(on, { version: '0.1.52-lab.1', status: 'failed' }, newest, agent({ version: '0.1.50-lab.1' })), /failed or was cancelled/);
+  assert.equal(autoUpgradeNote(on, { version: '0.1.51-lab.1', status: 'failed' }, newest, agent({ version: '0.1.50-lab.1' })), 'Upgrades automatically.', 'an older failure does not block a newer build');
+  assert.equal(autoUpgradeNote(on, { version: '0.1.52-lab.1', status: 'failed' }, newest, agent({ version: '0.1.52-lab.1' })), 'Upgrades automatically.', 'an agent that is current has nothing to be blocked from');
+});
+
+test('a row offers the automatic-upgrade setting to an administrator, and shows it when on', () => {
+  const policy = { autoUpgrade: true, windowStart: '01:00', windowEnd: '05:00', windowTimezone: 'America/Chicago' };
+  const row = agentRowHtml(agent(), null, { esc, when, policy });
+  assert.match(row, /data-agent-policy="4abb459d/);
+  assert.match(row, /Automatic<\/span> Upgrades automatically only between 01:00 and 05:00/);
+  assert.doesNotMatch(agentRowHtml(agent(), null, { esc, when }), /Upgrades automatically/);
+  assert.doesNotMatch(agentRowHtml(agent(), null, { esc, when, canManage: false, policy }), /data-agent-policy/);
+  assert.doesNotMatch(agentRowHtml(agent({ status: 'revoked' }), null, { esc, when }), /data-agent-policy/);
 });
