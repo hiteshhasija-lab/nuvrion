@@ -158,10 +158,25 @@ test('a power task that never finishes ends as a retryable timeout, and the sess
   assert.equal(fake.openSessions(), 0);
 });
 
-test('a guest shutdown needs VMware Tools; without them the request is refused with ESXi\'s message', async () => {
-  const fake = fakeEsxi({ vms: [sampleEsxiVm('vm-1', { tools: 'guestToolsNotRunning' })] });
-  await rejectsWith(() => make(fake).execute('stop', 'vm-1'), 'NUV_ESXI_UNAVAILABLE', e => /VMware Tools is not running/.test(e.message));
-  assert.equal(fake.openSessions(), 0);
+test('a guest shutdown or restart needs VMware Tools; without them it is refused once, with ESXi\'s message and what to do, and is not retried', async () => {
+  // Retrying within seconds cannot start VMware Tools, and reporting this as ESXi being unavailable (a retryable 5xx) made the
+  // worker repeat it three times in two seconds. It has its own code and is not retryable.
+  for (const operation of ['stop', 'reboot_guest']) {
+    const fake = fakeEsxi({ vms: [sampleEsxiVm('vm-1', { tools: 'guestToolsNotRunning' })] });
+    await rejectsWith(() => make(fake).execute(operation, 'vm-1'), 'NUV_ESXI_GUEST_TOOLS_UNAVAILABLE',
+      e => e.retryable === false && e.status === 500 && /VMware Tools is not running/.test(e.message) && /use Power off to force it/.test(e.message));
+    assert.equal(fake.openSessions(), 0);
+  }
+});
+
+test('a server error that is not a Tools fault, such as a busy host, is still retryable', async () => {
+  // The Tools mapping must stay narrow: it is the fault type that decides, not the HTTP status or the word "tools".
+  for (const [type, message] of [['HostCommunication', 'Cannot contact the host.'], ['RuntimeFault', 'The operation failed (VMware Tools is not running is not what ESXi said).']]) {
+    const fake = fakeEsxi({ vms: [sampleEsxiVm('vm-1', { tools: 'guestToolsRunning' })] });
+    fake.faults.http.set('ShutdownGuest', { status: 500, message, type });
+    await rejectsWith(() => make(fake).execute('stop', 'vm-1'), 'NUV_ESXI_UNAVAILABLE', e => e.retryable === true && e.status === 500 && !/use Power off to force it/.test(e.message));
+    assert.equal(fake.openSessions(), 0);
+  }
 });
 
 test('a guest shutdown is confirmed only when the VM really is powered off, and times out if the guest never acts', async t => {
