@@ -70,3 +70,29 @@ test('input paths must be unique, relative and inside the tree', () => {
   assert.match(issues(() => build({ files: [] })), /safe relative paths/, 'nothing to record');
   assert.equal(build({ files: [{ path: 'apps\\api\\x.js', bytes: Buffer.from('x') }] }).files[0].path, 'apps/api/x.js', 'Windows separators are normalised');
 });
+
+// The provenance covers the repository's own files. A packager installed for a local build (tools/agent-build/node_modules, with the symbolic links npm
+// makes in .bin) is third-party code pinned by its lockfile, not a build input, and must not stop a release being assembled from a working copy.
+test('the command-line tool ignores installed packages but still refuses a symbolic link among the real inputs', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-provenance-'));
+  try {
+    for (const folder of ['apps', 'modules', 'providers', 'contracts', 'database', 'tools/agent-build/node_modules/.bin']) mkdirSync(join(dir, folder), { recursive: true });
+    for (const file of ['package.json', 'package-lock.json', 'Containerfile.overlay', 'tools/x.js', 'apps/a.js']) writeFileSync(join(dir, file), `${file}\n`);
+    writeFileSync(join(dir, 'Containerfile.base'), `FROM docker.io/library/node@sha256:${'a'.repeat(64)}\n`);
+    symlinkSync('../x', join(dir, 'tools/agent-build/node_modules/.bin/some-tool'));
+    const script = new URL('../../../tools/create-build-provenance.js', import.meta.url).pathname;
+    const env = { ...process.env, NUVRION_BUILD_VERSION: '0.1.0-test', NUVRION_SOURCE_REVISION: 'b'.repeat(40) };
+    const created = spawnSync(process.execPath, [script, 'create', 'provenance.json'], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(created.status, 0, created.stderr);
+    const verified = spawnSync(process.execPath, [script, 'verify', 'provenance.json'], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(verified.status, 0, verified.stderr);
+    symlinkSync('../x', join(dir, 'apps/link'));
+    const refused = spawnSync(process.execPath, [script, 'create', 'provenance.json'], { cwd: dir, env, encoding: 'utf8' });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /Symbolic links are not allowed in build inputs: apps\/link/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
