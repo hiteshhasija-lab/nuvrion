@@ -19,6 +19,7 @@ const { execFile, spawn } = require('node:child_process');
 
 const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const HEALTH_DEADLINE_MS = 180000;
+const MAX_UNREPORTED_ATTEMPTS = 60;
 const STATE_FILE = 'upgrade-state.json';
 const OK_FLAG_FILE = 'upgrade-ok.flag';
 const ROLLED_BACK_FILE = 'upgrade-rolled-back.json';
@@ -39,12 +40,23 @@ function compareVersions(a, b) {
 
 // The manifest is signed by the platform (Ed25519 over the manifest's JSON). The key that counts is the one pinned in bootstrap.json,
 // never the one that arrives with the deployment.
+// A key that was copied without its BEGIN/END lines, or whose line breaks were stored as the two characters \n, is still the same key.
+function normalizePem(value, label = 'PUBLIC KEY') {
+  let text = String(value ?? '').replace(/\\n/g, '\n').trim();
+  if (text && !/-----BEGIN /.test(text)) {
+    const body = text.replace(/\s+/g, '');
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(body)) text = `-----BEGIN ${label}-----\n${body.match(/.{1,64}/g).join('\n')}\n-----END ${label}-----`;
+  }
+  return text;
+}
+
 function verifyRelease(release, publicKeyPem) {
   if (!publicKeyPem) throw new UpgradeError('NUV_AGENT_UPGRADE_KEY_NOT_PINNED', 'No upgrade signing key is pinned in bootstrap.json (upgradeTrustedPublicKey), so this agent will not install an upgrade.');
   const manifest = release?.manifest;
   if (!manifest || typeof manifest !== 'object' || typeof release.signature !== 'string') throw new UpgradeError('NUV_AGENT_UPGRADE_MANIFEST_INVALID', 'The upgrade release has no signed manifest.');
   let valid = false;
-  try { valid = crypto.verify(null, Buffer.from(JSON.stringify(manifest)), publicKeyPem, Buffer.from(release.signature, 'base64url')); } catch { valid = false; }
+  const pinned = normalizePem(publicKeyPem);
+  try { valid = crypto.verify(null, Buffer.from(JSON.stringify(manifest)), pinned, Buffer.from(release.signature, 'base64url')); } catch { valid = false; }
   if (!valid) throw new UpgradeError('NUV_AGENT_UPGRADE_SIGNATURE_INVALID', 'The upgrade manifest is not signed by the pinned key.');
   parseVersion(manifest.version);
   if (!/^https:\/\//.test(String(manifest.artifactUrl ?? ''))) throw new UpgradeError('NUV_AGENT_UPGRADE_URL_INVALID', 'The upgrade artifact URL is not HTTPS.');
@@ -170,7 +182,16 @@ function createUpgrader({ root, executable, currentVersion, config, api, log = (
     const state = readJson(statePath);
     if (!state) return false;
     if (state.phase === 'unreported') {
-      if (await report(state.deploymentId, state.status, state.detail, state.rollbackVersion)) removeQuietly(statePath);
+      if (await report(state.deploymentId, state.status, state.detail, state.rollbackVersion)) { removeQuietly(statePath); return true; }
+      // A platform that keeps refusing the report must not hold every later upgrade back for ever: after about an hour of polls the
+      // result is given up on (logged, and the deployment is simply offered again), so the next poll looks at new work.
+      const attempts = (state.attempts ?? 0) + 1;
+      if (attempts >= MAX_UNREPORTED_ATTEMPTS) {
+        log('agent.upgrade.report_abandoned', { deploymentId: state.deploymentId, status: state.status, attempts });
+        removeQuietly(statePath);
+        return false;
+      }
+      writeJsonAtomic(statePath, { ...state, attempts });
       return true;
     }
     if (state.phase === 'swapped') {
@@ -304,5 +325,5 @@ function launchWatchdog(state, { spawnProcess = spawn, parentPid = process.pid }
   return child;
 }
 
-module.exports = { UpgradeError, MAX_ARTIFACT_BYTES, HEALTH_DEADLINE_MS, STATE_FILE, OK_FLAG_FILE, ROLLED_BACK_FILE, compareVersions, verifyRelease, download, selfCheck,
+module.exports = { UpgradeError, MAX_ARTIFACT_BYTES, HEALTH_DEADLINE_MS, STATE_FILE, OK_FLAG_FILE, ROLLED_BACK_FILE, MAX_UNREPORTED_ATTEMPTS, compareVersions, normalizePem, verifyRelease, download, selfCheck,
   swapExecutable, createUpgrader, runWatchdog, windowsProcessControl, launchWatchdog };

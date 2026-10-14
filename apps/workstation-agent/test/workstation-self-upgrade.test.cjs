@@ -79,6 +79,25 @@ test('a release signed by a different key, or altered after signing, is refused'
   assert.throws(() => U.verifyRelease({ manifest: signedRelease(real).manifest, signature: 'not-a-signature' }, real.pub), e => e.code === 'NUV_AGENT_UPGRADE_SIGNATURE_INVALID');
 });
 
+test('a pinned key whose line breaks were stored as \\n escapes is still the same key; a different key is still refused', () => {
+  const key = keypair(), attacker = keypair();
+  const escaped = key.pub.trim().replace(/\r?\n/g, '\\n');
+  assert.ok(!escaped.includes('\n') && escaped.includes('\\n'));
+  assert.equal(U.verifyRelease(signedRelease(key), escaped).version, '0.1.50-lab.1');
+  assert.equal(U.verifyRelease(signedRelease(key), key.pub.replace(/\n/g, '\r\n')).version, '0.1.50-lab.1', 'CRLF line breaks (a Windows here-string) are fine too');
+  assert.throws(() => U.verifyRelease(signedRelease(attacker), escaped), e => e.code === 'NUV_AGENT_UPGRADE_SIGNATURE_INVALID');
+});
+
+test('a pinned key copied without its BEGIN and END lines is read as the same key', () => {
+  const key = keypair(), attacker = keypair();
+  const bare = key.pub.replace(/-----[A-Z ]+-----/g, '').replace(/\s+/g, '');
+  assert.ok(!bare.includes('-'));
+  assert.equal(U.verifyRelease(signedRelease(key), bare).version, '0.1.50-lab.1');
+  assert.equal(U.verifyRelease(signedRelease(key), `  ${bare}\r\n`).version, '0.1.50-lab.1');
+  assert.throws(() => U.verifyRelease(signedRelease(attacker), bare), e => e.code === 'NUV_AGENT_UPGRADE_SIGNATURE_INVALID');
+  assert.throws(() => U.verifyRelease(signedRelease(key), 'not a key at all !!'), e => e.code === 'NUV_AGENT_UPGRADE_SIGNATURE_INVALID');
+});
+
 test('a correctly signed release with unusable fields is still refused', () => {
   const key = keypair();
   assert.throws(() => U.verifyRelease(signedRelease(key, { artifactUrl: 'http://platform.test/a.exe' }), key.pub), e => e.code === 'NUV_AGENT_UPGRADE_URL_INVALID');
@@ -197,6 +216,19 @@ test('a terminal result that cannot be reported is kept and sent on a later poll
   assert.equal(await ctx.upgrader.poll(), 'settling');
   assert.equal(lastReport(ctx).status, 'installed');
   assert.equal(ctx.files().includes('upgrade-state.json'), false);
+});
+
+test('a result the platform keeps refusing is given up on after a bounded number of polls, so later upgrades are not held back', async t => {
+  const ctx = setup(t, { currentVersion: '0.1.50-lab.1' });
+  ctx.state.reportFails = () => true;
+  fs.writeFileSync(path.join(ctx.root, 'upgrade-state.json'), JSON.stringify({ phase: 'unreported', deploymentId: 'dep-1', status: 'failed', detail: 'x', rollbackVersion: null }));
+  for (let poll = 1; poll < U.MAX_UNREPORTED_ATTEMPTS; poll += 1) {
+    assert.equal(await ctx.upgrader.poll(), 'settling', `poll ${poll} is still retrying`);
+    assert.ok(ctx.files().includes('upgrade-state.json'));
+  }
+  assert.equal(JSON.parse(ctx.read('upgrade-state.json')).attempts, U.MAX_UNREPORTED_ATTEMPTS - 1);
+  assert.notEqual(await ctx.upgrader.poll(), 'settling', 'the limit is reached: the poll goes on to look for new work');
+  assert.equal(ctx.files().includes('upgrade-state.json'), false, 'the stale result is dropped');
 });
 
 test('after a rollback the restored agent reports rolled_back with the version it is running', async t => {

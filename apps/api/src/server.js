@@ -90,7 +90,10 @@ const performance=production?new PostgresPerformanceService(store.pool,{retentio
 const compatibility=new AgentCompatibilityPolicy({minimumVersion:process.env.NUVRION_AGENT_MIN_VERSION??'0.1.0',recommendedVersion:process.env.NUVRION_AGENT_RECOMMENDED_VERSION??'0.1.0'});
 const agents = production?new PostgresAgentRegistry(store.pool,{compatibility}):new AgentRegistry({compatibility});
 const agentMaintenance=new AgentMaintenanceScheduler({registry:agents,intervalMs:Number(process.env.NUVRION_AGENT_MAINTENANCE_MS??30000),offlineAfterMs:Number(process.env.NUVRION_AGENT_OFFLINE_MS??120000),onError:error=>console.error(JSON.stringify({level:'error',event:'agent.maintenance.failed',error:error.message}))});agentMaintenance.start();
-const signingKeys={privateKeyPem:process.env.NUVRION_AGENT_SIGNING_PRIVATE_KEY??null,publicKeyPem:process.env.NUVRION_AGENT_SIGNING_PUBLIC_KEY??null};
+// A PEM kept in an environment file may have its line breaks written as the two characters \n, or may be the bare base64 without its BEGIN/END lines;
+// make it a PEM so it parses and is shown, and pinned by operators, in one form.
+const pemFromEnvironment=(value,label)=>{if(!value)return null;let text=String(value).trim();if(!text.includes('\n'))text=text.replace(/\\n/g,'\n');if(!/-----BEGIN /.test(text)){const body=text.replace(/\s+/g,'');if(/^[A-Za-z0-9+/]+={0,2}$/.test(body))text=`-----BEGIN ${label}-----\n${body.match(/.{1,64}/g).join('\n')}\n-----END ${label}-----`;}return `${text}\n`;};
+const signingKeys={privateKeyPem:pemFromEnvironment(process.env.NUVRION_AGENT_SIGNING_PRIVATE_KEY,'PRIVATE KEY'),publicKeyPem:pemFromEnvironment(process.env.NUVRION_AGENT_SIGNING_PUBLIC_KEY,'PUBLIC KEY')};
 const agentUpgrades=production?new PostgresAgentUpgradeService(store.pool,signingKeys):new AgentUpgradeService(signingKeys);
 // Agent executables staged for upgrade are served from here, one file per release, named by its SHA-256. The operator places the file (the API only reads it).
 const agentArtifactDir=process.env.NUVRION_AGENT_ARTIFACT_DIR??join(process.env.NUVRION_UPGRADE_SHARED_DIR??(production?'/var/lib/nuvrion/upgrades':'.nuvrion/upgrades'),'agent-artifacts');

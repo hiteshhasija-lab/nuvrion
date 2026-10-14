@@ -94,6 +94,8 @@ restored agent reports `rolled_back`. The agent reports `downloading`, `ready` a
    ```json
    "upgradeTrustedPublicKey": "-----BEGIN PUBLIC KEY-----\nMCow...\n-----END PUBLIC KEY-----\n"
    ```
+   From agent 0.1.50 the key may also be given as the bare base64 line; earlier agents need the BEGIN and END lines. A
+   result the platform keeps refusing is given up on after about an hour of polls (`agent.upgrade.report_abandoned`).
 2. **Put the new executable on the platform host**, named by its SHA-256, in the `agent-artifacts` directory next to the
    platform's upgrades directory (on the lab host: `~/.local/share/nuvrion-upgrades/agent-artifacts/<sha256>`). The API
    only reads this directory.
@@ -103,7 +105,10 @@ restored agent reports `rolled_back`. The agent reports `downloading`, `ready` a
      --url https://<platform> --agent <agent id> --exe ./nuvrion-workstation-agent.exe --version 0.1.50-lab.1
    ```
    The version must equal what the executable reports (`nuvrion-workstation-agent.exe --self-check`) and be higher in
-   major.minor.patch than the installed one.
+   major.minor.patch than the installed one. **`--url` must be exactly the address the agent itself uses** (`apiUrl` in its
+   `bootstrap.json`): the artifact address is part of the signed manifest, and the agent sends its credential and trusts
+   its CA only for its own platform origin, so another name for the same host fails with a TLS error
+   (`NUV_AGENT_UPGRADE_DOWNLOAD_FAILED ... unable to verify the first certificate`).
 4. **Watch it:** the agent polls once a minute (`upgradePollIntervalMs` in `bootstrap.json`). `agent.log` has the
    `agent.upgrade.*` events and the console shows the new version after the restart. Run `verify-install.ps1` to confirm.
 

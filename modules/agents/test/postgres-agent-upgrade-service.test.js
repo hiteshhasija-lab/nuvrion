@@ -85,6 +85,17 @@ test('results move a deployment forward and record when it finished, with a roll
   assert.equal(await upgrades.get(randomUUID()), null);
 });
 
+test('a plain-text failure message, the way the agent reports it, is stored and read back as text', database, async () => {
+  const id = await agent('A'), { manifest } = await release(), { deploymentId } = await upgrades.stage(id, manifest.releaseId);
+  const message = 'The upgrade manifest is not signed by the pinned key.';
+  const failed = await upgrades.report(id, deploymentId, { status: 'failed', detail: message });
+  assert.deepEqual([failed.status, failed.detail], ['failed', message]);
+  assert.equal((await upgrades.get(deploymentId)).detail, message);
+  const { manifest: second } = await release(), staged = await upgrades.stage(id, second.releaseId);
+  const awkward = await upgrades.report(id, staged.deploymentId, { status: 'failed', detail: '{"not": json' });
+  assert.equal(awkward.detail, '{"not": json', 'text that looks like broken JSON is still just text');
+});
+
 test('a final result is final: nothing can change it, and a wrong agent or unknown deployment is refused', database, async () => {
   const a = await agent('A'), b = await agent('B'), { manifest } = await release(), { deploymentId } = await upgrades.stage(a, manifest.releaseId);
   await rejects(() => upgrades.report(a, deploymentId, { status: 'exploded' }), 'NUV_AGENT_UPGRADE_STATUS_INVALID');
