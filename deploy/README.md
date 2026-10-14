@@ -1,5 +1,8 @@
 # Deploy tooling for NOVAAPP01
 
+Other guides: [restoring from a backup](../docs/restore-guide.md), [connecting providers](../docs/connecting-providers.md),
+[the Workstation agent](../docs/workstation-agent.md).
+
 These files are the canonical copies of what runs on the Nuvrion host. Nothing here is built into the
 application image (the overlay tarball only contains `apps database modules providers Containerfile.overlay`),
 so changing them never needs a release.
