@@ -133,6 +133,10 @@ directory as the account that owns it. Both must be able to write: `~/.local/sha
 `agent-intake` folders are kept at mode 0777 by the upgrade script (their parent is private to the account, so this only admits the
 container's user). If the API cannot write there, saving the platform address or uploading a build fails with
 `NUV_AGENT_UPGRADE_STORAGE_UNAVAILABLE`; run the upgrade script's next release, or `chmod 0777` those three directories.
+With SELinux enforcing, a file added to that directory from the host must also carry the label of the directory (the container's private
+label), or the API is refused with the same *permission denied*: the upgrade script copies the build (it does not use `install`) and
+labels it with `chcon --reference`. If a published build is rejected as "not on the platform" although the file is there, run
+`chcon --reference=<directory> <file>`, move its record back from `agent-intake/rejected`, and save the address again.
 
 **To upgrade an agent from the command line:**
 

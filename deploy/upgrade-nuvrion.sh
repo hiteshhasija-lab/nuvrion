@@ -185,12 +185,18 @@ publish_agent_build() {
   chmod 0777 "$agent_share_dir" "$artifacts" "$intake" 2>/dev/null || true
   if [[ ! -f "$artifacts/$agent_sha" ]]; then
     temporary="$artifacts/.publish-$$"
-    { install -m 0644 "$release_dir/$agent_file" "$temporary" && mv -f "$temporary" "$artifacts/$agent_sha"; } || { rm -f "$temporary"; return 1; }
+    # cp, not install: with SELinux enforcing, install gives the file the default home-directory label, which the API's container may not read, while a plain
+    # copy takes the label of the directory it is created in.
+    { cp "$release_dir/$agent_file" "$temporary" && chmod 0644 "$temporary" && mv -f "$temporary" "$artifacts/$agent_sha"; } || { rm -f "$temporary"; return 1; }
   fi
+  # The volume carries the running container's private label (applied when the container started); whatever is added after that must carry it too or the
+  # container is refused with "permission denied". Taking it from the directory is exact whatever the categories are, and does nothing without SELinux.
+  chcon --reference="$artifacts" "$artifacts/$agent_sha" 2>/dev/null || true
   jq -n --arg version "$agent_version" --arg sha "$agent_sha" --argjson size "$agent_size" --arg release "$version" \
     --arg commit "$(jq -r '.sourceBaselineCommit // empty' "$manifest")" --arg at "$(date -u +%FT%TZ)" \
     '{format:"nuvrion-agent-intake/1",version:$version,sha256:$sha,sizeBytes:$size,release:$release,sourceCommit:$commit,publishedAt:$at}' \
-    > "$intake/$agent_sha.json.tmp" && mv -f "$intake/$agent_sha.json.tmp" "$intake/$agent_sha.json"
+    > "$intake/$agent_sha.json.tmp" && mv -f "$intake/$agent_sha.json.tmp" "$intake/$agent_sha.json" || return 1
+  chcon --reference="$intake" "$intake/$agent_sha.json" 2>/dev/null || true
 }
 
 record_stable_release() {

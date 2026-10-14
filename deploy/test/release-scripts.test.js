@@ -224,6 +224,20 @@ test('publishing puts the executable where the platform serves it, by its digest
   } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('published files take the label of their directory, and are copied rather than installed (SELinux would give install the home-directory label)', () => {
+  assert.doesNotMatch(agentPublish.replace(/^\s*#.*$/gm, ''), /\binstall\s+-/, 'install sets the default SELinux context, which the API container cannot read');
+  const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({}), bin = mkdtempSync(join(tmpdir(), 'nuvrion-bin-'));
+  try {
+    writeFileSync(join(bin, 'chcon'), '#!/bin/sh\necho "$@" >> "$CHCON_LOG"\n', { mode: 0o755 });
+    const log = join(bin, 'chcon.log');
+    const script = `set -Eeuo pipefail\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"; version=0.1.178\n${agentPreflight}\n${agentPublish}\npublish_agent_build`;
+    const result = spawnSync('bash', ['-c', script], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CHCON_LOG: log, D: dir, NUVRION_AGENT_SHARE_DIR: share }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const manifest = JSON.parse(readFileSync(join(dir, 'release-manifest.json'), 'utf8')), calls = readFileSync(log, 'utf8').trim().split('\n');
+    assert.deepEqual(calls, [`--reference=${join(share, 'agent-artifacts')} ${join(share, 'agent-artifacts', manifest.agent.sha256)}`, `--reference=${join(share, 'agent-intake')} ${join(share, 'agent-intake', `${manifest.agent.sha256}.json`)}`]);
+  } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
+});
+
 test('a release without an agent publishes nothing', () => {
   const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({ withAgent: false });
   try {
