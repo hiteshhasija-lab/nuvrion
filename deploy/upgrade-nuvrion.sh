@@ -182,8 +182,7 @@ publish_agent_build() {
   # source is different bytes: do not store a second copy, and do not ask the platform to refuse it. (A version already imported is in intake/imported.)
   for record in "$intake"/imported/*.json; do
     if [[ -f "$record" ]] && jq -e --arg v "$agent_version" '.version == $v' "$record" >/dev/null 2>&1; then
-      echo "Agent $agent_version is already on the platform; not published again."
-      return 0
+      return 10   # nothing to do: the caller says so
     fi
   done
   mkdir -p "$artifacts" "$intake" || return 1
@@ -326,6 +325,12 @@ echo "Rollback image: $rollback_image"
 if record_stable_release; then echo "Recorded v$version as the stable release in $stable_record"; else echo "Warning: could not update $stable_record; record v$version by hand." >&2; fi
 # Best effort as well: the server is already running the new release; a failure here only means agents are not offered the build yet.
 if [[ -n "$agent_file" ]]; then
-  if publish_agent_build; then echo "Published agent $agent_version to the platform; it is offered to agents as soon as the API registers it."; else echo "Warning: could not publish the agent executable; add it from the console instead." >&2; fi
+  published=0
+  publish_agent_build || published=$?
+  case "$published" in
+    0) echo "Published agent $agent_version to the platform; it is offered to agents as soon as the API registers it." ;;
+    10) echo "Agent $agent_version is already on the platform; not published again." ;;
+    *) echo "Warning: could not publish the agent executable; add it from the console instead." >&2 ;;
+  esac
 fi
 if ! cleanup_after_deploy; then echo "Warning: post-deploy cleanup failed; disk space was not reclaimed." >&2; fi

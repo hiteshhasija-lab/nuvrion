@@ -235,8 +235,8 @@ test('an agent version that is already on the platform is not published again; a
     // imported earlier under another digest (a rebuild of the same source): nothing new is stored and no record is left for the platform to refuse
     writeFileSync(join(share, 'agent-intake', 'imported', `${'9'.repeat(64)}.json`), JSON.stringify({ format: 'nuvrion-agent-intake/1', version: manifest.agent.version, sha256: '9'.repeat(64), sizeBytes: 1 }, null, 2));
     const skipped = run();
-    assert.equal(skipped.status, 0, skipped.stderr);
-    assert.match(skipped.stdout, /already on the platform; not published again/);
+    assert.equal(skipped.status, 10, 'the function says "nothing to do" with its own status, which the caller turns into a message');
+    assert.match(upgradeScript, /10\) echo "Agent \$agent_version is already on the platform; not published again\."/);
     assert.deepEqual(spawnSync('bash', ['-c', `ls -A "${join(share, 'agent-artifacts')}" "${join(share, 'agent-intake')}"`], { encoding: 'utf8' }).stdout.replace(/\s+/g, ' ').trim().split(' ').filter(name => name.endsWith('.exe') || name.length === 64 || name.endsWith('.json') && name !== `${'9'.repeat(64)}.json`), []);
     // another version was imported, not this one: it is published
     rmSync(join(share, 'agent-intake', 'imported', `${'9'.repeat(64)}.json`));
@@ -269,4 +269,17 @@ test('a release without an agent publishes nothing', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(spawnSync('bash', ['-c', `ls -A "${share}"`], { encoding: 'utf8' }).stdout.trim(), '');
   } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the upgrade script says what happened to the agent build: published, already on the platform, or could not be published', () => {
+  const from = upgradeScript.indexOf('published=0'), to = upgradeScript.indexOf('esac', from) + 4;
+  assert.ok(from > 0 && to > from, 'the publish outcome section was not found in the upgrade script');
+  const block = upgradeScript.slice(from, to);
+  const run = status => spawnSync('bash', ['-c', `agent_version=0.1.9\npublish_agent_build() { return ${status}; }\n${block}`], { encoding: 'utf8' });
+  const published = run(0), already = run(10), failed = run(1);
+  assert.match(published.stdout, /Published agent 0\.1\.9 to the platform/);
+  assert.match(already.stdout, /Agent 0\.1\.9 is already on the platform; not published again\./);
+  assert.doesNotMatch(already.stdout, /Published agent/, 'a skipped build is not also reported as published');
+  assert.match(failed.stderr, /Warning: could not publish the agent executable/);
+  assert.doesNotMatch(failed.stdout, /Published agent|already on the platform/);
 });
