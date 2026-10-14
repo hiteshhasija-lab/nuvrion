@@ -11,7 +11,7 @@ test('automatic console configuration changes only stopped VMs and allocates uni
   const stopped=path.join(root,'stopped.vmx'),running=path.join(root,'running.vmx');
   fs.writeFileSync(stopped,'displayName = "Stopped"\n');
   fs.writeFileSync(running,'displayName = "Running"\n');
-  const config={identity:{secret:'agent-secret'},autoConfigureConsole:true,consolePortRange:{start:5900,end:5902}};
+  const config={identity:{secret:'agent-secret'},autoConfigureConsole:true,consolePortRange:{start:5900,end:5902}}; // secret-scan:allow (fake test credential)
   reconcileConsoleConfiguration(config,[stopped,running],new Set([running.toLowerCase()]));
   const stoppedText=fs.readFileSync(stopped,'utf8'),runningText=fs.readFileSync(running,'utf8');
   assert.equal(vmxValue(stoppedText,'RemoteDisplay.vnc.enabled'),'TRUE');
@@ -24,7 +24,7 @@ test('automatic console configuration changes only stopped VMs and allocates uni
 test('automatic console configuration preserves a ready managed VM',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'nuvrion-console-ready-'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
-  const vmx=path.join(root,'ready.vmx'),secret='agent-secret',original=`displayName = "Ready"\nRemoteDisplay.vnc.enabled = "TRUE"\nRemoteDisplay.vnc.port = "5901"\nRemoteDisplay.vnc.password = "${consolePassword(secret,vmx)}"\nRemoteDisplay.vnc.ip = "127.0.0.1"\n`;
+  const vmx=path.join(root,'ready.vmx'),secret='agent-secret',original=`displayName = "Ready"\nRemoteDisplay.vnc.enabled = "TRUE"\nRemoteDisplay.vnc.port = "5901"\nRemoteDisplay.vnc.password = "${consolePassword(secret,vmx)}"\nRemoteDisplay.vnc.ip = "127.0.0.1"\n`; // secret-scan:allow (fake test credential)
   fs.writeFileSync(vmx,original);
   reconcileConsoleConfiguration({identity:{secret},consolePortRange:{start:5900,end:5999}},[vmx],new Set());
   assert.equal(fs.readFileSync(vmx,'utf8'),original);
