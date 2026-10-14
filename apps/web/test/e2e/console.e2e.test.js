@@ -344,8 +344,8 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.fill('#agent-build-version', '0.1.88-lab.1');
     await page.fill('#agent-build-base', 'https://platform.invalid');
     await page.click('#agent-build-submit');
-    await page.waitFor(() => document.getElementById('agent-builds').innerText.includes('0.1.88-lab.1'), { timeout: 15000 });
-    const builds = await page.evaluate(() => document.getElementById('agent-builds').innerText);
+    await page.waitFor(() => document.getElementById('agent-builds').textContent.includes('0.1.88-lab.1'), { timeout: 15000 });
+    const builds = await page.evaluate(() => document.getElementById('agent-builds').textContent);
     assert.match(builds, /https:\/\/platform\.invalid/);
     assert.match(builds, /on the platform/i);
     assert.match(await page.evaluate(() => document.getElementById('agent-fleet-message').innerText), /registered 0\.1\.88-lab\.1/i);
