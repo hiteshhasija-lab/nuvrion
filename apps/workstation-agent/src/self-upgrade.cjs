@@ -22,7 +22,6 @@ const HEALTH_DEADLINE_MS = 180000;
 const STATE_FILE = 'upgrade-state.json';
 const OK_FLAG_FILE = 'upgrade-ok.flag';
 const ROLLED_BACK_FILE = 'upgrade-rolled-back.json';
-const TASK_NAME = 'NuvrionWorkstationAgent';
 
 class UpgradeError extends Error { constructor(code, message) { super(message); this.code = code; } }
 
@@ -282,16 +281,18 @@ async function runWatchdog({ statePath, parentPid, isAlive, startAgent, killAgen
 }
 
 // Real process control for the watchdog and for starting it; kept apart so the logic above is testable.
-function windowsProcessControl({ executable, taskName = TASK_NAME, run = execFile, spawnProcess = spawn }) {
+function windowsProcessControl({ executable, run = execFile, spawnProcess = spawn }) {
   const image = path.basename(executable);
   return {
     isAlive: pid => { try { process.kill(pid, 0); return true; } catch { return false; } },
-    startAgent: () => new Promise(resolve => run('schtasks', ['/Run', '/TN', taskName], { windowsHide: true }, error => {
-      if (!error) return resolve();
-      // No scheduled task (a manual install): start the executable itself, detached.
+    // Started directly, not through the scheduled task: the task is configured to ignore a new run while it is still "running", and
+    // the old agent's launcher (and this watchdog, a child of the old agent) can keep it in that state, which would swallow the
+    // start and end in a pointless rollback. The watchdog runs in the user's interactive session, so the child does too, and the
+    // agent's single-instance guard makes a concurrent start by the task harmless.
+    startAgent: () => new Promise(resolve => {
       try { spawnProcess(executable, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch { /* nothing more can be done from here */ }
       resolve();
-    })),
+    }),
     killAgent: () => new Promise(resolve => run('taskkill', ['/F', '/IM', image], { windowsHide: true }, () => resolve())),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
   };

@@ -390,14 +390,15 @@ test('the watchdog is launched from the previous executable with the state file 
   assert.equal(calls[0].options.detached, true); assert.equal(calls[0].options.stdio, 'ignore');
 });
 
-test('process control starts the agent through its scheduled task and falls back to the executable itself', async () => {
+test('process control starts the agent executable directly (not through the scheduled task) and kills it by image name', async () => {
   const runs = [], spawned = [];
-  const task = U.windowsProcessControl({ executable: 'C:\\x\\agent.exe', run: (file, args, o, cb) => { runs.push([file, ...args]); cb(null); }, spawnProcess: () => { throw new Error('must not spawn'); } });
-  await task.startAgent();
-  assert.deepEqual(runs[0], ['schtasks', '/Run', '/TN', 'NuvrionWorkstationAgent']);
-  const fallback = U.windowsProcessControl({ executable: 'C:\\x\\agent.exe', run: (file, args, o, cb) => cb(new Error('no such task')), spawnProcess: (file, args, options) => { spawned.push(file); return { unref() {} }; } });
-  await fallback.startAgent();
-  assert.deepEqual(spawned, ['C:\\x\\agent.exe']);
+  const control = U.windowsProcessControl({ executable: 'C:\\x\\agent.exe', run: (file, args, o, cb) => { runs.push([file, ...args]); cb(null); },
+    spawnProcess: (file, args, options) => { spawned.push({ file, args, options }); return { unref() {} }; } });
+  await control.startAgent();
+  assert.equal(runs.length, 0, 'schtasks must not be used: an IgnoreNew task would swallow the start');
+  assert.equal(spawned[0].file, 'C:\\x\\agent.exe');
+  assert.deepEqual(spawned[0].args, []);
+  assert.equal(spawned[0].options.detached, true); assert.equal(spawned[0].options.windowsHide, true);
   const kills = [];
   await U.windowsProcessControl({ executable: path.win32.join('C:\\x', 'agent.exe'), run: (file, args, o, cb) => { kills.push([file, ...args]); cb(null); } }).killAgent();
   assert.deepEqual(kills[0], ['taskkill', '/F', '/IM', path.basename('C:\\x\\agent.exe')]);

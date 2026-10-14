@@ -43,19 +43,36 @@ function singleInstanceAddress(name='NuvrionWorkstationAgent'){
   const identity=`${name}-${typeof process.getuid==='function'?process.getuid():'user'}`;
   return path.join(os.tmpdir(),`nuv-${createHash('sha256').update(identity).digest('hex').slice(0,16)}.sock`);
 }
-function acquireSingleInstance(address=singleInstanceAddress(),createServer=handler=>net.createServer(handler)){
+// Whether something is listening on a socket path: true if it answers, false if the file is stale (nothing there, or it refuses).
+function probeSocket(address,timeoutMs=1000){
+  return new Promise(resolve=>{
+    const socket=net.connect(address);
+    const timer=setTimeout(()=>{socket.destroy();resolve(true);},timeoutMs);timer.unref?.();
+    socket.once('connect',()=>{clearTimeout(timer);socket.destroy();resolve(true);});
+    socket.once('error',error=>{clearTimeout(timer);resolve(!['ECONNREFUSED','ENOENT'].includes(error?.code));});
+  });
+}
+function acquireSingleInstance(address=singleInstanceAddress(),createServer=handler=>net.createServer(handler),{probe=probeSocket,unlink=file=>{if(fs.lstatSync(file).isSocket())fs.unlinkSync(file);},posix=process.platform!=='win32'}={}){
   return new Promise((resolve,reject)=>{
-    const server=createServer(socket=>socket.destroy());
-    const fail=error=>{
-      server.close(()=>{});
-      if(error?.code==='EADDRINUSE')return reject(Object.assign(new Error('Another Nuvrion Workstation Agent process is already running.'),{code:'NUV_AGENT_ALREADY_RUNNING'}));
-      reject(error);
+    const attempt=retry=>{
+      const server=createServer(socket=>socket.destroy());
+      const fail=async error=>{
+        server.close(()=>{});
+        if(error?.code==='EADDRINUSE'){
+          // A Windows named pipe disappears with its process, but a POSIX socket file stays behind when the process exits. A socket file that
+          // nothing answers on is therefore a leftover, not a running agent: remove it and take the guard once.
+          if(retry&&posix&&await probe(address)===false){try{unlink(address);}catch{}return attempt(false);}
+          return reject(Object.assign(new Error('Another Nuvrion Workstation Agent process is already running.'),{code:'NUV_AGENT_ALREADY_RUNNING'}));
+        }
+        reject(error);
+      };
+      server.once('error',fail);
+      server.listen(address,()=>{
+        server.removeListener('error',fail);
+        resolve({address,close:()=>new Promise(done=>server.close(done))});
+      });
     };
-    server.once('error',fail);
-    server.listen(address,()=>{
-      server.removeListener('error',fail);
-      resolve({address,close:()=>new Promise(done=>server.close(done))});
-    });
+    attempt(true);
   });
 }
 function pausedVmState(){if(pausedVms)return pausedVms;let stored=[];try{stored=readJson(pauseCachePath);}catch{}pausedVms=new Set(Array.isArray(stored)?stored:[]);return pausedVms;}
@@ -141,7 +158,7 @@ function workstationPowerAction(operation,targetId){return {stop:['stop',targetI
 function agentDiagnostics(config){const usage=process.memoryUsage(),total=Object.values(cacheStats).reduce((sum,value)=>sum+value,0),hits=cacheStats.vmxHits+cacheStats.guestHits+cacheStats.diskHits;return {version:VERSION,uptimeSeconds:Math.floor((Date.now()-startedAt)/1000),memoryMb:Math.round(usage.rss/104857.6)/10,lastInventoryDurationMs,cacheHitPercent:total?Math.round(hits/total*100):null,cache:cacheStats,vmrunAvailable:Boolean(config.vmrunPath&&fs.existsSync(config.vmrunPath)),vmcliAvailable:Boolean(vmcliPath(config)),lastSuccessfulHeartbeatAt,lastError:lastAgentError};}
 // Platform-driven upgrade (self-upgrade.cjs). `upgrader` exists once the loop has started; the first successful heartbeat tells it the agent is healthy.
 let upgrader=null,upgradeHealthSignalled=false;
-async function upgradeLoop(config){upgrader=selfUpgrade.createUpgrader({root,executable:process.execPath,currentVersion:VERSION,config,api:{get:pathname=>request(config,'GET',pathname,undefined,{'x-agent-secret':config.identity.secret}),post:(pathname,body)=>request(config,'POST',pathname,body,{'x-agent-secret':config.identity.secret})},log,startWatchdog:state=>selfUpgrade.launchWatchdog(state),exit:code=>setTimeout(()=>process.exit(code),500)});const intervalMs=Math.max(10000,Number(config.upgradePollIntervalMs||60000));for(;;){try{await upgrader.poll();}catch(error){log(`agent.upgrade.loop_failed`,{message:error.message});}await delay(intervalMs);}}
+async function upgradeLoop(config){upgrader=selfUpgrade.createUpgrader({root,executable:process.execPath,currentVersion:VERSION,config,api:{get:pathname=>request(config,'GET',pathname,undefined,{'x-agent-secret':config.identity.secret}),post:(pathname,body)=>request(config,'POST',pathname,body,{'x-agent-secret':config.identity.secret})},log,healthDeadlineMs:Number(config.upgradeHealthDeadlineMs)||undefined,startWatchdog:state=>selfUpgrade.launchWatchdog(state),exit:code=>setTimeout(()=>process.exit(code),500)});const intervalMs=Math.max(10000,Number(config.upgradePollIntervalMs||60000));for(;;){try{await upgrader.poll();}catch(error){log(`agent.upgrade.loop_failed`,{message:error.message});}await delay(intervalMs);}}
 async function publishHeartbeat(config,items=latestInventory){const response=await request(config,'POST',`/api/v1/agents/${config.identity.agentId}/heartbeat`,{version:VERSION,inventory:items,diagnostics:agentDiagnostics(config)},{'x-agent-secret':config.identity.secret});lastSuccessfulHeartbeatAt=new Date().toISOString();lastAgentError=null;if(upgrader&&!upgradeHealthSignalled){upgradeHealthSignalled=true;upgrader.recordHealthy().catch(error=>log(`agent.upgrade.health_failed`,{message:error.message}));}return response;}
 async function observedPowerState(config,targetId){const output=await run(config.vmrunPath,['list'],5000),running=new Set(output.split(/\r?\n/).slice(1).map(value=>path.normalize(value.trim()).toLowerCase()).filter(Boolean)),key=path.normalize(targetId).toLowerCase(),suspendFile=suspendStatePaths.get(key)??path.join(path.dirname(targetId),`${path.basename(targetId,'.vmx')}.vmss`);return fs.existsSync(suspendFile)?'suspended':running.has(key)?'running':'stopped';}
 async function waitForPowerState(config,targetId,expected,timeoutMs=30000){const deadline=Date.now()+timeoutMs;let observed;do{observed=await observedPowerState(config,targetId);if(observed===expected)return observed;await delay(500);}while(Date.now()<deadline);throw Object.assign(new Error(`VMware Workstation reported ${observed}, not the expected ${expected} state.`),{code:'NUV_AGENT_STATE_VERIFICATION_FAILED',observedState:observed});}
@@ -168,7 +185,7 @@ async function main(){
   // (the previous executable starts the new agent and restores itself if the new one is not healthy). Both run before the single-instance check.
   if(process.argv.includes(`--self-check`)){process.stdout.write(`${JSON.stringify({event:`agent.selfcheck`,ok:true,version:VERSION})}\n`);return;}
   const watchdogIndex=process.argv.indexOf(`--upgrade-watchdog`);
-  if(watchdogIndex!==-1){const stateFile=process.argv[watchdogIndex+1],state=readJson(stateFile);if(!state?.executable)return;await selfUpgrade.runWatchdog({statePath:stateFile,parentPid:Number(process.argv[watchdogIndex+2])||0,...selfUpgrade.windowsProcessControl({executable:state.executable}),log});return;}
+  if(watchdogIndex!==-1){const stateFile=process.argv[watchdogIndex+1];let state=null;try{state=readJson(stateFile);}catch{}if(!state?.executable)return;await selfUpgrade.runWatchdog({statePath:stateFile,parentPid:Number(process.argv[watchdogIndex+2])||0,...selfUpgrade.windowsProcessControl({executable:state.executable}),log});return;}
   const instance=await acquireSingleInstance();try{if(!fs.existsSync(bootstrapPath))throw new Error(`Missing ${bootstrapPath}`);const config=readJson(bootstrapPath);if(!config.apiUrl?.startsWith('https://'))throw new Error('apiUrl must use HTTPS.');if(!fs.existsSync(config.vmrunPath))throw new Error(`vmrun was not found at ${config.vmrunPath}`);if(!fs.existsSync(config.caCertificatePath))throw new Error(`CA certificate was not found at ${config.caCertificatePath}`);if(fs.existsSync(identityPath))config.identity=readJson(identityPath);else{const enrolled=await request(config,'POST','/api/v1/agents/enroll',{token:config.enrollmentToken,name:config.agentName||os.hostname(),version:VERSION});config.identity={agentId:enrolled.agentId,secret:enrolled.secret};writePrivate(identityPath,config.identity);delete config.enrollmentToken;writePrivate(bootstrapPath,config);log('agent.enrolled',{agentId:enrolled.agentId});}
   await Promise.all([inventoryLoop(config),powerStateLoop(config),commandLoop(config),upgradeLoop(config)]);}finally{await instance.close();}}
 
