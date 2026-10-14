@@ -318,4 +318,74 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(page.problems()), []);
     await page.close();
   });
+
+  test('an administrator adds an agent build and upgrades an agent from the Connections page, and follows the result; an operator does not see the panel', async () => {
+    const agent = await lab.addWorkstationAgent({ name: 'UPGRADE-LAB' });
+    const reportAs = async (deploymentId, body) => (await fetch(`${lab.url}/api/v1/agents/${agent.agentId}/upgrades/${deploymentId}/report`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-secret': agent.secret }, body: JSON.stringify(body) })).status;
+    const rowText = page => page.evaluate(id => document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? '', agent.agentId);
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'connections');
+    await page.waitFor(() => { const panel = document.getElementById('agent-fleet'); return panel && !panel.hidden && panel.getClientRects().length > 0; });
+    await page.waitFor(id => document.querySelector(`#agent-table [data-agent-row="${id}"]`), agent.agentId);
+    assert.match(await rowText(page), /UPGRADE-LAB[\s\S]*0\.1\.46[\s\S]*no upgrades yet/i);
+    assert.equal(await page.evaluate(() => document.getElementById('agent-builds').innerText.includes('No builds yet')), true);
+
+    // add a build: a small file that is a Windows executable by its first two bytes
+    await page.click('#agent-build-toggle');
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([0x4d, 0x5a, 1, 2, 3, 4, 5, 6])], 'nuvrion-workstation-agent.exe'));
+      document.getElementById('agent-build-file').files = transfer.files;
+    });
+    await page.fill('#agent-build-version', '0.1.88-lab.1');
+    await page.fill('#agent-build-base', 'https://platform.invalid');
+    await page.click('#agent-build-submit');
+    await page.waitFor(() => document.getElementById('agent-builds').innerText.includes('0.1.88-lab.1'), { timeout: 15000 });
+    const builds = await page.evaluate(() => document.getElementById('agent-builds').innerText);
+    assert.match(builds, /https:\/\/platform\.invalid/);
+    assert.match(builds, /on the platform/i);
+    assert.match(await page.evaluate(() => document.getElementById('agent-fleet-message').innerText), /registered 0\.1\.88-lab\.1/i);
+
+    // upgrade the agent
+    await page.click(`[data-agent-upgrade="${agent.agentId}"]`);
+    await page.waitFor(() => document.getElementById('agent-upgrade-dialog').open);
+    assert.match(await page.evaluate(() => document.getElementById('agent-upgrade-release').innerText), /0\.1\.88-lab\.1/);
+    await page.click('#agent-upgrade-confirm');
+    await page.waitFor(id => /waiting for the agent/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 15000 });
+    const history = (await lab.api('GET', `/api/v1/agents/${agent.agentId}/upgrade-deployments`)).json.items;
+    assert.equal(history.length, 1);
+    assert.equal(await page.evaluate(id => Boolean(document.querySelector(`[data-agent-cancel="${id}"]`)), agent.agentId), true, 'an unfinished upgrade offers Cancel, not Upgrade');
+
+    // the agent reports progress and then success; the page follows it without being touched
+    assert.equal(await reportAs(history[0].deploymentId, { status: 'downloading' }), 200);
+    await page.waitFor(id => /downloading/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 20000 });
+    assert.equal(await reportAs(history[0].deploymentId, { status: 'installed', detail: 'Upgraded from 0.1.46 to 0.1.88-lab.1.' }), 200);
+    await page.waitFor(id => /upgraded 0\.1\.88-lab\.1/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 20000 });
+    assert.equal(await page.evaluate(id => Boolean(document.querySelector(`[data-agent-upgrade="${id}"]`)), agent.agentId), true);
+
+    // a refusal by the agent is explained in words, and an upgrade can be cancelled
+    await page.click(`[data-agent-upgrade="${agent.agentId}"]`);
+    await page.waitFor(() => document.getElementById('agent-upgrade-dialog').open);
+    await page.click('#agent-upgrade-confirm');
+    await page.waitFor(id => document.querySelector(`[data-agent-cancel="${id}"]`), agent.agentId, { timeout: 15000 });
+    const second = (await lab.api('GET', `/api/v1/agents/${agent.agentId}/upgrade-deployments`)).json.items[0];
+    assert.equal(await reportAs(second.deploymentId, { status: 'failed', detail: 'NUV_AGENT_UPGRADE_KEY_NOT_PINNED: No upgrade signing key is pinned in bootstrap.json' }), 200);
+    await page.waitFor(id => /no upgrade signing key pinned/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 20000 });
+    await page.click(`[data-agent-upgrade="${agent.agentId}"]`);
+    await page.waitFor(() => document.getElementById('agent-upgrade-dialog').open);
+    await page.click('#agent-upgrade-confirm');
+    await page.waitFor(id => document.querySelector(`[data-agent-cancel="${id}"]`), agent.agentId, { timeout: 15000 });
+    await page.click(`[data-agent-cancel="${agent.agentId}"]`);
+    await page.waitFor(id => /failed/i.test(document.querySelector(`#agent-table [data-agent-row="${id}"]`)?.innerText ?? ''), agent.agentId, { timeout: 20000 });
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+
+    const operatorPage = await newPage();
+    await signIn(operatorPage, operator.username, operator.password); await signedIn(operatorPage);
+    await openView(operatorPage, 'connections');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.equal(await operatorPage.evaluate(() => { const panel = document.getElementById('agent-fleet'); return !panel || panel.hidden; }), true, 'an operator does not see agent management');
+    await operatorPage.close();
+  });
 });

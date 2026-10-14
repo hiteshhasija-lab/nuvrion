@@ -60,7 +60,7 @@ export async function startConsole() {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     };
-    return { agentId: enrolled.agentId, connectionId: connection.json.id, report, discover, completeCommands };
+    return { agentId: enrolled.agentId, secret: enrolled.secret, connectionId: connection.json.id, report, discover, completeCommands };
   };
 
   return {

@@ -96,6 +96,40 @@ test('a plain-text failure message, the way the agent reports it, is stored and 
   assert.equal(awkward.detail, '{"not": json', 'text that looks like broken JSON is still just text');
 });
 
+test('releases and one agent\'s deployments can be listed, newest first, with the version of each', database, async () => {
+  const a = await agent('A'), b = await agent('B');
+  const first = await release({ version: '0.1.60', sha256: '1'.repeat(64) });
+  await new Promise(resolve => setTimeout(resolve, 10));   // releases are ordered by their creation time, to the millisecond
+  const second = await release({ version: '0.1.61', sha256: '2'.repeat(64) });
+  assert.deepEqual((await upgrades.listReleases()).map(item => item.manifest.version), ['0.1.61', '0.1.60'], 'newest first');
+  assert.equal((await upgrades.listReleases({ limit: 1 })).length, 1);
+  assert.equal((await upgrades.release(first.manifest.releaseId)).manifest.sha256, '1'.repeat(64));
+  assert.equal(await upgrades.release(randomUUID()), null);
+  const one = await upgrades.stage(a, first.manifest.releaseId);
+  await upgrades.report(a, one.deploymentId, { status: 'installed', detail: 'Upgraded.' });
+  const two = await upgrades.stage(a, second.manifest.releaseId);
+  await upgrades.stage(b, second.manifest.releaseId);
+  const history = await upgrades.listDeployments(a);
+  assert.deepEqual(history.map(item => [item.deploymentId, item.status, item.version, item.sha256]), [[two.deploymentId, 'staged', '0.1.61', '2'.repeat(64)], [one.deploymentId, 'installed', '0.1.60', '1'.repeat(64)]]);
+  assert.equal(history[1].detail, 'Upgraded.');
+  assert.equal((await upgrades.listDeployments(b)).length, 1, "another agent's deployments are not mixed in");
+  assert.deepEqual(await upgrades.listDeployments(randomUUID()), []);
+  assert.equal((await upgrades.listDeployments(a, { limit: 1 })).length, 1);
+});
+
+test('cancelling an unfinished deployment ends it as failed with the reason, and a finished one cannot be cancelled', database, async () => {
+  const id = await agent('A'), { manifest } = await release();
+  const { deploymentId } = await upgrades.stage(id, manifest.releaseId);
+  const cancelled = await upgrades.cancel(id, deploymentId, { detail: 'Cancelled by an operator named admin.' });
+  assert.deepEqual([cancelled.status, cancelled.detail], ['failed', 'Cancelled by an operator named admin.']);
+  assert.ok(cancelled.completedAt);
+  assert.deepEqual(await upgrades.pending(id), [], 'the agent is not offered it any more');
+  await rejects(() => upgrades.cancel(id, deploymentId), 'NUV_AGENT_UPGRADE_TERMINAL');
+  await rejects(() => upgrades.cancel(id, randomUUID()), 'NUV_AGENT_DEPLOYMENT_NOT_FOUND');
+  const other = await agent('B'), again = await upgrades.stage(other, manifest.releaseId);
+  await rejects(() => upgrades.cancel(id, again.deploymentId), 'NUV_AGENT_DEPLOYMENT_NOT_FOUND');   // another agent's deployment is not yours to cancel
+});
+
 test('a final result is final: nothing can change it, and a wrong agent or unknown deployment is refused', database, async () => {
   const a = await agent('A'), b = await agent('B'), { manifest } = await release(), { deploymentId } = await upgrades.stage(a, manifest.releaseId);
   await rejects(() => upgrades.report(a, deploymentId, { status: 'exploded' }), 'NUV_AGENT_UPGRADE_STATUS_INVALID');

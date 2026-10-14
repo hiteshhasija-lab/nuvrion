@@ -817,6 +817,67 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+    get:
+      tags: [Agents]
+      operationId: listAgentReleases
+      summary: Registered agent releases, newest first, and whether each executable is on the platform
+      x-required-permission: platform.manage
+      parameters:
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200': { description: The releases, content: { application/json: { schema: { type: object, required: [items, count, signingKeyId], properties: { items: { type: array, items: { type: object, required: [manifest, signature, artifactAvailable], properties: { manifest: { type: object }, signature: { type: string }, artifactAvailable: { type: boolean } } } }, count: { type: integer }, signingKeyId: { type: string } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent-upgrades/builds:
+    post:
+      tags: [Agents]
+      operationId: uploadAgentBuild
+      summary: Upload a Workstation agent executable and register it as a signed release
+      description: The body is the executable itself. It is hashed while it streams, must be a Windows executable within the size limit, and is kept under its SHA-256. The release's download address is the platform address agents use (baseUrl, or the address this request came to).
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { in: query, name: version, required: true, description: The version the executable reports with --self-check, schema: { type: string, pattern: '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$', maxLength: 32 } }
+        - { in: query, name: sha256, required: false, description: When given, the upload is refused unless it hashes to this, schema: { type: string, pattern: '^[a-fA-F0-9]{64}$' } }
+        - { in: query, name: baseUrl, required: false, description: The https address agents use for the platform (origin only); defaults to the address of this request, schema: { type: string, pattern: '^https://' } }
+      requestBody:
+        required: true
+        content: { application/octet-stream: { schema: { type: string, format: binary } } }
+      responses:
+        '201': { description: Stored and registered, content: { application/json: { schema: { type: object, required: [release, artifact], properties: { release: { $ref: '#/components/schemas/AgentRelease' }, artifact: { type: object, required: [sha256, sizeBytes], properties: { sha256: { type: string }, sizeBytes: { type: integer } } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: The executable is larger than the limit, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '415': { description: The body is not application/octet-stream, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /agents/{agentId}/upgrade-deployments:
+    get:
+      tags: [Agents]
+      operationId: listAgentUpgradeDeployments
+      summary: An agent's upgrade deployments, newest first, with the version and the agent's own reported detail
+      x-required-permission: platform.manage
+      parameters:
+        - { $ref: '#/components/parameters/AgentId' }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: The deployments, content: { application/json: { schema: { type: object, required: [items, count], properties: { items: { type: array, items: { type: object, required: [deploymentId, status, version], properties: { deploymentId: { type: string, format: uuid }, releaseId: { type: string, format: uuid }, status: { type: string }, version: { type: [string, 'null'] }, sha256: { type: [string, 'null'] }, stagedAt: { type: string, format: date-time }, completedAt: { type: [string, 'null'] }, rollbackVersion: { type: [string, 'null'] }, detail: { type: [string, object, 'null'] } } } }, count: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /agents/{agentId}/upgrade-deployments/{deploymentId}/cancel:
+    post:
+      tags: [Agents]
+      operationId: cancelAgentUpgrade
+      summary: Cancel an upgrade that has not finished, so the agent's queue is free again
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/AgentId' }, { in: path, name: deploymentId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: The cancelled deployment (recorded as failed with the operator named), content: { application/json: { schema: { $ref: '#/components/schemas/AgentUpgradeDeployment' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /agents/{agentId}/rotate-secret:
     post:
       tags: [Agents]
@@ -891,6 +952,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The executable of the release is not on the platform, or the agent already has an upgrade that has not finished, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /agents/{agentId}/upgrades/{deploymentId}/report:
     post:
       tags: [Agents]

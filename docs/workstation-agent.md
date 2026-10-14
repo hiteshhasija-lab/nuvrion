@@ -87,7 +87,22 @@ successful heartbeat). If it does not, the watchdog stops it, restores the previ
 restored agent reports `rolled_back`. The agent reports `downloading`, `ready` and `installed` (or `failed` /
 `rolled_back`) to the platform at each step, and a result that cannot be sent is kept and retried.
 
-**To upgrade an agent:**
+**To upgrade an agent from the console** (platform administrators): open **Connections**, then the **Workstation agents** panel.
+
+1. **Pin the signing key once per agent.** Open *Signing key to pin on an agent*, add the key to the agent's `bootstrap.json` as
+   `upgradeTrustedPublicKey` and restart the agent (see below for the file edit). An agent refuses every upgrade until this is done.
+2. **Add the build:** *Add agent build…*, choose `nuvrion-workstation-agent.exe`, enter the version it reports and the address the
+   agent uses for the platform (its `apiUrl`; the page fills in the address you are browsing, which is right when you reach the
+   console by the same name). The console checks the file, keeps it on the platform and registers a signed release.
+3. **Upgrade:** *Upgrade…* on the agent's row, choose the build and confirm. Only builds newer than the agent's version are offered.
+4. **Follow it:** the row shows *Waiting for the agent*, *Downloading*, *Installing*, then *Upgraded*. A refusal or a rollback is
+   shown with the reason in words. *Cancel upgrade* frees an agent whose upgrade has not started.
+
+Each upload, stage and cancel is in the audit history (`agent.upgrade_build_added`, `agent.upgrade_staged`,
+`agent.upgrade_cancelled`) with who did it. An agent has one upgrade at a time: staging a second is refused until the first has
+finished or been cancelled.
+
+**To upgrade an agent from the command line:**
 
 1. **Pin the signing key once per agent.** As an administrator get the key (`GET /api/v1/agent-upgrades/signing-key`, or
    the tool below prints it) and add it to `bootstrap.json`, then restart the agent:
@@ -121,8 +136,9 @@ restored agent reports `rolled_back`. The agent reports `downloading`, `ready` a
 
 Left behind after a rollback: `nuvrion-workstation-agent.exe.failed` (the executable that did not come up, for diagnosis).
 
-**What is not covered yet:** the artifact is placed on the host by hand (there is no upload route), bundles are built by
-hand and unsigned, and the rollback watchdog has been exercised only in tests and on the lab host.
+**What is not covered yet:** the executable is built by hand and unsigned (the console takes the file; it does not build it), and
+the rollback path has been exercised in tests and on macOS but not yet on a Windows host. A fresh install still needs `Setup.exe`
+on the host: the platform cannot reach into a host that has no agent.
 
 ## Building the agent
 

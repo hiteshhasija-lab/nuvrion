@@ -1,7 +1,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -538,6 +538,12 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   test('registerAgentRelease, stageAgentUpgrade, listAgentPendingUpgrades, reportAgentUpgrade', async () => {
     const release = await call('registerAgentRelease', { body: { version: '0.1.47', artifactUrl: 'https://example.invalid/agent.nuvpkg', sha256: 'a'.repeat(64), sizeBytes: 1024 }, expect: 201 });
+    // a release whose executable is not on the platform cannot be staged
+    const notThere = await call('registerAgentRelease', { body: { version: '0.1.46', artifactUrl: 'https://example.invalid/agent.nuvpkg', sha256: 'b'.repeat(64), sizeBytes: 1024 }, expect: 201 });
+    const refused = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: notThere.json.manifest.releaseId }, expect: 409 });
+    assert.equal(refused.json.code, 'NUV_AGENT_ARTIFACT_MISSING');
+    mkdirSync(join(workDir, 'upgrades', 'agent-artifacts'), { recursive: true });
+    writeFileSync(join(workDir, 'upgrades', 'agent-artifacts', 'a'.repeat(64)), 'placeholder');
     await call('registerAgentRelease', { body: { version: '0.1.48', artifactUrl: 'http://example.invalid/agent.nuvpkg', sha256: 'a'.repeat(64), sizeBytes: 1024 }, invalid: true, expect: 422 });
     const staged = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: release.json.manifest.releaseId }, expect: 201 });
     await call('stageAgentUpgrade', { params: { agentId: ABSENT }, body: { releaseId: release.json.manifest.releaseId }, expect: 404 });
@@ -548,6 +554,12 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: staged.json.deploymentId }, agent: ctx.agent.secret, body: { status: 'exploded' }, invalid: true, expect: 422 });
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: ABSENT }, agent: ctx.agent.secret, body: { status: 'installed' }, expect: 422 });
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: staged.json.deploymentId }, agent: 'wrong', body: { status: 'installed' }, expect: 401 });
+    // an agent has one upgrade at a time: a second is refused until the first has finished
+    const again = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: release.json.manifest.releaseId }, expect: 409 });
+    assert.equal(again.json.code, 'NUV_AGENT_UPGRADE_IN_PROGRESS');
+    // the agent's own plain-text failure message is accepted and kept (the production store once refused it)
+    const finished = await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: staged.json.deploymentId }, agent: ctx.agent.secret, body: { status: 'failed', detail: 'NUV_AGENT_UPGRADE_SIGNATURE_INVALID: The upgrade manifest is not signed by the pinned key.' }, expect: 200 });
+    assert.match(finished.json.detail, /not signed by the pinned key/);
   });
 
   test('getAgentUpgradeSigningKey, downloadAgentUpgradeArtifact', async () => {
@@ -566,7 +578,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     // the file exists but the release is not staged for this agent: still not found (an agent only gets what was staged for it)
     await call('downloadAgentUpgradeArtifact', { ...auth, expect: 404 });
     const release = await call('registerAgentRelease', { body: { version: '0.1.99', artifactUrl: 'https://platform.invalid/api/v1/agent-upgrades/artifacts/' + sha256, sha256, sizeBytes: bytes.length }, expect: 201 });
-    await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: release.json.manifest.releaseId }, expect: 201 });
+    const staged99 = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: release.json.manifest.releaseId }, expect: 201 });
     const served = await call('downloadAgentUpgradeArtifact', { ...auth, expect: 200 });
     assert.equal(served.text, bytes.toString());
     assert.equal(served.headers.get('content-type'), 'application/octet-stream');
@@ -580,16 +592,20 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
       get: (target, options, callback) => http.get(target.toString().replace('https:', 'http:'), { headers: options.headers }, callback) });
     assert.deepEqual(fetched, { bytes: bytes.length, sha256 });
     assert.deepEqual(readFileSync(destination), bytes);
-    // staged, but the operator has not put the file there yet: a clean 404, not an error
+    // staged, but the file has gone from the platform since: a clean 404, not an error
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: staged99.json.deploymentId }, expect: 200 });
     const missingSha = createHash('sha256').update('a-file-nobody-placed').digest('hex');
+    writeFileSync(join(workDir, 'upgrades', 'agent-artifacts', missingSha), 'soon gone');
     const unplaced = await call('registerAgentRelease', { body: { version: '0.1.98', artifactUrl: 'https://platform.invalid/api/v1/agent-upgrades/artifacts/' + missingSha, sha256: missingSha, sizeBytes: 10 }, expect: 201 });
-    await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: unplaced.json.manifest.releaseId }, expect: 201 });
+    const stagedGone = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: unplaced.json.manifest.releaseId }, expect: 201 });
+    rmSync(join(workDir, 'upgrades', 'agent-artifacts', missingSha));
     const absent = await call('downloadAgentUpgradeArtifact', { as: null, params: { sha256: missingSha }, agent: ctx.agent.secret, headers: { 'x-agent-id': ctx.agent.id }, expect: 404 });
     assert.equal(absent.json.code, 'NUV_AGENT_ARTIFACT_NOT_FOUND');
     // credentials: wrong secret, no valid agent id, a session instead of an agent
     await call('downloadAgentUpgradeArtifact', { ...auth, agent: 'wrong', expect: 401 });
     await call('downloadAgentUpgradeArtifact', { as: null, params: { sha256 }, agent: ctx.agent.secret, headers: { 'x-agent-id': 'not-a-uuid' }, invalid: true, expect: 401 });
     await call('downloadAgentUpgradeArtifact', { as: 'admin', params: { sha256 }, headers: { 'x-agent-id': ctx.agent.id }, expect: 401 });
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: stagedGone.json.deploymentId }, expect: 200 });
   });
 
   test('the staging tool and the agent upgrader agree end to end: stage with the tool, then verify and download as the agent', async () => {
@@ -618,6 +634,63 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
       apiOrigin: base.replace('http:', 'https:'), headers: { 'x-agent-id': ctx.agent.id, 'x-agent-secret': ctx.agent.secret },
       get: (target, options, callback) => http.get(target.toString().replace('https:', 'http:'), { headers: options.headers }, callback) });
     assert.equal(fetched.sha256, manifest.sha256);
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: staged.deployment.deploymentId }, expect: 200 });
+  });
+
+  test('uploadAgentBuild, listAgentReleases, listAgentUpgradeDeployments, cancelAgentUpgrade', async () => {
+    const exe = Buffer.concat([Buffer.from('MZ'), Buffer.from('an-agent-build-uploaded-from-the-console')]);
+    const sha256 = createHash('sha256').update(exe).digest('hex');
+    const octet = { 'content-type': 'application/octet-stream' };
+    const baseUrl = 'https://platform.invalid';
+    // refusals first: nothing may be stored by any of them
+    await call('uploadAgentBuild', { as: null, query: { version: '0.1.88-lab.1', baseUrl }, headers: octet, rawBody: exe, expect: 401 });
+    await call('uploadAgentBuild', { as: 'operator', query: { version: '0.1.88-lab.1', baseUrl }, headers: octet, rawBody: exe, expect: 403 });
+    await call('uploadAgentBuild', { as: 'auditor', query: { version: '0.1.88-lab.1', baseUrl }, headers: octet, rawBody: exe, expect: 403 });
+    await call('uploadAgentBuild', { csrf: 'wrong', query: { version: '0.1.88-lab.1', baseUrl }, headers: octet, rawBody: exe, expect: 403 });
+    await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl }, headers: { 'content-type': 'application/json' }, rawBody: exe, invalid: true, expect: 415 });
+    await call('uploadAgentBuild', { query: { version: 'latest', baseUrl }, headers: octet, rawBody: exe, invalid: true, expect: 422 });
+    await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl: 'http://platform.invalid' }, headers: octet, rawBody: exe, invalid: true, expect: 422 });
+    await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl: 'https://platform.invalid/with/a/path' }, headers: octet, rawBody: exe, invalid: true, expect: 422 });
+    const notExe = await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl }, headers: octet, rawBody: Buffer.from('PK a zip file'), expect: 422 });
+    assert.equal(notExe.json.code, 'NUV_AGENT_ARTIFACT_NOT_EXECUTABLE');
+    const wrongSum = await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl, sha256: 'c'.repeat(64) }, headers: octet, rawBody: exe, expect: 422 });
+    assert.equal(wrongSum.json.code, 'NUV_AGENT_ARTIFACT_CHECKSUM_MISMATCH');
+    assert.equal(existsSync(join(workDir, 'upgrades', 'agent-artifacts', sha256)), false, 'a refused upload stores nothing');
+
+    const uploaded = await call('uploadAgentBuild', { query: { version: '0.1.88-lab.1', baseUrl, sha256 }, headers: octet, rawBody: exe, expect: 201 });
+    assert.equal(uploaded.json.artifact.sha256, sha256);
+    assert.equal(uploaded.json.artifact.sizeBytes, exe.length);
+    assert.equal(uploaded.json.release.manifest.version, '0.1.88-lab.1');
+    assert.equal(uploaded.json.release.manifest.artifactUrl, `${baseUrl}/api/v1/agent-upgrades/artifacts/${sha256}`);
+    assert.ok(readFileSync(join(workDir, 'upgrades', 'agent-artifacts', sha256)).equals(exe));
+
+    const releases = await call('listAgentReleases', { expect: 200 });
+    const listed = releases.json.items.find(item => item.manifest.releaseId === uploaded.json.release.manifest.releaseId);
+    assert.equal(listed.artifactAvailable, true);
+    assert.equal(releases.json.items.find(item => item.manifest.version === '0.1.98')?.artifactAvailable, false, 'a release whose file is gone says so');
+    await call('listAgentReleases', { as: 'operator', expect: 403 });
+    await call('listAgentReleases', { as: null, expect: 401 });
+
+    const stagedUpload = await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: uploaded.json.release.manifest.releaseId }, expect: 201 });
+    const history = await call('listAgentUpgradeDeployments', { params: { agentId: ctx.agent.id }, expect: 200 });
+    assert.deepEqual([history.json.items[0].deploymentId, history.json.items[0].status, history.json.items[0].version], [stagedUpload.json.deploymentId, 'staged', '0.1.88-lab.1']);
+    await call('listAgentUpgradeDeployments', { params: { agentId: ABSENT }, expect: 404 });
+    await call('listAgentUpgradeDeployments', { params: { agentId: ctx.agent.id }, as: 'operator', expect: 403 });
+
+    const cancelled = await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: stagedUpload.json.deploymentId }, expect: 200 });
+    assert.equal(cancelled.json.status, 'failed');
+    assert.match(cancelled.json.detail, /Cancelled by admin/);
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: stagedUpload.json.deploymentId }, expect: 409 });
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: ABSENT }, expect: 404 });
+    await call('cancelAgentUpgrade', { params: { agentId: ctx.agent.id, deploymentId: stagedUpload.json.deploymentId }, as: 'operator', expect: 403 });
+    const pending = await call('listAgentPendingUpgrades', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, expect: 200 });
+    assert.equal(pending.json.items.length, 0, 'a cancelled upgrade is no longer offered to the agent');
+
+    // everything above is on the record, and the record holds no executable bytes or credentials
+    const audit = await call('listAuditEvents', { query: { limit: '100' }, expect: 200 });
+    const actions = audit.json.items.map(event => event.action);
+    for (const action of ['agent.upgrade_build_added', 'agent.upgrade_staged', 'agent.upgrade_cancelled']) assert.ok(actions.includes(action), action);
+    assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_build_added' && event.outcome === 'failed'), 'a refused upload is audited as failed');
   });
 
   test('sweepAgents, rotateAgentSecret, revokeAgent', async () => {
