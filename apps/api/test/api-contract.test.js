@@ -1,10 +1,12 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import http from 'node:http';
 
 // API contract tests. contracts/openapi/nuvrion-v1.yaml is the contract. The server runs in-process with in-memory services, every
 // documented operation is called with real HTTP requests, and each request and response is checked against the description:
@@ -546,6 +548,76 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: staged.json.deploymentId }, agent: ctx.agent.secret, body: { status: 'exploded' }, invalid: true, expect: 422 });
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: ABSENT }, agent: ctx.agent.secret, body: { status: 'installed' }, expect: 422 });
     await call('reportAgentUpgrade', { as: null, params: { agentId: ctx.agent.id, deploymentId: staged.json.deploymentId }, agent: 'wrong', body: { status: 'installed' }, expect: 401 });
+  });
+
+  test('getAgentUpgradeSigningKey, downloadAgentUpgradeArtifact', async () => {
+    const key = await call('getAgentUpgradeSigningKey', { expect: 200 });
+    assert.match(key.json.publicKey, /BEGIN PUBLIC KEY/);
+    assert.match(key.json.signingKeyId, /^[0-9a-f]{16}$/);
+    await call('getAgentUpgradeSigningKey', { as: null, expect: 401 });
+
+    const bytes = Buffer.from('agent-executable-bytes-for-the-contract-test');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const auth = { as: null, params: { sha256 }, agent: ctx.agent.secret, headers: { 'x-agent-id': ctx.agent.id } };
+    // staged for nobody yet, and no file: not found
+    await call('downloadAgentUpgradeArtifact', { ...auth, expect: 404 });
+    mkdirSync(join(workDir, 'upgrades', 'agent-artifacts'), { recursive: true });
+    writeFileSync(join(workDir, 'upgrades', 'agent-artifacts', sha256), bytes);
+    // the file exists but the release is not staged for this agent: still not found (an agent only gets what was staged for it)
+    await call('downloadAgentUpgradeArtifact', { ...auth, expect: 404 });
+    const release = await call('registerAgentRelease', { body: { version: '0.1.99', artifactUrl: 'https://platform.invalid/api/v1/agent-upgrades/artifacts/' + sha256, sha256, sizeBytes: bytes.length }, expect: 201 });
+    await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: release.json.manifest.releaseId }, expect: 201 });
+    const served = await call('downloadAgentUpgradeArtifact', { ...auth, expect: 200 });
+    assert.equal(served.text, bytes.toString());
+    assert.equal(served.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(served.headers.get('content-length'), String(bytes.length));
+    // The agent's own download code against this real route: the headers it sends must be the ones the route reads, and its SHA-256 and size
+    // checks must agree with what is served. (https is replaced by http only because this test server has no certificate.)
+    const agentUpgrade = createRequire(import.meta.url)('../../workstation-agent/src/self-upgrade.cjs');
+    const destination = join(workDir, 'downloaded.part');
+    const fetched = await agentUpgrade.download({ url: base.replace('http:', 'https:') + '/api/v1/agent-upgrades/artifacts/' + sha256, destination, expectedBytes: bytes.length,
+      apiOrigin: base.replace('http:', 'https:'), headers: { 'x-agent-id': ctx.agent.id, 'x-agent-secret': ctx.agent.secret },
+      get: (target, options, callback) => http.get(target.toString().replace('https:', 'http:'), { headers: options.headers }, callback) });
+    assert.deepEqual(fetched, { bytes: bytes.length, sha256 });
+    assert.deepEqual(readFileSync(destination), bytes);
+    // staged, but the operator has not put the file there yet: a clean 404, not an error
+    const missingSha = createHash('sha256').update('a-file-nobody-placed').digest('hex');
+    const unplaced = await call('registerAgentRelease', { body: { version: '0.1.98', artifactUrl: 'https://platform.invalid/api/v1/agent-upgrades/artifacts/' + missingSha, sha256: missingSha, sizeBytes: 10 }, expect: 201 });
+    await call('stageAgentUpgrade', { params: { agentId: ctx.agent.id }, body: { releaseId: unplaced.json.manifest.releaseId }, expect: 201 });
+    const absent = await call('downloadAgentUpgradeArtifact', { as: null, params: { sha256: missingSha }, agent: ctx.agent.secret, headers: { 'x-agent-id': ctx.agent.id }, expect: 404 });
+    assert.equal(absent.json.code, 'NUV_AGENT_ARTIFACT_NOT_FOUND');
+    // credentials: wrong secret, no valid agent id, a session instead of an agent
+    await call('downloadAgentUpgradeArtifact', { ...auth, agent: 'wrong', expect: 401 });
+    await call('downloadAgentUpgradeArtifact', { as: null, params: { sha256 }, agent: ctx.agent.secret, headers: { 'x-agent-id': 'not-a-uuid' }, invalid: true, expect: 401 });
+    await call('downloadAgentUpgradeArtifact', { as: 'admin', params: { sha256 }, headers: { 'x-agent-id': ctx.agent.id }, expect: 401 });
+  });
+
+  test('the staging tool and the agent upgrader agree end to end: stage with the tool, then verify and download as the agent', async () => {
+    const { stageAgentUpgrade, sha256AndSize } = await import('../../../tools/stage-agent-upgrade.js');
+    const agentUpgrade = createRequire(import.meta.url)('../../workstation-agent/src/self-upgrade.cjs');
+    const exe = join(workDir, 'tool-agent.exe');
+    writeFileSync(exe, 'the-new-agent-0.1.77');
+    const { sha256, sizeBytes } = await sha256AndSize(exe);
+    mkdirSync(join(workDir, 'upgrades', 'agent-artifacts'), { recursive: true });
+    writeFileSync(join(workDir, 'upgrades', 'agent-artifacts', sha256), 'the-new-agent-0.1.77');
+
+    // the platform insists on an https artifact URL; this test server is plain http, so only the transport is substituted below
+    const artifactUrl = base.replace('http:', 'https:') + '/api/v1/agent-upgrades/artifacts/' + sha256;
+    const staged = await stageAgentUpgrade({ baseUrl: base, username: 'admin', password: PASSWORD, agentId: ctx.agent.id, version: '0.1.77-lab.1', sha256, sizeBytes, artifactUrl });
+    assert.equal(staged.release.manifest.artifactUrl, artifactUrl);
+
+    // as the agent: ask what is pending, verify the manifest against the key an operator would pin, download what it names
+    const pending = await call('listAgentPendingUpgrades', { as: null, params: { agentId: ctx.agent.id }, agent: ctx.agent.secret, expect: 200 });
+    const deployment = pending.json.items.find(item => item.deploymentId === staged.deployment.deploymentId);
+    assert.ok(deployment, 'the deployment is pending for the agent');
+    const pinned = (await call('getAgentUpgradeSigningKey', { expect: 200 })).json.publicKey;
+    const manifest = agentUpgrade.verifyRelease(deployment.release, pinned);
+    assert.equal(manifest.version, '0.1.77-lab.1');
+    assert.throws(() => agentUpgrade.verifyRelease(deployment.release, null), e => e.code === 'NUV_AGENT_UPGRADE_KEY_NOT_PINNED');
+    const fetched = await agentUpgrade.download({ url: manifest.artifactUrl, destination: join(workDir, 'tool-download.part'), expectedBytes: manifest.sizeBytes,
+      apiOrigin: base.replace('http:', 'https:'), headers: { 'x-agent-id': ctx.agent.id, 'x-agent-secret': ctx.agent.secret },
+      get: (target, options, callback) => http.get(target.toString().replace('https:', 'http:'), { headers: options.headers }, callback) });
+    assert.equal(fetched.sha256, manifest.sha256);
   });
 
   test('sweepAgents, rotateAgentSecret, revokeAgent', async () => {

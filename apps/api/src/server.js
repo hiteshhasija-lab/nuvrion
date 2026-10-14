@@ -1,9 +1,9 @@
 import http from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, createReadStream, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import WebSocket, { WebSocketServer } from 'ws';
 import { Client as SshClient } from 'ssh2';
 import { TaskStore } from '../../../modules/tasks/src/task-store.js';
@@ -92,6 +92,8 @@ const agents = production?new PostgresAgentRegistry(store.pool,{compatibility}):
 const agentMaintenance=new AgentMaintenanceScheduler({registry:agents,intervalMs:Number(process.env.NUVRION_AGENT_MAINTENANCE_MS??30000),offlineAfterMs:Number(process.env.NUVRION_AGENT_OFFLINE_MS??120000),onError:error=>console.error(JSON.stringify({level:'error',event:'agent.maintenance.failed',error:error.message}))});agentMaintenance.start();
 const signingKeys={privateKeyPem:process.env.NUVRION_AGENT_SIGNING_PRIVATE_KEY??null,publicKeyPem:process.env.NUVRION_AGENT_SIGNING_PUBLIC_KEY??null};
 const agentUpgrades=production?new PostgresAgentUpgradeService(store.pool,signingKeys):new AgentUpgradeService(signingKeys);
+// Agent executables staged for upgrade are served from here, one file per release, named by its SHA-256. The operator places the file (the API only reads it).
+const agentArtifactDir=process.env.NUVRION_AGENT_ARTIFACT_DIR??join(process.env.NUVRION_UPGRADE_SHARED_DIR??(production?'/var/lib/nuvrion/upgrades':'.nuvrion/upgrades'),'agent-artifacts');
 const platformUpgrades=new PlatformUpgradeService({root:process.env.NUVRION_UPGRADE_SHARED_DIR??(production?'/var/lib/nuvrion/upgrades':'.nuvrion/upgrades'),currentVersion:releaseVersion,maxBytes:Number(process.env.NUVRION_UPGRADE_MAX_BYTES??256*1024*1024)});
 const provider = new ProviderRouter({connections,agents,mock:mockProvider});
 const worker = new Worker({ store, provider, broker, onCompleted:async(task,result)=>{if(task.target.type==='virtual_machine'&&await inventory.get(task.target.id))await inventory.applyOperation(task.target.id,task.operation,result);} });
@@ -203,6 +205,11 @@ export async function handler(req, res) {
     if(req.method==='POST'&&url.pathname==='/api/v1/agents/enroll'){const input=await body(req);try{return json(res,201,await agents.enroll(input),correlationId);}catch(error){return problem(res,401,error.code??'NUV_AGENT_ENROLLMENT_INVALID',error.message,correlationId);}}
     if(req.method==='POST'&&url.pathname==='/api/v1/agents/maintenance/sweep'){const p=await requireAuth(req,res,correlationId,'platform.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;const input=await body(req);return json(res,200,await agents.sweep({offlineAfterMs:Number(input.offlineAfterMs??120000)}),correlationId);}
     if(req.method==='POST'&&url.pathname==='/api/v1/agent-upgrades/releases'){const p=await requireAuth(req,res,correlationId,'platform.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;try{return json(res,201,await agentUpgrades.registerRelease(await body(req)),correlationId);}catch(error){return problem(res,422,error.code??'NUV_AGENT_RELEASE_INVALID',error.message,correlationId);}}
+    // The public key that verifies agent upgrade manifests: what an operator pins in an agent's bootstrap.json (upgradeTrustedPublicKey).
+    if(req.method==='GET'&&url.pathname==='/api/v1/agent-upgrades/signing-key'){const p=await requireAuth(req,res,correlationId,'platform.manage');if(!p)return;return json(res,200,{signingKeyId:agentUpgrades.signingKeyId,publicKey:agentUpgrades.publicKey},correlationId);}
+    // The executable of a release, for an agent it is staged for. The agent identifies itself with x-agent-id and x-agent-secret because the artifact URL is part of the signed manifest and so cannot name an agent.
+    const agentArtifactMatch=url.pathname.match(/^\/api\/v1\/agent-upgrades\/artifacts\/([0-9a-f]{64})$/);
+    if(req.method==='GET'&&agentArtifactMatch){const agentId=String(req.headers['x-agent-id']??'');if(!/^[0-9a-f-]{36}$/i.test(agentId)||!await agents.authenticate(agentId,req.headers['x-agent-secret']))return problem(res,401,'NUV_AGENT_AUTH_FAILED','Agent authentication failed.',correlationId);const staged=(await agentUpgrades.pending(agentId)).some(item=>item.release?.manifest?.sha256===agentArtifactMatch[1]);let size=-1;try{size=statSync(join(agentArtifactDir,agentArtifactMatch[1])).size;}catch{}if(!staged||size<0)return problem(res,404,'NUV_AGENT_ARTIFACT_NOT_FOUND','No such upgrade artifact is staged for this agent.',correlationId);res.writeHead(200,{...securityHeaders('application/octet-stream'),'content-length':String(size),'x-correlation-id':correlationId});createReadStream(join(agentArtifactDir,agentArtifactMatch[1])).pipe(res);return;}
     const agentUpgradeStageMatch=url.pathname.match(/^\/api\/v1\/agents\/([0-9a-f-]+)\/upgrades$/i);
     if(req.method==='GET'&&agentUpgradeStageMatch){if(!await agents.authenticate(agentUpgradeStageMatch[1],req.headers['x-agent-secret']))return problem(res,401,'NUV_AGENT_AUTH_FAILED','Agent authentication failed.',correlationId);const items=await agentUpgrades.pending(agentUpgradeStageMatch[1]);return json(res,200,{items,count:items.length},correlationId);}
     if(req.method==='POST'&&agentUpgradeStageMatch){const p=await requireAuth(req,res,correlationId,'platform.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;try{const input=await body(req);if(!await agents.agent(agentUpgradeStageMatch[1]))return problem(res,404,'NUV_AGENT_NOT_FOUND','Agent was not found.',correlationId);return json(res,201,await agentUpgrades.stage(agentUpgradeStageMatch[1],input.releaseId),correlationId);}catch(error){return problem(res,404,error.code??'NUV_AGENT_RELEASE_NOT_FOUND',error.message,correlationId);}}

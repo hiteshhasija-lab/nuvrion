@@ -843,6 +843,29 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /agent-upgrades/signing-key:
+    get:
+      tags: [Agents]
+      operationId: getAgentUpgradeSigningKey
+      summary: The public key that verifies agent upgrade manifests (what to pin in an agent's bootstrap.json)
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: The key, content: { application/json: { schema: { type: object, required: [signingKeyId, publicKey], properties: { signingKeyId: { type: string }, publicKey: { type: string, description: PEM (SPKI) public key } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent-upgrades/artifacts/{sha256}:
+    get:
+      tags: [Agents]
+      operationId: downloadAgentUpgradeArtifact
+      summary: Called by the agent itself; the executable of a release staged for it
+      security: [{ agentSecret: [] }]
+      parameters:
+        - { in: path, name: sha256, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+        - { in: header, name: X-Agent-Id, required: true, description: The id of the enrolled agent asking, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The executable, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '401': { $ref: '#/components/responses/AgentUnauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /agents/{agentId}/upgrades:
     get:
       tags: [Agents]

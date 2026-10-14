@@ -70,9 +70,54 @@ result back without running again.
 
 ## Upgrading the agent from the platform
 
-**Not available.** The platform can register an agent release and stage a deployment (`/api/v1/agent-upgrades/...`),
-and an agent can ask for pending deployments, but the shipped agent does not act on them: there is no self-upgrade in
-the agent. Upgrade by running the newer `Setup.exe`.
+From agent 0.1.49 the platform can upgrade an agent. The first move to 0.1.49 is still a run of `Setup.exe`: earlier agents
+cannot act on a staged upgrade.
+
+**How it stays safe.** The agent installs an upgrade only if every one of these holds, and stops at the first that does not:
+
+1. The release manifest is signed by the key **pinned in this agent's `bootstrap.json`** (`upgradeTrustedPublicKey`).
+   The key the platform sends along with a deployment is ignored, and an agent with no pinned key refuses every upgrade.
+2. The version is **newer** than the running one. The agent never downgrades.
+3. The download is exactly the size in the manifest (checked while it streams) and its SHA-256 matches.
+4. The downloaded executable runs `--self-check` and reports the version the manifest names.
+
+Only then is it swapped in. The previous executable is kept as `nuvrion-workstation-agent.exe.old` and a watchdog, run from
+that previous executable, starts the new agent and waits up to 3 minutes for it to prove it is healthy (its first
+successful heartbeat). If it does not, the watchdog stops it, restores the previous executable and starts that, and the
+restored agent reports `rolled_back`. The agent reports `downloading`, `ready` and `installed` (or `failed` /
+`rolled_back`) to the platform at each step, and a result that cannot be sent is kept and retried.
+
+**To upgrade an agent:**
+
+1. **Pin the signing key once per agent.** As an administrator get the key (`GET /api/v1/agent-upgrades/signing-key`, or
+   the tool below prints it) and add it to `bootstrap.json`, then restart the agent:
+   ```json
+   "upgradeTrustedPublicKey": "-----BEGIN PUBLIC KEY-----\nMCow...\n-----END PUBLIC KEY-----\n"
+   ```
+2. **Put the new executable on the platform host**, named by its SHA-256, in the `agent-artifacts` directory next to the
+   platform's upgrades directory (on the lab host: `~/.local/share/nuvrion-upgrades/agent-artifacts/<sha256>`). The API
+   only reads this directory.
+3. **Register and stage it:**
+   ```bash
+   NUVRION_USERNAME=<admin> NUVRION_PASSWORD=<password> node tools/stage-agent-upgrade.js \
+     --url https://<platform> --agent <agent id> --exe ./nuvrion-workstation-agent.exe --version 0.1.50-lab.1
+   ```
+   The version must equal what the executable reports (`nuvrion-workstation-agent.exe --self-check`) and be higher in
+   major.minor.patch than the installed one.
+4. **Watch it:** the agent polls once a minute (`upgradePollIntervalMs` in `bootstrap.json`). `agent.log` has the
+   `agent.upgrade.*` events and the console shows the new version after the restart. Run `verify-install.ps1` to confirm.
+
+| `agent.log` event | Meaning |
+|---|---|
+| `agent.upgrade.failed` | Refused or failed before anything was replaced; the code says why (`NUV_AGENT_UPGRADE_KEY_NOT_PINNED`, `..._SIGNATURE_INVALID`, `..._NOT_NEWER`, `..._CHECKSUM_MISMATCH`, `..._SELF_CHECK_FAILED`) |
+| `agent.upgrade.swapped` | Verified and swapped in; the agent is about to restart |
+| `agent.upgrade.healthy` | The new agent's first heartbeat succeeded |
+| `agent.upgrade.rolled_back` | The new agent did not come up healthy; the previous one is running again |
+
+Left behind after a rollback: `nuvrion-workstation-agent.exe.failed` (the executable that did not come up, for diagnosis).
+
+**What is not covered yet:** the artifact is placed on the host by hand (there is no upload route), bundles are built by
+hand and unsigned, and the rollback watchdog has been exercised only in tests and on the lab host.
 
 ## Building the agent
 

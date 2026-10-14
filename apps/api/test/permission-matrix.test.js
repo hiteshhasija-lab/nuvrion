@@ -54,6 +54,7 @@ const PROTECTED = [
   ['POST', '/api/v1/agents/enrollment-tokens', 'platform.manage', '/api/v1/agents/enrollment-tokens'],
   ['POST', '/api/v1/agents/maintenance/sweep', 'platform.manage', '/api/v1/agents/maintenance/sweep'],
   ['POST', '/api/v1/agent-upgrades/releases', 'platform.manage', '/api/v1/agent-upgrades/releases'],
+  ['GET', '/api/v1/agent-upgrades/signing-key', 'platform.manage', '/api/v1/agent-upgrades/signing-key'],
   ['POST', `/api/v1/agents/${ID}/upgrades`, 'platform.manage', 'agentUpgradeStageMatch'],
   ['POST', `/api/v1/agents/${ID}/rotate-secret`, 'platform.manage', 'agentRotateMatch'],
   ['POST', `/api/v1/agents/${ID}/revoke`, 'platform.manage', 'agentRevokeMatch'],
@@ -89,6 +90,7 @@ const AGENT_ROUTES = [
   ['GET', `/api/v1/agents/${ID}/commands`, 'pendingCommandsMatch'],
   ['POST', `/api/v1/agents/${ID}/commands/${ID}/ack`, 'agentAckMatch'],
   ['GET', `/api/v1/agents/${ID}/upgrades`, 'agentUpgradeStageMatch'],
+  ['GET', `/api/v1/agent-upgrades/artifacts/${'a'.repeat(64)}`, 'agentArtifactMatch'],
   ['POST', `/api/v1/agents/${ID}/upgrades/${ID}/report`, 'agentUpgradeReportMatch']
 ];
 // Reachable without a session by design.
