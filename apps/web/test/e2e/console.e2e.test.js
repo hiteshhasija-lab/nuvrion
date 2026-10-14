@@ -9,7 +9,10 @@ import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
 const NEW_PASSWORD = 'A-Long-Enough-Password-3!', DIFFERENT_PASSWORD = 'A-Different-Password-4!';   // secret-scan:allow (fake test credentials)
 const skip = await browserSkipReason();
 const EXPECTED_BEFORE_SIGN_IN = /\/api\/v1\/auth\/me/;   // the page asks who is signed in before anyone is, and Chrome logs the 401 it gets
-const unexpected = problems => problems.filter(p => !EXPECTED_BEFORE_SIGN_IN.test(p));
+// Chrome reports this for any request in flight when the machine's network interface changes (it happened on a CI runner); it is the
+// browser's own event, not something the console did, and a real failure to load a file shows as a different error.
+const BROWSER_NETWORK_EVENT = /net::ERR_NETWORK_CHANGED/;
+const unexpected = problems => problems.filter(p => !EXPECTED_BEFORE_SIGN_IN.test(p) && !BROWSER_NETWORK_EVENT.test(p));
 
 describe('the console in a browser', { skip: skip ?? false }, () => {
   let lab, browser, operator;
