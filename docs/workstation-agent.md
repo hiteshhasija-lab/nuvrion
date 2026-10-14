@@ -128,6 +128,12 @@ What it stages is the same signed, verified upgrade a person would start, so the
 self-check, and returns to the previous version by itself if the new one does not come up healthy. Every automatic staging is audited
 (`agent.upgrade_auto_staged`, actor *Nuvrion*), and every change of the setting (`agent.upgrade_policy_changed`) names who made it.
 
+**The upgrade directory.** The API runs as an unprivileged user inside its container, and the host's `upgrade-nuvrion.sh` writes the same
+directory as the account that owns it. Both must be able to write: `~/.local/share/nuvrion-upgrades` and its `agent-artifacts` and
+`agent-intake` folders are kept at mode 0777 by the upgrade script (their parent is private to the account, so this only admits the
+container's user). If the API cannot write there, saving the platform address or uploading a build fails with
+`NUV_AGENT_UPGRADE_STORAGE_UNAVAILABLE`; run the upgrade script's next release, or `chmod 0777` those three directories.
+
 **To upgrade an agent from the command line:**
 
 1. **Pin the signing key once per agent.** As an administrator get the key (`GET /api/v1/agent-upgrades/signing-key`, or

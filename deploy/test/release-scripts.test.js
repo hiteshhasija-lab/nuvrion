@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -218,6 +218,9 @@ test('publishing puts the executable where the platform serves it, by its digest
     assert.deepEqual([intake.format, intake.version, intake.sha256, intake.sizeBytes, intake.release], ['nuvrion-agent-intake/1', '0.1.60-lab.1', manifest.agent.sha256, manifest.agent.sizeBytes, '0.1.178']);
     const left = spawnSync('bash', ['-c', `ls -A "${join(share, 'agent-artifacts')}" "${join(share, 'agent-intake')}"`], { encoding: 'utf8' }).stdout;
     assert.doesNotMatch(left, /\.publish-|\.tmp/, 'no temporary file is left behind, and publishing twice is harmless');
+    // the API runs as another user inside its container and writes to these directories too
+    const mode = path => (statSync(path).mode & 0o777).toString(8);
+    assert.deepEqual([mode(share), mode(join(share, 'agent-artifacts')), mode(join(share, 'agent-intake'))], ['777', '777', '777']);
   } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
 });
 

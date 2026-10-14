@@ -179,6 +179,10 @@ publish_agent_build() {
   [[ -n "$agent_file" ]] || return 0
   local artifacts="$agent_share_dir/agent-artifacts" intake="$agent_share_dir/agent-intake" temporary
   mkdir -p "$artifacts" "$intake" || return 1
+  # The API writes here too (the address setting, console uploads, filing intake records) but runs as an unprivileged user inside its container, which a
+  # directory owned by this account and closed to others would lock out. The parent of the share is private to this account, so opening these up only
+  # lets the container's user in.
+  chmod 0777 "$agent_share_dir" "$artifacts" "$intake" 2>/dev/null || true
   if [[ ! -f "$artifacts/$agent_sha" ]]; then
     temporary="$artifacts/.publish-$$"
     { install -m 0644 "$release_dir/$agent_file" "$temporary" && mv -f "$temporary" "$artifacts/$agent_sha"; } || { rm -f "$temporary"; return 1; }

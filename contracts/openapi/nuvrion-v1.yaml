@@ -848,6 +848,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '413': { description: The executable is larger than the limit, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '503': { description: The platform cannot write to its agent upgrade directory (permission or space), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '415': { description: The body is not application/octet-stream, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '422': { $ref: '#/components/responses/Unprocessable' }
   /agents/{agentId}/upgrade-deployments:
@@ -928,6 +929,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { description: The platform cannot write to its agent upgrade directory (permission or space), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /agent-upgrades/policies:
     get:
       tags: [Agents]

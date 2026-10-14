@@ -1,7 +1,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -720,6 +720,21 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     const audit = await call('listAuditEvents', { query: { limit: '100' }, expect: 200 });
     assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_build_published' && event.outcome === 'succeeded'));
     assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_settings_changed'));
+  });
+
+  test('an upgrade directory the API cannot write to is reported as such, for the address setting and for an upload', { skip: process.getuid?.() === 0 ? 'root can write anywhere' : false }, async () => {
+    const root = join(workDir, 'upgrades'), artifacts = join(root, 'agent-artifacts');
+    chmodSync(root, 0o555); chmodSync(artifacts, 0o555);
+    try {
+      const settings = await call('updateAgentUpgradeSettings', { body: { publicBaseUrl: 'https://platform.invalid' }, expect: 503 });
+      assert.equal(settings.json.code, 'NUV_AGENT_UPGRADE_STORAGE_UNAVAILABLE');
+      assert.match(settings.json.detail, /cannot write to its agent upgrade directory/);
+      assert.doesNotMatch(settings.text, /EACCES|\/var\/lib|\/tmp\//, 'no file system detail reaches the client');
+      const exe = Buffer.concat([Buffer.from('MZ'), Buffer.from('cannot-be-stored')]);
+      const upload = await call('uploadAgentBuild', { query: { version: '0.1.96-lab.1', baseUrl: 'https://platform.invalid' }, headers: { 'content-type': 'application/octet-stream' }, rawBody: exe, expect: 503 });
+      assert.equal(upload.json.code, 'NUV_AGENT_UPGRADE_STORAGE_UNAVAILABLE');
+    } finally { chmodSync(root, 0o755); chmodSync(artifacts, 0o755); }
+    await call('updateAgentUpgradeSettings', { body: { publicBaseUrl: 'https://platform.invalid' }, expect: 200 });
   });
 
   test('listAgentUpgradePolicies, setAgentUpgradePolicy: automatic upgrades are off until an administrator turns them on, then stage the newest build for an online agent', async () => {
