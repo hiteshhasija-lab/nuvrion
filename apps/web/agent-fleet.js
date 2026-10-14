@@ -117,7 +117,7 @@ export function startAgentFleet({ root = document, win = window } = {}) {
     return value;
   }
 
-  view.insertAdjacentHTML('beforeend', `<section id="agent-fleet" class="card" aria-labelledby="agent-fleet-title" hidden>
+  view.insertAdjacentHTML('beforeend', `<section id="agent-fleet" class="card agent-fleet-card" aria-labelledby="agent-fleet-title" hidden>
     <div class="form-title"><div><p class="eyebrow">WORKSTATION AGENTS</p><h2 id="agent-fleet-title">Agents and upgrades</h2></div>
       <button type="button" id="agent-build-toggle" class="primary">Add agent build…</button></div>
     <p class="muted">Upgrade an enrolled agent without touching its host. The agent downloads the signed build from this platform, checks it, swaps itself, and returns to the previous version on its own if the new one does not come up healthy.</p>
@@ -136,8 +136,9 @@ export function startAgentFleet({ root = document, win = window } = {}) {
     </form>
     <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Version</th><th>Status</th><th>Latest upgrade</th><th class="right">Action</th></tr></thead><tbody id="agent-table"></tbody></table></div>
     <div id="agent-empty" class="empty" hidden><strong>No agents enrolled</strong><p>Create an enrollment token and run the agent setup on a Workstation host.</p></div>
-    <h3>Builds</h3>
-    <div class="table-wrap"><table><thead><tr><th>Version</th><th>Registered</th><th>Size</th><th>Address</th><th>State</th></tr></thead><tbody id="agent-builds"></tbody></table></div>
+    <details class="agent-builds-details"><summary><strong>Builds</strong><span>Registered agent packages</span></summary>
+      <div class="table-wrap"><table><thead><tr><th>Version</th><th>Registered</th><th>Size</th><th>Address</th><th>State</th></tr></thead><tbody id="agent-builds"></tbody></table></div>
+    </details>
     <details id="agent-key-details"><summary>Signing key to pin on an agent (once per agent)</summary>
       <p class="muted">Add this to the agent's bootstrap.json as <code>upgradeTrustedPublicKey</code> and restart the agent. An agent refuses every upgrade until a key is pinned.</p>
       <pre id="agent-key" tabindex="0"></pre></details>
