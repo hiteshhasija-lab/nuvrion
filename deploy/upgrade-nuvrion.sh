@@ -177,7 +177,15 @@ wait_for_health() {
 agent_share_dir="${NUVRION_AGENT_SHARE_DIR:-/home/hiteshhasija/.local/share/nuvrion-upgrades}"
 publish_agent_build() {
   [[ -n "$agent_file" ]] || return 0
-  local artifacts="$agent_share_dir/agent-artifacts" intake="$agent_share_dir/agent-intake" temporary
+  local artifacts="$agent_share_dir/agent-artifacts" intake="$agent_share_dir/agent-intake" temporary record
+  # Every release carries the agent CI built for it. When the agent did not change, its version is the one already published, and a rebuild of the same
+  # source is different bytes: do not store a second copy, and do not ask the platform to refuse it. (A version already imported is in intake/imported.)
+  for record in "$intake"/imported/*.json; do
+    if [[ -f "$record" ]] && jq -e --arg v "$agent_version" '.version == $v' "$record" >/dev/null 2>&1; then
+      echo "Agent $agent_version is already on the platform; not published again."
+      return 0
+    fi
+  done
   mkdir -p "$artifacts" "$intake" || return 1
   # The API writes here too (the address setting, console uploads, filing intake records) but runs as an unprivileged user inside its container, which a
   # directory owned by this account and closed to others would lock out. The parent of the share is private to this account, so opening these up only

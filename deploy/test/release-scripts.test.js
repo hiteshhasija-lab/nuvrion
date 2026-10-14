@@ -224,6 +224,29 @@ test('publishing puts the executable where the platform serves it, by its digest
   } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('an agent version that is already on the platform is not published again; a new version is', () => {
+  const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({});
+  try {
+    mkdirSync(join(share, 'agent-intake', 'imported'), { recursive: true });
+    mkdirSync(join(share, 'agent-artifacts'), { recursive: true });
+    const run = () => spawnSync('bash', ['-c', `set -Eeuo pipefail\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"; version=0.1.180\n${agentPreflight}\n${agentPublish}\npublish_agent_build`],
+      { env: { ...process.env, D: dir, NUVRION_AGENT_SHARE_DIR: share }, encoding: 'utf8' });
+    const manifest = JSON.parse(readFileSync(join(dir, 'release-manifest.json'), 'utf8'));
+    // imported earlier under another digest (a rebuild of the same source): nothing new is stored and no record is left for the platform to refuse
+    writeFileSync(join(share, 'agent-intake', 'imported', `${'9'.repeat(64)}.json`), JSON.stringify({ format: 'nuvrion-agent-intake/1', version: manifest.agent.version, sha256: '9'.repeat(64), sizeBytes: 1 }, null, 2));
+    const skipped = run();
+    assert.equal(skipped.status, 0, skipped.stderr);
+    assert.match(skipped.stdout, /already on the platform; not published again/);
+    assert.deepEqual(spawnSync('bash', ['-c', `ls -A "${join(share, 'agent-artifacts')}" "${join(share, 'agent-intake')}"`], { encoding: 'utf8' }).stdout.replace(/\s+/g, ' ').trim().split(' ').filter(name => name.endsWith('.exe') || name.length === 64 || name.endsWith('.json') && name !== `${'9'.repeat(64)}.json`), []);
+    // another version was imported, not this one: it is published
+    rmSync(join(share, 'agent-intake', 'imported', `${'9'.repeat(64)}.json`));
+    writeFileSync(join(share, 'agent-intake', 'imported', `${'8'.repeat(64)}.json`), JSON.stringify({ format: 'nuvrion-agent-intake/1', version: '0.1.1-lab.1', sha256: '8'.repeat(64), sizeBytes: 1 }));
+    const published = run();
+    assert.equal(published.status, 0, published.stderr);
+    assert.ok(readFileSync(join(share, 'agent-artifacts', manifest.agent.sha256)).length > 0);
+  } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('published files take the label of their directory, and are copied rather than installed (SELinux would give install the home-directory label)', () => {
   assert.doesNotMatch(agentPublish.replace(/^\s*#.*$/gm, ''), /\binstall\s+-/, 'install sets the default SELinux context, which the API container cannot read');
   const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({}), bin = mkdtempSync(join(tmpdir(), 'nuvrion-bin-'));
