@@ -693,6 +693,35 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_build_added' && event.outcome === 'failed'), 'a refused upload is audited as failed');
   });
 
+  test('getAgentUpgradeSettings, updateAgentUpgradeSettings: the address agents use, and builds the host published being registered once it is known', async () => {
+    // the upload above already remembered its address, so start from what it recorded
+    const before = await call('getAgentUpgradeSettings', { expect: 200 });
+    assert.equal(before.json.publicBaseUrl, 'https://platform.invalid');
+    // a build published by the host's upgrade script: the file in the artifact directory and a record in the intake directory
+    const bytes = Buffer.concat([Buffer.from('MZ'), Buffer.from('published-by-the-host-upgrade-script')]);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    mkdirSync(join(workDir, 'upgrades', 'agent-intake'), { recursive: true });
+    writeFileSync(join(workDir, 'upgrades', 'agent-artifacts', sha256), bytes);
+    writeFileSync(join(workDir, 'upgrades', 'agent-intake', `${sha256}.json`), JSON.stringify({ format: 'nuvrion-agent-intake/1', version: '0.1.89-lab.1', sha256, sizeBytes: bytes.length, release: '0.1.178' }));
+    assert.equal((await call('getAgentUpgradeSettings', { expect: 200 })).json.buildsWaiting, 1);
+    await call('updateAgentUpgradeSettings', { body: { publicBaseUrl: 'http://not-https.invalid' }, invalid: true, expect: 422 });
+    await call('updateAgentUpgradeSettings', { body: { publicBaseUrl: 'https://platform.invalid/with/path' }, invalid: true, expect: 422 });
+    await call('updateAgentUpgradeSettings', { as: 'operator', body: { publicBaseUrl: 'https://platform.invalid' }, expect: 403 });
+    await call('updateAgentUpgradeSettings', { csrf: 'wrong', body: { publicBaseUrl: 'https://platform.invalid' }, expect: 403 });
+    await call('getAgentUpgradeSettings', { as: 'operator', expect: 403 });
+    const saved = await call('updateAgentUpgradeSettings', { body: { publicBaseUrl: 'https://platform.invalid/' }, expect: 200 });
+    assert.equal(saved.json.publicBaseUrl, 'https://platform.invalid');
+    assert.equal(saved.json.imported, 1, 'saving the address registers the build that was waiting');
+    const releases = await call('listAgentReleases', { expect: 200 });
+    const registered = releases.json.items.find(item => item.manifest.version === '0.1.89-lab.1');
+    assert.equal(registered.manifest.artifactUrl, `https://platform.invalid/api/v1/agent-upgrades/artifacts/${sha256}`);
+    assert.equal(registered.artifactAvailable, true);
+    assert.equal((await call('getAgentUpgradeSettings', { expect: 200 })).json.buildsWaiting, 0);
+    const audit = await call('listAuditEvents', { query: { limit: '100' }, expect: 200 });
+    assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_build_published' && event.outcome === 'succeeded'));
+    assert.ok(audit.json.items.some(event => event.action === 'agent.upgrade_settings_changed'));
+  });
+
   test('sweepAgents, rotateAgentSecret, revokeAgent', async () => {
     await call('sweepAgents', { expect: 200 });
     await call('sweepAgents', { body: { offlineAfterMs: 1000 }, expect: 200 });

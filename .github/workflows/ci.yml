@@ -178,9 +178,39 @@ jobs:
   # attests the archive (SLSA build provenance) and its SBOM, signed with Sigstore through this workflow's own identity, so no signing key exists
   # to be kept or stolen. A release is assembled from these files (deploy/assemble-release.sh), not rebuilt on a workstation, and verified with
   # `gh attestation verify` before it is copied to the host.
+  # The Workstation agent, packaged for Windows from this commit with a packager pinned in tools/agent-build's own lockfile. The same source is also
+  # packaged for Linux and run with --self-check, which proves the packaging and the version constant on a platform CI can execute. The Windows
+  # executable is signed (build provenance) in release-evidence with the rest of the release, and is what the platform offers to agents.
+  agent-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+      - name: Install dependencies (from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install the packager (from its own lockfile)
+        working-directory: tools/agent-build
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Package the agent for Windows
+        run: node tools/build-workstation-agent.js --out agent-build --source-revision "$GITHUB_SHA"
+      - name: Prove the packaging by running the same source packaged for Linux
+        run: node tools/build-workstation-agent.js --out agent-smoke --target node18-linux-x64 --smoke --source-revision "$GITHUB_SHA"
+      - name: Keep the executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-build-${{ github.sha }}
+          path: agent-build/
+          if-no-files-found: error
+          retention-days: 90
+
   release-evidence:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [checks, supply-chain, image-scan]
+    needs: [checks, supply-chain, image-scan, agent-build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -217,13 +247,19 @@ jobs:
         with:
           name: image-archive-${{ github.sha }}
           path: release/
-      - name: Attest the release archive and the image archive (build provenance)
+      - name: The agent executable of this commit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-build-${{ github.sha }}
+          path: release/
+      - name: Attest the release archive, the image archive and the agent executable (build provenance)
         id: provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             release/Nuvrion-Server-Overlay-*.tar.gz
             release/Nuvrion-Image-*.tar
+            release/nuvrion-workstation-agent-*.exe
       - name: Attest the SBOM of the release archive
         id: sbom
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0

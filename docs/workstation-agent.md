@@ -87,11 +87,23 @@ successful heartbeat). If it does not, the watchdog stops it, restores the previ
 restored agent reports `rolled_back`. The agent reports `downloading`, `ready` and `installed` (or `failed` /
 `rolled_back`) to the platform at each step, and a result that cannot be sent is kept and retried.
 
+**Where builds come from.** CI packages the agent from every commit (`tools/build-workstation-agent.js`, a packager pinned in
+`tools/agent-build/package-lock.json`), proves the packaging by running the same source packaged for Linux with `--self-check`, and signs the
+Windows executable with the release (build provenance). `deploy/assemble-release.sh` verifies it and puts it in the release; when
+`upgrade-nuvrion.sh` applies that release on the platform host it places the executable where the platform serves agent builds and leaves a
+record, and the API registers a signed release for it. Nobody uploads anything: the console shows **«version» available** on every agent that
+is behind. Two things must hold:
+
+- the agent source's `VERSION` constant (`apps/workstation-agent/src/agent-service.cjs`) is changed when the agent changes; a version that is
+  already registered with different bytes is refused (the record is filed under `agent-intake/rejected` with the reason), and
+- the platform knows the address agents use for it (*Address agents use for this platform* on the panel; remembered from the first upload).
+  Until it is set, published builds wait and the panel says how many.
+
 **To upgrade an agent from the console** (platform administrators): open **Connections**, then the **Workstation agents** panel.
 
 1. **Pin the signing key once per agent.** Open *Signing key to pin on an agent*, add the key to the agent's `bootstrap.json` as
    `upgradeTrustedPublicKey` and restart the agent (see below for the file edit). An agent refuses every upgrade until this is done.
-2. **Add the build:** *Add agent build…*, choose `nuvrion-workstation-agent.exe`, enter the version it reports and the address the
+2. **A build appears by itself** with each platform release that carries a new agent. To add a custom build instead: *Add agent build…*, choose `nuvrion-workstation-agent.exe`, enter the version it reports and the address the
    agent uses for the platform (its `apiUrl`; the page fills in the address you are browsing, which is right when you reach the
    console by the same name). The console checks the file, keeps it on the platform and registers a signed release.
 3. **Upgrade:** *Upgrade…* on the agent's row, choose the build and confirm. Only builds newer than the agent's version are offered.

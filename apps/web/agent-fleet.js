@@ -15,6 +15,17 @@ export function isNewerVersion(candidate, current) {
   return false;
 }
 
+// The newest build that is actually on the platform (a release whose file is missing cannot be offered), by version number.
+export function newestAvailable(releases) {
+  let best = null;
+  for (const release of releases ?? []) {
+    const version = release?.manifest?.version;
+    if (!release?.artifactAvailable || !parseVersion(version)) continue;
+    if (!best || isNewerVersion(version, best.manifest.version)) best = release;
+  }
+  return best;
+}
+
 export function formatBytes(bytes) {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return '—';
@@ -56,13 +67,14 @@ export function deploymentSummary(deployment) {
   }
 }
 
-export function agentRowHtml(agent, deployment, { esc, when, canManage = true }) {
+export function agentRowHtml(agent, deployment, { esc, when, canManage = true, available = null }) {
   const summary = deploymentSummary(deployment), online = agent.status === 'online', revoked = agent.status === 'revoked';
+  const offered = available?.manifest?.version && !summary.active && !revoked && isNewerVersion(available.manifest.version, agent.version) ? available.manifest.version : null;
   const actions = !canManage ? '' : summary.active
     ? `<button type="button" data-agent-cancel="${esc(agent.id)}" data-deployment="${esc(deployment.deploymentId)}">Cancel upgrade</button>`
     : `<button type="button" data-agent-upgrade="${esc(agent.id)}" class="primary"${revoked ? ' disabled' : ''}>Upgrade…</button>`;
   return `<tr data-agent-row="${esc(agent.id)}"><td><strong>${esc(agent.name)}</strong><small class="block">${esc(agent.id)}</small></td>`
-    + `<td><code>${esc(agent.version ?? '—')}</code></td>`
+    + `<td><code>${esc(agent.version ?? '—')}</code>${offered ? `<small class="block"><span class="badge good">${esc(offered)} available</span></small>` : ''}</td>`
     + `<td><span class="badge ${online ? 'good' : revoked ? 'bad' : 'warn'}">${esc(agent.status ?? 'unknown')}</span><small class="block">${agent.lastHeartbeatAt ? `Last seen ${when(agent.lastHeartbeatAt)}` : 'Never seen'}</small></td>`
     + `<td><span class="badge ${summary.tone}">${esc(summary.label)}</span>${summary.detail ? `<small class="block">${esc(summary.detail)}</small>` : ''}${deployment?.completedAt ? `<small class="block">${when(deployment.completedAt)}</small>` : ''}</td>`
     + `<td class="row-actions right">${actions}</td></tr>`;
@@ -98,6 +110,11 @@ export function startAgentFleet({ root = document, win = window } = {}) {
       <button type="button" id="agent-build-toggle" class="primary">Add agent build…</button></div>
     <p class="muted">Upgrade an enrolled agent without touching its host. The agent downloads the signed build from this platform, checks it, swaps itself, and returns to the previous version on its own if the new one does not come up healthy.</p>
     <p id="agent-fleet-message" role="status" class="muted"></p>
+    <form id="agent-address-form" class="form-grid">
+      <label class="span-2">Address agents use for this platform<input id="agent-address" type="url" placeholder="https://nuvrion.example" autocomplete="off"></label>
+      <p id="agent-address-note" class="span-2 muted"></p>
+      <div class="form-actions span-2"><button type="submit" class="primary" id="agent-address-save">Save address</button></div>
+    </form>
     <form id="agent-build-form" class="form-grid" hidden>
       <label>Executable (nuvrion-workstation-agent.exe)<input id="agent-build-file" type="file" accept=".exe" required></label>
       <label>Version it reports (for example 0.1.51-lab.1)<input id="agent-build-version" required pattern="\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.\\-]+)?" autocomplete="off"></label>
@@ -125,13 +142,18 @@ export function startAgentFleet({ root = document, win = window } = {}) {
 
   const $ = id => root.getElementById(id);
   const section = $('agent-fleet'), dialog = $('agent-upgrade-dialog');
-  const state = { agents: [], releases: [], latest: new Map(), key: null, target: null, busy: false, allowed: null };
+  const state = { agents: [], releases: [], latest: new Map(), key: null, target: null, busy: false, allowed: null, settings: null };
   $('agent-build-base').value = win.location.origin;
 
   function render() {
     section.hidden = false;
     $('agent-empty').hidden = state.agents.length > 0;
-    $('agent-table').innerHTML = state.agents.map(agent => agentRowHtml(agent, state.latest.get(agent.id), { esc, when })).join('');
+    const available = newestAvailable(state.releases);
+    $('agent-table').innerHTML = state.agents.map(agent => agentRowHtml(agent, state.latest.get(agent.id), { esc, when, available })).join('');
+    if (win.document.activeElement !== $('agent-address')) $('agent-address').value = state.settings?.publicBaseUrl ?? '';
+    $('agent-address-note').textContent = state.settings?.publicBaseUrl
+      ? `Agents download builds from ${state.settings.publicBaseUrl}. New agent versions are registered automatically when a platform release that carries one is applied.`
+      : `Not set yet${state.settings?.buildsWaiting ? `: ${state.settings.buildsWaiting} published build(s) are waiting for it` : ''}. Enter the address your agents use for the platform (the apiUrl in an agent's settings).`;
     $('agent-builds').innerHTML = state.releases.length ? state.releases.map(release => buildRowHtml(release, { esc, when })).join('')
       : '<tr><td colspan="5">No builds yet. Add the agent executable to upgrade an agent.</td></tr>';
     $('agent-key').textContent = state.key ?? '';
@@ -146,7 +168,8 @@ export function startAgentFleet({ root = document, win = window } = {}) {
         state.allowed = (me.user?.permissions ?? []).includes('platform.manage');
       }
       if (!state.allowed) { section.hidden = true; return; }
-      const [agents, releases] = await Promise.all([api('/agents'), api('/agent-upgrades/releases')]);
+      const [agents, releases, settings] = await Promise.all([api('/agents'), api('/agent-upgrades/releases'), api('/agent-upgrades/settings')]);
+      state.settings = settings;
       state.agents = (agents.items ?? []).filter(agent => agent.status !== 'revoked' || state.latest.has(agent.id));
       state.releases = releases.items ?? [];
       const histories = await Promise.all(state.agents.map(agent => api(`/agents/${agent.id}/upgrade-deployments?limit=1`).then(result => [agent.id, result.items?.[0] ?? null], () => [agent.id, null])));
@@ -165,7 +188,21 @@ export function startAgentFleet({ root = document, win = window } = {}) {
     return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  $('agent-build-toggle').onclick = () => { $('agent-build-form').hidden = !$('agent-build-form').hidden; if (!$('agent-build-form').hidden) $('agent-build-file').focus(); };
+  $('agent-build-toggle').onclick = () => {
+    $('agent-build-form').hidden = !$('agent-build-form').hidden;
+    if (!$('agent-build-form').hidden) { $('agent-build-base').value = state.settings?.publicBaseUrl || win.location.origin; $('agent-build-file').focus(); }
+  };
+  $('agent-address-form').onsubmit = async event => {
+    event.preventDefault();
+    if (state.busy) return;
+    state.busy = true; $('agent-address-save').disabled = true;
+    try {
+      const saved = await api('/agent-upgrades/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ publicBaseUrl: $('agent-address').value.trim() }) });
+      message(saved.imported ? `Saved. ${saved.imported} published build(s) registered.` : 'Saved.');
+      await refresh();
+    } catch (error) { message(error.message); }
+    finally { state.busy = false; $('agent-address-save').disabled = false; }
+  };
   $('agent-build-cancel').onclick = () => { $('agent-build-form').hidden = true; };
   $('agent-build-form').onsubmit = async event => {
     event.preventDefault();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVersion, isNewerVersion, formatBytes, plainFailure, deploymentSummary, agentRowHtml, buildRowHtml } from '../agent-fleet.js';
+import { parseVersion, isNewerVersion, formatBytes, plainFailure, deploymentSummary, agentRowHtml, buildRowHtml, newestAvailable } from '../agent-fleet.js';
 
 const esc = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const when = iso => `<${iso}>`;
@@ -68,4 +68,26 @@ test('a build row shows its version, size and the address agents will download i
   assert.match(row, /https:\/\/nuvrion\.lab\.sps</);
   assert.match(row, /On the platform/);
   assert.match(buildRowHtml({ manifest: { version: '0.1.1', artifactUrl: 'https://x.example/a' }, artifactAvailable: false }, { esc, when }), /File missing/);
+});
+
+const build = (version, over = {}) => ({ manifest: { releaseId: `r-${version}`, version, createdAt: '2026-10-14T10:00:00Z', artifactUrl: 'https://x.example/a' }, artifactAvailable: true, ...over });
+
+test('the newest build offered is the highest version that is really on the platform', () => {
+  assert.equal(newestAvailable([]), null);
+  assert.equal(newestAvailable(null), null);
+  assert.equal(newestAvailable([build('0.1.50-lab.1'), build('0.1.52-lab.1'), build('0.1.51-lab.1')]).manifest.version, '0.1.52-lab.1');
+  assert.equal(newestAvailable([build('0.1.50-lab.1'), build('0.1.53-lab.1', { artifactAvailable: false })]).manifest.version, '0.1.50-lab.1', 'a build whose file is gone is not offered');
+  assert.equal(newestAvailable([build('0.1.9-lab.1'), build('0.1.10-lab.1')]).manifest.version, '0.1.10-lab.1', 'numeric, not alphabetical');
+  assert.equal(newestAvailable([build('nonsense')]), null);
+});
+
+test('an agent behind the newest build is told so; one that is current, busy or revoked is not', () => {
+  const newest = build('0.1.51-lab.1');
+  const behind = agentRowHtml(agent({ version: '0.1.50-lab.1' }), null, { esc, when, available: newest });
+  assert.match(behind, /0\.1\.51-lab\.1 available/);
+  assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.51-lab.1' }), null, { esc, when, available: newest }), /available/);
+  assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.52-lab.1' }), null, { esc, when, available: newest }), /available/, 'an agent ahead of the build is not told to downgrade');
+  assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1' }), { deploymentId: 'd', status: 'downloading', version: '0.1.51-lab.1' }, { esc, when, available: newest }), /available/, 'not while it is upgrading');
+  assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1', status: 'revoked' }), null, { esc, when, available: newest }), /available/);
+  assert.doesNotMatch(agentRowHtml(agent({ version: '0.1.50-lab.1' }), null, { esc, when, available: null }), /available/);
 });

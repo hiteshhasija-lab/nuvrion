@@ -41,3 +41,26 @@ test('files are scanned together and the paths are kept apart', () => {
 test('windows line endings are handled', () => {
   assert.equal(scanTextForSecrets(`ok\r\n${assigned}\r\n`, { path: 'a' })[0].line, 2);
 });
+
+// The command-line scan walks the repository's directories. Packages installed from a lockfile (tools/agent-build/node_modules, for the packager)
+// are third-party code covered by the lockfile and the dependency audit, not repository source, so they are not read.
+test('the repository scan reads source files but not installed packages', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-scan-'));
+  try {
+    mkdirSync(join(dir, 'tools/agent-build/node_modules/some-package'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), '{}\n');
+    writeFileSync(join(dir, 'tools/agent-build/node_modules/some-package/package.json'), '{ "token": "' + 'x'.repeat(24) + '" }\n');
+    const script = new URL('../../../tools/scan-repository-secrets.js', import.meta.url).pathname;
+    const clean = spawnSync(process.execPath, [script], { cwd: dir, encoding: 'utf8' });
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(JSON.parse(clean.stdout).findingCount, 0);
+    writeFileSync(join(dir, 'tools/real-source.js'), 'const settings = { token: "' + 'y'.repeat(24) + '" };\n');
+    const dirty = spawnSync(process.execPath, [script], { cwd: dir, encoding: 'utf8' });
+    assert.equal(dirty.status, 1, 'a real source file is still scanned');
+    assert.match(dirty.stderr, /tools\/real-source\.js/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

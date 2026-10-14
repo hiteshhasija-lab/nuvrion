@@ -904,6 +904,30 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /agent-upgrades/settings:
+    get:
+      tags: [Agents]
+      operationId: getAgentUpgradeSettings
+      summary: The address agents use for this platform, and how many published builds are waiting for it to be set
+      x-required-permission: platform.manage
+      responses:
+        '200': { description: The settings, content: { application/json: { schema: { type: object, required: [publicBaseUrl, buildsWaiting], properties: { publicBaseUrl: { type: [string, 'null'] }, updatedAt: { type: [string, 'null'] }, updatedBy: { type: [string, 'null'] }, buildsWaiting: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Agents]
+      operationId: updateAgentUpgradeSettings
+      summary: Set the address agents use for this platform; builds published by the host that were waiting for it are registered
+      x-required-permission: platform.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [publicBaseUrl], properties: { publicBaseUrl: { type: string, pattern: '^https://' } } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { type: object, required: [publicBaseUrl, imported], properties: { publicBaseUrl: { type: string }, updatedAt: { type: string }, updatedBy: { type: [string, 'null'] }, imported: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /agent-upgrades/signing-key:
     get:
       tags: [Agents]

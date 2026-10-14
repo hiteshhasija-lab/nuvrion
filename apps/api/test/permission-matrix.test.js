@@ -57,6 +57,8 @@ const PROTECTED = [
   ['GET', '/api/v1/agent-upgrades/signing-key', 'platform.manage', '/api/v1/agent-upgrades/signing-key'],
   ['GET', '/api/v1/agent-upgrades/releases', 'platform.manage', '/api/v1/agent-upgrades/releases'],
   ['POST', '/api/v1/agent-upgrades/builds', 'platform.manage', '/api/v1/agent-upgrades/builds'],
+  ['GET', '/api/v1/agent-upgrades/settings', 'platform.manage', '/api/v1/agent-upgrades/settings'],
+  ['PUT', '/api/v1/agent-upgrades/settings', 'platform.manage', '/api/v1/agent-upgrades/settings'],
   ['GET', `/api/v1/agents/${ID}/upgrade-deployments`, 'platform.manage', 'agentDeploymentsMatch'],
   ['POST', `/api/v1/agents/${ID}/upgrade-deployments/${ID}/cancel`, 'platform.manage', 'agentDeploymentCancelMatch'],
   ['POST', `/api/v1/agents/${ID}/upgrades`, 'platform.manage', 'agentUpgradeStageMatch'],

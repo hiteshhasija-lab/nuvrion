@@ -350,6 +350,11 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.match(builds, /on the platform/i);
     assert.match(await page.evaluate(() => document.getElementById('agent-fleet-message').innerText), /registered 0\.1\.88-lab\.1/i);
 
+    // the agent is told a newer build is available, and the address it was uploaded with was remembered as the address agents use
+    assert.match(await rowText(page), /0\.1\.88-lab\.1 available/i);
+    assert.equal(await page.evaluate(() => document.getElementById('agent-address').value), 'https://platform.invalid');
+    assert.match(await page.evaluate(() => document.getElementById('agent-address-note').innerText), /download builds from https:\/\/platform\.invalid/);
+
     // upgrade the agent
     await page.click(`[data-agent-upgrade="${agent.agentId}"]`);
     await page.waitFor(() => document.getElementById('agent-upgrade-dialog').open);

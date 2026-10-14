@@ -117,6 +117,19 @@ test('releases and one agent\'s deployments can be listed, newest first, with th
   assert.equal((await upgrades.listDeployments(a, { limit: 1 })).length, 1);
 });
 
+test('a release can be found by its version, newest first when a version was registered more than once', database, async () => {
+  assert.equal(await upgrades.releaseByVersion('0.1.70-lab.1'), null);
+  const first = await release({ version: '0.1.70-lab.1', sha256: '3'.repeat(64) });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const second = await release({ version: '0.1.70-lab.1', sha256: '4'.repeat(64) });
+  await release({ version: '0.1.71-lab.1', sha256: '5'.repeat(64) });
+  const found = await upgrades.releaseByVersion('0.1.70-lab.1');
+  assert.equal(found.manifest.releaseId, second.manifest.releaseId);
+  assert.notEqual(found.manifest.releaseId, first.manifest.releaseId);
+  assert.equal(found.manifest.sha256, '4'.repeat(64));
+  assert.equal(verify(null, Buffer.from(JSON.stringify(found.manifest)), publicKeyPem, Buffer.from(found.signature, 'base64url')), true, 'what is read back still verifies');
+});
+
 test('cancelling an unfinished deployment ends it as failed with the reason, and a finished one cannot be cancelled', database, async () => {
   const id = await agent('A'), { manifest } = await release();
   const { deploymentId } = await upgrades.stage(id, manifest.releaseId);

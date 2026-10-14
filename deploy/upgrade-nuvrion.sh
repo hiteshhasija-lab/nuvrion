@@ -115,6 +115,22 @@ if [[ -n "$image_archive" ]]; then
 else
   podman image exists "$base_image" || { echo "The base image is unavailable: $base_image" >&2; exit 1; }
 fi
+# A release that carries the Workstation agent executable (built and signed in CI with the release) is published to the platform once this release has
+# been validated, so agents are offered the new version without anyone uploading it. Here it is only checked: present, covered by SHA256SUMS.txt,
+# the size and digest the manifest names, and a Windows executable.
+agent_file="$(jq -r '.agent.file // empty' "$manifest")"
+agent_version="$(jq -r '.agent.version // empty' "$manifest")"
+agent_sha="$(jq -r '.agent.sha256 // empty' "$manifest")"
+agent_size="$(jq -r '.agent.sizeBytes // empty' "$manifest")"
+if [[ -n "$agent_file" ]]; then
+  [[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ && "$agent_file" == "nuvrion-workstation-agent-$agent_version.exe" && "$agent_sha" =~ ^[0-9a-f]{64}$ && "$agent_size" =~ ^[0-9]+$ && -f "$release_dir/$agent_file" ]] \
+    || { echo "The agent executable named by the manifest is missing or malformed." >&2; exit 1; }
+  grep -q -- "  $agent_file\$" "$checksums" || { echo "The agent executable is not covered by SHA256SUMS.txt." >&2; exit 1; }
+  [[ "$(sha256sum "$release_dir/$agent_file" | cut -d' ' -f1)" == "$agent_sha" && "$(wc -c < "$release_dir/$agent_file" | tr -d ' ')" == "$agent_size" ]] \
+    || { echo "The agent executable does not match the digest and size in the manifest." >&2; exit 1; }
+  [[ "$(head -c 2 "$release_dir/$agent_file")" == "MZ" ]] || { echo "The agent executable is not a Windows executable." >&2; exit 1; }
+  echo "Agent executable $agent_version is present and verified; it is published to the platform after this release is validated."
+fi
 systemctl --user is-active --quiet "$systemd_service" || { echo "The systemd unit is not active: $systemd_service" >&2; exit 1; }
 
 current_image="$(podman inspect "$api_container" --format '{{.Image}}')"
@@ -153,6 +169,24 @@ wait_for_health() {
     sleep 1
   done
   $validated
+}
+
+# Puts the agent executable where the platform serves agent builds from (named by its SHA-256, written to a temporary name and renamed so the API never
+# sees a partial file) and leaves a record in the intake directory, which the API reads to register a signed release for it. The API container
+# mounts this directory; the host path is the one the existing platform upgrades already use.
+agent_share_dir="${NUVRION_AGENT_SHARE_DIR:-/home/hiteshhasija/.local/share/nuvrion-upgrades}"
+publish_agent_build() {
+  [[ -n "$agent_file" ]] || return 0
+  local artifacts="$agent_share_dir/agent-artifacts" intake="$agent_share_dir/agent-intake" temporary
+  mkdir -p "$artifacts" "$intake" || return 1
+  if [[ ! -f "$artifacts/$agent_sha" ]]; then
+    temporary="$artifacts/.publish-$$"
+    { install -m 0644 "$release_dir/$agent_file" "$temporary" && mv -f "$temporary" "$artifacts/$agent_sha"; } || { rm -f "$temporary"; return 1; }
+  fi
+  jq -n --arg version "$agent_version" --arg sha "$agent_sha" --argjson size "$agent_size" --arg release "$version" \
+    --arg commit "$(jq -r '.sourceBaselineCommit // empty' "$manifest")" --arg at "$(date -u +%FT%TZ)" \
+    '{format:"nuvrion-agent-intake/1",version:$version,sha256:$sha,sizeBytes:$size,release:$release,sourceCommit:$commit,publishedAt:$at}' \
+    > "$intake/$agent_sha.json.tmp" && mv -f "$intake/$agent_sha.json.tmp" "$intake/$agent_sha.json"
 }
 
 record_stable_release() {
@@ -272,4 +306,8 @@ echo "Backup: $backup_dir"
 echo "Rollback image: $rollback_image"
 # Best effort: a failure to write the record must never fail an upgrade that already passed validation.
 if record_stable_release; then echo "Recorded v$version as the stable release in $stable_record"; else echo "Warning: could not update $stable_record; record v$version by hand." >&2; fi
+# Best effort as well: the server is already running the new release; a failure here only means agents are not offered the build yet.
+if [[ -n "$agent_file" ]]; then
+  if publish_agent_build; then echo "Published agent $agent_version to the platform; it is offered to agents as soon as the API registers it."; else echo "Warning: could not publish the agent executable; add it from the console instead." >&2; fi
+fi
 if ! cleanup_after_deploy; then echo "Warning: post-deploy cleanup failed; disk space was not reclaimed." >&2; fi

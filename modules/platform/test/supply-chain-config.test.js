@@ -89,11 +89,27 @@ test('the image scan runs a scanner pinned by digest, blocks on the policy, and 
 test('signing is confined to one job that runs only for main after every check passed, and no other job may write attestations or mint tokens', () => {
   const start = workflow.indexOf('\n  release-evidence:'), end = workflow.indexOf('\n  api-compatibility:');
   const job = workflow.slice(start, end), rest = workflow.slice(0, start) + workflow.slice(end);
-  assert.match(job, /needs: \[checks, supply-chain, image-scan\]/);
+  assert.match(job, /needs: \[checks, supply-chain, image-scan, agent-build\]/);
   assert.match(job, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
   assert.match(job, /id-token: write/);
   assert.match(job, /attestations: write/);
   assert.match(job, /actions\/attest-build-provenance@[0-9a-f]{40}/);
   assert.match(job, /actions\/attest-sbom@[0-9a-f]{40}/);
   assert.doesNotMatch(rest, /id-token|attestations: write/);
+});
+
+test('the agent is packaged in CI from its own locked toolchain, smoke-tested, and signed with the release (never by its own job)', () => {
+  const start = workflow.indexOf('\n  agent-build:'), end = workflow.indexOf('\n  release-evidence:');
+  const job = workflow.slice(start, end);
+  assert.ok(start > 0 && end > start, 'there is an agent-build job');
+  assert.match(job, /working-directory: tools\/agent-build\n\s+run: npm ci --ignore-scripts/, 'the packager is installed from tools/agent-build/package-lock.json');
+  assert.match(job, /node tools\/build-workstation-agent\.js --out agent-build --source-revision/);
+  assert.match(job, /--target node18-linux-x64 --smoke/, 'the same source is run through --self-check');
+  assert.doesNotMatch(job, /id-token|attestations: write|attest-/, 'only release-evidence signs');
+  const evidence = workflow.slice(end, workflow.indexOf('\n  api-compatibility:'));
+  assert.match(evidence, /name: agent-build-\$\{\{ github\.sha \}\}/, 'release-evidence takes this commit\'s executable');
+  assert.match(evidence, /release\/nuvrion-workstation-agent-\*\.exe/, 'and attests it');
+  const lock = JSON.parse(read('tools/agent-build/package-lock.json')), manifest = JSON.parse(read('tools/agent-build/package.json'));
+  assert.match(manifest.dependencies['@yao-pkg/pkg'], /^\d+\.\d+\.\d+$/, 'the packager version is exact, not a range');
+  assert.equal(lock.packages['node_modules/@yao-pkg/pkg'].version, manifest.dependencies['@yao-pkg/pkg']);
 });

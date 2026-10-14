@@ -76,6 +76,27 @@ if [[ -f "$image_tar" ]]; then
   [[ "$archive_config" == "$image_id" ]] || { echo "The image archive holds image $archive_config, not $image_id." >&2; exit 1; }
 fi
 
+# The agent executable CI packaged from this commit (present since the agent build was added to CI; older commits have none). It is checked against
+# its record here, then its signature below, and published to the platform by the host script when this release is applied.
+agent_record="agent-build.json"
+agent_exe=""
+agent_json='null'
+if [[ -f "$agent_record" ]]; then
+  agent_version="$(jq -r .version "$agent_record")"
+  [[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "agent-build.json names no valid agent version." >&2; exit 1; }
+  agent_exe="nuvrion-workstation-agent-$agent_version.exe"
+  [[ -f "$agent_exe" ]] || { echo "The evidence is missing $agent_exe (named by agent-build.json)." >&2; exit 1; }
+  [[ "$(jq -r .file "$agent_record")" == "$agent_exe" && "$(jq -r .target "$agent_record")" == "node18-win-x64" ]] \
+    || { echo "agent-build.json does not describe a Windows x64 build of $agent_exe." >&2; exit 1; }
+  [[ "$(jq -r .sourceRevision "$agent_record")" == "$commit" ]] || { echo "The agent executable was built from another commit." >&2; exit 1; }
+  [[ "$(sha "$agent_exe")" == "$(jq -r .sha256 "$agent_record")" && "$(wc -c < "$agent_exe" | tr -d ' ')" == "$(jq -r .sizeBytes "$agent_record")" ]] \
+    || { echo "The agent executable does not match its record." >&2; exit 1; }
+  [[ "$(head -c 2 "$agent_exe")" == "MZ" ]] || { echo "The agent executable is not a Windows executable." >&2; exit 1; }
+  declared_agent_version="$(git -C "$repo_root" show "$commit:apps/workstation-agent/src/agent-service.cjs" | sed -n "s/^const VERSION='\(.*\)';.*/\1/p" | head -n 1)"
+  [[ "$declared_agent_version" == "$agent_version" ]] || { echo "The agent at $commit declares version $declared_agent_version, not $agent_version." >&2; exit 1; }
+  agent_json="$(jq -c '{version:.version,file:.file,sha256:.sha256,sizeBytes:.sizeBytes,sourceRevision:.sourceRevision}' "$agent_record")"
+fi
+
 echo "Verifying the build-provenance attestation (signed by $workflow for $commit)..."
 gh attestation verify "$archive" --bundle build-provenance.attestation.sigstore.json --repo "$repo" \
   --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://slsa.dev/provenance/v1 >/dev/null
@@ -88,6 +109,11 @@ if [[ -n "$image_id" ]]; then
     --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://slsa.dev/provenance/v1 >/dev/null
   gh attestation verify "$image_tar" --bundle image-sbom.attestation.sigstore.json --repo "$repo" \
     --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://cyclonedx.org/bom >/dev/null
+fi
+if [[ -n "$agent_exe" ]]; then
+  echo "Verifying the agent executable (same workflow, same commit)..."
+  gh attestation verify "$agent_exe" --bundle build-provenance.attestation.sigstore.json --repo "$repo" \
+    --signer-workflow "$workflow" --source-digest "$commit" --predicate-type https://slsa.dev/provenance/v1 >/dev/null
 fi
 
 echo "Checking the SBOM and build provenance against this checkout, and the image scan policy..."
@@ -115,6 +141,11 @@ if [[ -n "$image_id" ]]; then
   scan_note="the image that was scanned is the image that is deployed: the archive is signed, and the host checks the id of the image it loads against the id recorded here"
 fi
 
+if [[ -n "$agent_exe" ]]; then
+  cp "$agent_exe" "$agent_record" "$final/"
+  evidence_files="$(jq -c --arg exe "$agent_exe" '. + [$exe, "agent-build.json"]' <<< "$evidence_files")"
+fi
+
 jq -n --arg version "$version" --arg commit "$commit" --arg sha "$archive_sha" --arg date "$(date -u +%F)" --arg runUrl "https://github.com/$repo/actions/runs/$run_id" \
   --arg workflow "$workflow" --arg verifiedAt "$(date -u +%FT%TZ)" --slurpfile change "$change_file" --slurpfile scan "$final/image-scan-summary.json" \
   --argjson files "$evidence_files" --argjson image "$image_json" --arg scanNote "$scan_note" --arg migration "$latest_migration" '
@@ -134,6 +165,10 @@ jq -n --arg version "$version" --arg commit "$commit" --arg sha "$archive_sha" -
     }
   }' > "$final/release-manifest.json"
 
+if [[ -n "$agent_exe" ]]; then
+  jq --argjson agent "$agent_json" '. + {agent: $agent}' "$final/release-manifest.json" > "$final/release-manifest.json.tmp" && mv "$final/release-manifest.json.tmp" "$final/release-manifest.json"
+fi
+
 printf '# Nuvrion v%s\n%s\n' "$version" "$(jq -r .change.summary "$final/release-manifest.json")" > "$final/RELEASE-NOTES.md"
 (cd "$final" && for f in $(ls | grep -v '^SHA256SUMS.txt$' | sort); do printf '%s  %s\n' "$(sha "$f")" "$f"; done > SHA256SUMS.txt)
 
@@ -143,5 +178,6 @@ echo "Release directory: $output"
 echo "  archive sha256   $archive_sha"
 echo "  commit           $commit (CI run $run_id)"
 echo "  image scan       $(jq -r '"\(.status), \(.blocking) blocking, \(.accepted|length) accepted"' "$output/image-scan-summary.json")"
+[[ -z "$agent_exe" ]] || echo "  agent            $agent_exe ($(jq -r '.agent.sizeBytes' "$output/release-manifest.json") bytes, sha256 $(jq -r '.agent.sha256' "$output/release-manifest.json" | cut -c1-12)..., signed, built from this commit)"
 [[ -z "$image_id" ]] || echo "  image archive    Nuvrion-Image-$version.tar (image id ${image_id:0:12}, signed, the image that was scanned)"
 echo "Next: copy it to the host's releases directory, then run upgrade-nuvrion.sh <dir> --check and read it before --yes."

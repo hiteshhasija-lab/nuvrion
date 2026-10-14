@@ -159,3 +159,74 @@ test('an archive that loads nothing is refused', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /did not load/);
 });
+
+// ---- the agent executable a release carries -----------------------------------------------------------------------------------------------------
+const agentStart = upgradeScript.indexOf('agent_file="$(jq -r');
+const agentEnd = upgradeScript.indexOf('\nfi\n', upgradeScript.indexOf('Agent executable $agent_version is present')) + 4;
+assert.ok(agentStart > 0 && agentEnd > agentStart, 'the agent preflight section was not found in the upgrade script');
+const agentPreflight = upgradeScript.slice(agentStart, agentEnd);
+const publishStart = upgradeScript.indexOf('agent_share_dir="${NUVRION_AGENT_SHARE_DIR');
+const publishEnd = upgradeScript.indexOf('\n}\n', publishStart) + 3;
+assert.ok(publishStart > 0 && publishEnd > publishStart, 'the agent publish function was not found in the upgrade script');
+const agentPublish = upgradeScript.slice(publishStart, publishEnd);
+
+function agentRelease({ withAgent = true, version = '0.1.60-lab.1', content = Buffer.concat([Buffer.from('MZ'), Buffer.from('a-windows-agent-build')]), name, uncovered = false, tamper = false, sizeLies = false, digestLies = false } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-agent-release-'));
+  const file = name ?? `nuvrion-workstation-agent-${version}.exe`;
+  const manifest = { version: '0.1.178' };
+  if (withAgent) {
+    writeFileSync(join(dir, file), tamper ? Buffer.concat([content, Buffer.from('!')]) : content);
+    manifest.agent = { version, file: `nuvrion-workstation-agent-${version}.exe`, sha256: digestLies ? 'f'.repeat(64) : sha(content), sizeBytes: sizeLies ? content.length + 1 : content.length };
+  }
+  writeFileSync(join(dir, 'release-manifest.json'), JSON.stringify(manifest));
+  writeFileSync(join(dir, 'SHA256SUMS.txt'), withAgent && !uncovered ? `${sha(content)}  ${file}\n` : '\n');
+  return dir;
+}
+const runAgentPreflight = dir => spawnSync('bash', ['-c', `set -Eeuo pipefail\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"\n${agentPreflight}\necho "agent_file=[$agent_file] agent_sha=[$agent_sha]"`], { env: { ...process.env, D: dir }, encoding: 'utf8' });
+const withAgentRelease = (options, assertions) => { const dir = agentRelease(options); try { assertions(runAgentPreflight(dir), dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
+
+test('a release carrying a verified agent executable passes the preflight and says it will be published', () => {
+  withAgentRelease({}, result => { assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /Agent executable 0\.1\.60-lab\.1 is present and verified/); assert.match(result.stdout, /agent_file=\[nuvrion-workstation-agent-0\.1\.60-lab\.1\.exe\]/); });
+});
+
+test('a release without an agent executable is unaffected', () => {
+  withAgentRelease({ withAgent: false }, result => { assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /agent_file=\[\]/); assert.doesNotMatch(result.stdout, /Agent executable/); });
+});
+
+test('an agent executable that is missing, misnamed, uncovered, altered, mis-sized or not a Windows executable is refused', () => {
+  for (const [label, options, pattern] of [
+    ['file missing', { name: 'something-else.exe' }, /missing or malformed/],
+    ['not in the checksum list', { uncovered: true }, /not covered by SHA256SUMS/],
+    ['bytes differ from the manifest', { tamper: true }, /does not match the digest and size/],
+    ['size differs', { sizeLies: true }, /does not match the digest and size/],
+    ['digest differs', { digestLies: true }, /does not match the digest and size/],
+    ['not an executable', { content: Buffer.from('#!/bin/sh\necho not an exe') }, /not a Windows executable/],
+    ['bad version in the name', { version: 'latest' }, /missing or malformed/]
+  ]) withAgentRelease(options, result => { assert.equal(result.status, 1, label); assert.match(result.stderr, pattern, label); });
+});
+
+test('publishing puts the executable where the platform serves it, by its digest, and leaves an intake record for the API', () => {
+  const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({});
+  try {
+    const script = `set -Eeuo pipefail\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"; version=0.1.178\n${agentPreflight}\n${agentPublish}\npublish_agent_build\npublish_agent_build\necho published`;
+    const result = spawnSync('bash', ['-c', script], { env: { ...process.env, D: dir, NUVRION_AGENT_SHARE_DIR: share }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const manifest = JSON.parse(readFileSync(join(dir, 'release-manifest.json'), 'utf8'));
+    const published = readFileSync(join(share, 'agent-artifacts', manifest.agent.sha256));
+    assert.equal(sha(published), manifest.agent.sha256);
+    const intake = JSON.parse(readFileSync(join(share, 'agent-intake', `${manifest.agent.sha256}.json`), 'utf8'));
+    assert.deepEqual([intake.format, intake.version, intake.sha256, intake.sizeBytes, intake.release], ['nuvrion-agent-intake/1', '0.1.60-lab.1', manifest.agent.sha256, manifest.agent.sizeBytes, '0.1.178']);
+    const left = spawnSync('bash', ['-c', `ls -A "${join(share, 'agent-artifacts')}" "${join(share, 'agent-intake')}"`], { encoding: 'utf8' }).stdout;
+    assert.doesNotMatch(left, /\.publish-|\.tmp/, 'no temporary file is left behind, and publishing twice is harmless');
+  } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a release without an agent publishes nothing', () => {
+  const share = mkdtempSync(join(tmpdir(), 'nuvrion-share-')), dir = agentRelease({ withAgent: false });
+  try {
+    const script = `set -Eeuo pipefail\nmanifest="$D/release-manifest.json"; checksums="$D/SHA256SUMS.txt"; release_dir="$D"; version=0.1.178\n${agentPreflight}\n${agentPublish}\npublish_agent_build\necho published`;
+    const result = spawnSync('bash', ['-c', script], { env: { ...process.env, D: dir, NUVRION_AGENT_SHARE_DIR: share }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(spawnSync('bash', ['-c', `ls -A "${share}"`], { encoding: 'utf8' }).stdout.trim(), '');
+  } finally { rmSync(share, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
+});

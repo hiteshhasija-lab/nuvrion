@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -25,6 +25,22 @@ export class AgentArtifactStore {
 
   async has(sha256) {
     try { return SHA256.test(String(sha256)) && (await stat(this.pathFor(sha256))).isFile(); } catch { return false; }
+  }
+
+  // Confirms that a file already in the directory is what a record says it is: present, the size, the digest, and a Windows executable.
+  async verify(sha256, { sizeBytes }) {
+    let size;
+    try { size = (await stat(this.pathFor(sha256))).size; } catch (error) { if (error instanceof AgentArtifactError) throw error; throw new AgentArtifactError('NUV_AGENT_ARTIFACT_MISSING', 'The executable is not on the platform.', 404); }
+    if (size !== sizeBytes) throw new AgentArtifactError('NUV_AGENT_ARTIFACT_SIZE_MISMATCH', `The stored executable is ${size} bytes, not ${sizeBytes}.`);
+    const hash = createHash('sha256');
+    let header = Buffer.alloc(0);
+    for await (const chunk of createReadStream(this.pathFor(sha256))) {
+      if (header.length < 2) header = Buffer.concat([header, chunk]).subarray(0, 2);
+      hash.update(chunk);
+    }
+    if (hash.digest('hex') !== sha256) throw new AgentArtifactError('NUV_AGENT_ARTIFACT_CHECKSUM_MISMATCH', 'The stored executable does not match its checksum.');
+    if (header[0] !== 0x4d || header[1] !== 0x5a) throw new AgentArtifactError('NUV_AGENT_ARTIFACT_NOT_EXECUTABLE', 'The stored file is not a Windows executable.');
+    return true;
   }
 
   async store(stream, { expectedSha256 = null, declaredLength = null } = {}) {

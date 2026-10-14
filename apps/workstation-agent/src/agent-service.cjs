@@ -8,7 +8,7 @@ const {createHash,createHmac,randomUUID,timingSafeEqual}=require('node:crypto');
 const WebSocket=require('ws');
 const selfUpgrade=require('./self-upgrade.cjs');
 
-const VERSION='0.1.50-lab.1';
+const VERSION='0.1.51-lab.1';
 const root=path.dirname(process.execPath);
 const bootstrapPath=path.join(root,'bootstrap.json');
 const identityPath=path.join(root,'identity.json');

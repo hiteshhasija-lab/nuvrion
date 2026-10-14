@@ -1,0 +1,9 @@
+{
+  "name": "nuvrion-agent-build-toolchain",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The pinned packager that turns the Workstation agent source into a single executable. Installed from its own lockfile by CI (tools/build-workstation-agent.js).",
+  "dependencies": {
+    "@yao-pkg/pkg": "5.12.1"
+  }
+}
