@@ -332,7 +332,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.waitFor(() => { const panel = document.getElementById('agent-fleet'); return panel && !panel.hidden && panel.getClientRects().length > 0; });
     await page.waitFor(id => document.querySelector(`#agent-table [data-agent-row="${id}"]`), agent.agentId);
     assert.match(await rowText(page), /UPGRADE-LAB[\s\S]*0\.1\.46[\s\S]*no upgrades yet/i);
-    assert.equal(await page.evaluate(() => document.getElementById('agent-builds').innerText.includes('No builds yet')), true);
+    assert.equal(await page.evaluate(() => document.getElementById('agent-builds').textContent.includes('No builds yet')), true);
 
     // add a build: a small file that is a Windows executable by its first two bytes
     await page.click('#agent-build-toggle');
