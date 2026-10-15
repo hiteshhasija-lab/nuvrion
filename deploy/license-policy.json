@@ -1,0 +1,55 @@
+{
+  "format": "nuvrion-license-policy/1",
+  "description": "Which licences the packages Nuvrion installs may carry. Checked in CI by tools/evaluate-licenses.js; a package that is not accepted fails the build.",
+  "allowed": [
+    "MIT",
+    "ISC",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "BlueOak-1.0.0",
+    "Python-2.0",
+    "CC-BY-4.0"
+  ],
+  "reviewed": [
+    {
+      "license": "MPL-2.0",
+      "packages": [
+        "@novnc/novnc"
+      ],
+      "reason": "The noVNC client library, served to the browser unmodified from node_modules (apps/api/src/server.js, /vendor/novnc). MPL-2.0 is a file-level copyleft: it applies to those files, which are not changed here, and their licence headers are served intact. It is linked by the console as a separate script, not merged into Nuvrion's own files."
+    },
+    {
+      "license": "MPL-2.0",
+      "packages": [
+        "axe-core"
+      ],
+      "reason": "Accessibility test engine used only by the browser tests (a development dependency); it is not part of the image or of any release."
+    },
+    {
+      "license": "MPL-2.0",
+      "packages": [
+        "eslint-plugin-no-unsanitized"
+      ],
+      "reason": "A static analysis rule used only in CI (tools/static-analysis); it is not part of the image or of any release."
+    }
+  ],
+  "declared": [
+    {
+      "package": "buildcheck",
+      "version": "0.0.7",
+      "license": "MIT",
+      "source": "The package's own package.json declares MIT in the legacy `licenses` array (the registry metadata has no `license` field) and its tarball carries the MIT text in LICENSE. Read on 2026-10-15. An optional build helper of ssh2."
+    },
+    {
+      "package": "cpu-features",
+      "version": "0.0.10",
+      "license": "(MIT AND Apache-2.0)",
+      "source": "The package's own package.json declares MIT in the legacy `licenses` array (no `license` field), its LICENSE is the MIT text, and it bundles Google's cpu_features library under deps/cpu_features with its own Apache-2.0 LICENSE. Read on 2026-10-15. An optional native helper of ssh2."
+    }
+  ],
+  "exceptions": []
+}

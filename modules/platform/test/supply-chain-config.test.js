@@ -89,7 +89,7 @@ test('the image scan runs a scanner pinned by digest, blocks on the policy, and 
 test('signing is confined to one job that runs only for main after every check passed, and no other job may write attestations or mint tokens', () => {
   const start = workflow.indexOf('\n  release-evidence:'), end = workflow.indexOf('\n  api-compatibility:');
   const job = workflow.slice(start, end), rest = workflow.slice(0, start) + workflow.slice(end);
-  assert.match(job, /needs: \[checks, supply-chain, image-scan, agent-build\]/);
+  assert.match(job, /needs: \[checks, supply-chain, image-scan, agent-build, static-analysis\]/);
   assert.match(job, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
   assert.match(job, /id-token: write/);
   assert.match(job, /attestations: write/);
@@ -112,4 +112,31 @@ test('the agent is packaged in CI from its own locked toolchain, smoke-tested, a
   const lock = JSON.parse(read('tools/agent-build/package-lock.json')), manifest = JSON.parse(read('tools/agent-build/package.json'));
   assert.match(manifest.dependencies['@yao-pkg/pkg'], /^\d+\.\d+\.\d+$/, 'the packager version is exact, not a range');
   assert.equal(lock.packages['node_modules/@yao-pkg/pkg'].version, manifest.dependencies['@yao-pkg/pkg']);
+});
+
+test('static analysis runs from its own locked toolchain, fails on a finding outside the reviewed baseline, and gates the signing job', () => {
+  const start = workflow.indexOf('\n  static-analysis:'), end = workflow.indexOf('\n  agent-build:');
+  assert.ok(start > 0 && end > start, 'there is a static-analysis job');
+  const job = workflow.slice(start, end);
+  assert.match(job, /working-directory: tools\/static-analysis\n\s+run: npm ci --ignore-scripts/, 'the analyser is installed from tools/static-analysis/package-lock.json');
+  assert.match(job, /eslint\.js --config tools\/static-analysis\/eslint\.config\.js --suppressions-location tools\/static-analysis\/eslint-suppressions\.json/);
+  assert.doesNotMatch(job, /--suppress-all|--prune-suppressions|--max-warnings|\|\| true|continue-on-error/, 'the gate can neither rewrite its baseline nor be made to pass');
+  assert.doesNotMatch(job, /id-token|attestations: write|attest-/, 'only release-evidence signs');
+  const manifest = JSON.parse(read('tools/static-analysis/package.json')), lock = JSON.parse(read('tools/static-analysis/package-lock.json'));
+  for (const [name, version] of Object.entries(manifest.dependencies)) {
+    assert.match(version, /^\d+\.\d+\.\d+$/, `${name} is pinned exactly`);
+    assert.equal(lock.packages[`node_modules/${name}`].version, version, `${name} is locked at that version`);
+  }
+});
+
+test('the licence review runs in the supply-chain job, covers every lockfile, and keeps its report with the evidence', () => {
+  const start = workflow.indexOf('\n  supply-chain:'), end = workflow.indexOf('\n  image-scan:');
+  const job = workflow.slice(start, end);
+  assert.match(job, /name: Licence review\n\s+run: node tools\/evaluate-licenses\.js --out evidence\/license-report\.json/);
+  assert.ok(job.indexOf('Licence review') < job.indexOf('Keep the evidence'), 'the report is written before the evidence is kept');
+  const tool = read('tools/evaluate-licenses.js');
+  for (const lockfile of ['tools/agent-build', 'tools/static-analysis']) assert.ok(tool.includes(`'${lockfile}'`), `${lockfile} is reviewed too`);
+  const policy = JSON.parse(read('deploy/license-policy.json'));
+  assert.equal(policy.format, 'nuvrion-license-policy/1');
+  assert.ok(!policy.allowed.some(id => /GPL|SSPL|BUSL|NC/i.test(id)), 'no copyleft or non-commercial licence is on the allow list');
 });
