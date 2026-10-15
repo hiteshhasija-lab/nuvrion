@@ -118,14 +118,22 @@ export function startAgentFleet({ root = document, win = window } = {}) {
   }
 
   view.insertAdjacentHTML('beforeend', `<section id="agent-fleet" class="card agent-fleet-card" aria-labelledby="agent-fleet-title" hidden>
-    <div class="form-title"><div><p class="eyebrow">WORKSTATION AGENTS</p><h2 id="agent-fleet-title">Agents and upgrades</h2></div>
-      <button type="button" id="agent-build-toggle" class="primary">Add agent build…</button></div>
-    <p class="muted">Upgrade an enrolled agent without touching its host. The agent downloads the signed build from this platform, checks it, swaps itself, and returns to the previous version on its own if the new one does not come up healthy.</p>
+    <header class="agent-fleet-head">
+      <span class="agent-fleet-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 8V6a5 5 0 0 1 10 0v2M5 8h14v10H5zM9 18v2m6-2v2M9 12h6"/></svg></span>
+      <div><p class="eyebrow">WORKSTATION AGENTS</p><h2 id="agent-fleet-title">Agents and upgrades</h2><p>Manage enrolled hosts and deliver verified agent builds from one place.</p></div>
+      <button type="button" id="agent-build-toggle" class="primary">Add agent build…</button>
+    </header>
+    <div class="agent-fleet-summary" aria-label="Workstation agent summary">
+      <div><span>Enrolled</span><strong id="agent-count">0</strong></div>
+      <div><span>Online</span><strong id="agent-online-count">0</strong></div>
+      <div><span>Latest build</span><strong id="agent-current-build">None</strong></div>
+    </div>
     <p id="agent-fleet-message" role="status" class="muted"></p>
-    <form id="agent-address-form" class="form-grid">
-      <label class="span-2">Address agents use for this platform<input id="agent-address" type="url" placeholder="https://nuvrion.example" autocomplete="off"></label>
-      <p id="agent-address-note" class="span-2 muted"></p>
-      <div class="form-actions span-2"><button type="submit" class="primary" id="agent-address-save">Save address</button></div>
+    <form id="agent-address-form" class="agent-platform-bar">
+      <span class="agent-platform-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+      <label><span>Agent download address</span><input id="agent-address" type="url" placeholder="https://nuvrion.example" autocomplete="off"></label>
+      <button type="submit" class="primary" id="agent-address-save">Save</button>
+      <p id="agent-address-note" class="muted"></p>
     </form>
     <form id="agent-build-form" class="form-grid" hidden>
       <label>Executable (nuvrion-workstation-agent.exe)<input id="agent-build-file" type="file" accept=".exe" required></label>
@@ -134,14 +142,19 @@ export function startAgentFleet({ root = document, win = window } = {}) {
       <p class="span-2 muted">This must be exactly the address in the agent's own settings (apiUrl). The agent only trusts its own platform address.</p>
       <div class="form-actions span-2"><button type="submit" class="primary" id="agent-build-submit">Upload and register</button><button type="button" id="agent-build-cancel" class="text-button">Cancel</button></div>
     </form>
-    <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Version</th><th>Status</th><th>Latest upgrade</th><th class="right">Action</th></tr></thead><tbody id="agent-table"></tbody></table></div>
-    <div id="agent-empty" class="empty" hidden><strong>No agents enrolled</strong><p>Create an enrollment token and run the agent setup on a Workstation host.</p></div>
-    <details class="agent-builds-details"><summary><strong>Builds</strong><span>Registered agent packages</span></summary>
-      <div class="table-wrap"><table><thead><tr><th>Version</th><th>Registered</th><th>Size</th><th>Address</th><th>State</th></tr></thead><tbody id="agent-builds"></tbody></table></div>
-    </details>
-    <details id="agent-key-details"><summary>Signing key to pin on an agent (once per agent)</summary>
-      <p class="muted">Add this to the agent's bootstrap.json as <code>upgradeTrustedPublicKey</code> and restart the agent. An agent refuses every upgrade until a key is pinned.</p>
-      <pre id="agent-key" tabindex="0"></pre></details>
+    <section class="agent-roster" aria-labelledby="agent-roster-title">
+      <div class="agent-section-head"><div><h3 id="agent-roster-title">Enrolled agents</h3><span id="agent-roster-count">0 enrolled</span></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Agent</th><th>Version</th><th>Status</th><th>Latest upgrade</th><th class="right">Action</th></tr></thead><tbody id="agent-table"></tbody></table></div>
+      <div id="agent-empty" class="empty" hidden><strong>No agents enrolled</strong><p>Create an enrollment token and run the agent setup on a Workstation host.</p></div>
+    </section>
+    <div class="agent-fleet-tools">
+      <details class="agent-builds-details"><summary><span class="agent-tool-icon" aria-hidden="true">↓</span><span class="agent-tool-copy"><strong>Build library</strong><small id="agent-build-count">No registered builds</small></span><span class="agent-tool-arrow" aria-hidden="true">›</span></summary>
+        <div class="table-wrap"><table><thead><tr><th>Version</th><th>Registered</th><th>Size</th><th>Address</th><th>State</th></tr></thead><tbody id="agent-builds"></tbody></table></div>
+      </details>
+      <details id="agent-key-details"><summary><span class="agent-tool-icon" aria-hidden="true">◇</span><span class="agent-tool-copy"><strong>Agent trust key</strong><small>Required once per agent</small></span><span class="agent-tool-arrow" aria-hidden="true">›</span></summary>
+        <div class="agent-key-content"><p class="muted">Add this to the agent's bootstrap.json as <code>upgradeTrustedPublicKey</code> and restart the agent. An agent refuses every upgrade until a key is pinned.</p>
+        <pre id="agent-key" tabindex="0"></pre></div></details>
+    </div>
   </section>
   <dialog id="agent-upgrade-dialog" aria-labelledby="agent-upgrade-title">
     <form method="dialog" id="agent-upgrade-form" class="form-grid">
@@ -169,12 +182,21 @@ export function startAgentFleet({ root = document, win = window } = {}) {
   const $ = id => root.getElementById(id);
   const section = $('agent-fleet'), dialog = $('agent-upgrade-dialog');
   const state = { agents: [], releases: [], latest: new Map(), key: null, target: null, busy: false, allowed: null, settings: null, policies: new Map() };
+  const drawers = [section.querySelector('.agent-builds-details'), $('agent-key-details')];
+  for (const drawer of drawers) drawer.addEventListener('toggle', () => {
+    if (drawer.open) for (const other of drawers) if (other !== drawer) other.open = false;
+  });
   $('agent-build-base').value = win.location.origin;
 
   function render() {
     section.hidden = false;
     $('agent-empty').hidden = state.agents.length > 0;
     const available = newestAvailable(state.releases);
+    $('agent-count').textContent = String(state.agents.length);
+    $('agent-online-count').textContent = String(state.agents.filter(agent => agent.status === 'online').length);
+    $('agent-current-build').textContent = available?.manifest?.version ?? 'None';
+    $('agent-roster-count').textContent = `${state.agents.length} enrolled`;
+    $('agent-build-count').textContent = state.releases.length === 1 ? '1 registered build' : `${state.releases.length} registered builds`;
     $('agent-table').innerHTML = state.agents.map(agent => agentRowHtml(agent, state.latest.get(agent.id), { esc, when, available, policy: state.policies.get(agent.id) ?? null })).join('');
     if (win.document.activeElement !== $('agent-address')) $('agent-address').value = state.settings?.publicBaseUrl ?? '';
     $('agent-address-note').textContent = state.settings?.publicBaseUrl

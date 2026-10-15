@@ -950,43 +950,70 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
 .vm-settings-device-wrap{position:relative}
 .vm-settings-device-wrap>.settings-remove-device{position:absolute;top:9px;right:12px}
 
-/* Keep the Workstation Agents tile on the same compact rhythm as the provider connection cards. */
-#view-connections .agent-fleet-card{margin-top:15px;padding:11px 12px;font-size:12px}
-.agent-fleet-card>.form-title{align-items:center;gap:12px;min-height:45px}
-.agent-fleet-card>.form-title h2{margin:2px 0;font-size:14px;line-height:1.25}
-.agent-fleet-card>.form-title .eyebrow{margin-bottom:2px!important;font-size:9px!important}
-.agent-fleet-card>#agent-build-toggle{min-height:34px;padding:6px 11px;font-size:11px}
-.agent-fleet-card>.muted{margin:5px 0 8px;font-size:12px;line-height:1.35}
+/* Workstation agent management follows the restrained hierarchy and density of provider cards. */
+#view-connections .agent-fleet-card{margin-top:15px;padding:0;overflow:hidden;font-size:12px}
+.agent-fleet-head{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(205,221,223,.9);background:linear-gradient(105deg,rgba(234,247,245,.92),rgba(255,255,255,.52))}
+.agent-fleet-mark{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(25,139,129,.2);border-radius:11px;background:rgba(214,241,237,.8);color:var(--teal)}
+.agent-fleet-mark svg,.agent-platform-icon svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.agent-fleet-head h2{margin:1px 0 2px;font-size:15px;line-height:1.2}
+.agent-fleet-head .eyebrow{margin-bottom:1px!important;font-size:8px!important}
+.agent-fleet-head p:last-child{margin:0;color:var(--muted);font-size:10px;line-height:1.35}
+.agent-fleet-head>#agent-build-toggle{height:33px;padding:5px 11px;white-space:nowrap;font-size:11px}
+.agent-fleet-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:10px 16px 0;border:1px solid rgba(205,221,223,.9);border-radius:10px;background:rgba(246,250,250,.72)}
+.agent-fleet-summary>div{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;padding:8px 12px;border-right:1px solid rgba(213,225,227,.85)}
+.agent-fleet-summary>div:last-child{border-right:0}
+.agent-fleet-summary span{color:var(--muted);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.agent-fleet-summary strong{overflow:hidden;color:#173044;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
 .agent-fleet-card>#agent-fleet-message:empty{display:none}
-.agent-fleet-card>#agent-fleet-message:not(:empty){margin:6px 0;padding:6px 8px;border-radius:7px;background:#edf5f4}
-.agent-fleet-card>#agent-address-form{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;margin:8px 0 10px;padding:8px 0;border-block:1px solid #edf0f1}
-.agent-fleet-card>#agent-address-form>label{grid-column:1;grid-row:1}
-.agent-fleet-card>#agent-address-form>.form-actions{grid-column:2;grid-row:1;align-self:end}
-.agent-fleet-card>#agent-address-form>#agent-address-note{grid-column:1/-1;grid-row:2;margin:0;font-size:10px;line-height:1.3}
-.agent-fleet-card>#agent-address-form input{height:34px}
-.agent-fleet-card>#agent-address-form button{min-height:34px;padding:6px 11px;font-size:11px}
-.agent-fleet-card>#agent-build-form{gap:9px 12px;margin:8px 0 10px;padding:10px}
-.agent-fleet-card .table-wrap{border:1px solid #edf0f1;border-radius:8px}
+.agent-fleet-card>#agent-fleet-message:not(:empty){margin:8px 16px 0;padding:7px 9px;border:1px solid rgba(22,125,119,.14);border-radius:8px;background:#edf7f5;font-size:10px}
+.agent-platform-bar{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:end;gap:5px 10px;margin:10px 16px;padding:10px 12px;border:1px solid rgba(205,221,223,.9);border-radius:10px;background:rgba(248,251,251,.72)}
+.agent-platform-icon{grid-row:1/3;align-self:center;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#e3f2f0;color:var(--teal)}
+.agent-platform-bar label{display:grid;gap:4px;color:#334958;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.agent-platform-bar input{width:100%;height:32px;padding:6px 10px;background:rgba(255,255,255,.86);font-size:11px;font-weight:600}
+.agent-platform-bar button{height:32px;padding:5px 12px;font-size:10px}
+.agent-platform-bar p{grid-column:2/-1;margin:0;color:var(--muted);font-size:9px;line-height:1.3}
+.agent-fleet-card>#agent-build-form{gap:9px 12px;margin:10px 16px;padding:12px;border:1px solid rgba(22,125,119,.16);border-radius:10px;background:rgba(235,247,245,.72)}
+.agent-roster{margin:0 16px 10px}
+.agent-section-head{display:flex;align-items:center;justify-content:space-between;padding:4px 2px 7px}
+.agent-section-head h3{display:inline;margin:0;font-size:12px}
+.agent-section-head span{margin-left:7px;color:var(--muted);font-size:9px}
+.agent-fleet-card .table-wrap{overflow:auto;border:1px solid rgba(205,221,223,.9);border-radius:10px;background:rgba(255,255,255,.55)}
 .agent-fleet-card table{font-family:inherit}
-.agent-fleet-card th{height:32px;padding:0 10px;font-size:9px}
-.agent-fleet-card td{padding:7px 10px;font-size:11px;line-height:1.25}
-.agent-fleet-card td small.block{margin-top:2px;font-size:9px;line-height:1.25}
-.agent-fleet-card .row-actions button{padding:4px 6px;font-size:10px}
-.agent-fleet-card>#agent-empty{padding:12px}
-.agent-fleet-card>#agent-empty p{margin:3px;font-size:10px}
-.agent-fleet-card>.agent-builds-details{margin-top:8px;border-top:1px solid #edf0f1;padding-top:7px}
-.agent-fleet-card>.agent-builds-details>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font-size:14px;line-height:1.25}
-.agent-fleet-card>.agent-builds-details>summary::-webkit-details-marker{display:none}
-.agent-fleet-card>.agent-builds-details>summary::before{content:'›';color:var(--teal);font-size:16px;transform:rotate(0);transition:transform .15s}
-.agent-fleet-card>.agent-builds-details[open]>summary::before{transform:rotate(90deg)}
-.agent-fleet-card>.agent-builds-details>summary span{color:var(--muted);font-size:10px;font-weight:500}
-.agent-fleet-card>.agent-builds-details>.table-wrap{margin-top:6px}
-.agent-fleet-card>#agent-key-details{margin-top:8px;padding-top:2px;font-size:11px}
-.agent-fleet-card>#agent-key-details>summary{font-weight:650}
-.agent-fleet-card>#agent-key-details p{margin:6px 0;font-size:10px;line-height:1.35}
-.agent-fleet-card>#agent-key-details pre{max-height:90px;margin:6px 0 0;padding:8px;overflow:auto;font-size:9px}
-@media(max-width:700px){
-  .agent-fleet-card>#agent-address-form{grid-template-columns:1fr}
-  .agent-fleet-card>#agent-address-form>label,.agent-fleet-card>#agent-address-form>.form-actions,.agent-fleet-card>#agent-address-form>#agent-address-note{grid-column:1;grid-row:auto}
-  .agent-fleet-card>#agent-address-form>.form-actions{text-align:left}
+.agent-fleet-card th{height:30px;padding:0 10px;background:rgba(237,246,246,.72);font-size:8px;letter-spacing:.045em}
+.agent-fleet-card td{padding:7px 10px;font-size:10px;line-height:1.25}
+.agent-fleet-card td strong{font-size:11px}
+.agent-fleet-card td small.block{margin-top:2px;font-size:8px;line-height:1.3}
+.agent-fleet-card td code{font-size:9px}
+.agent-fleet-card .badge{padding:3px 7px;font-size:8px}
+.agent-fleet-card .row-actions button{padding:4px 6px;font-size:9px}
+.agent-fleet-card .row-actions button.primary:disabled{border-color:#bdcccd;background:#d8e1e1;color:#829091}
+.agent-fleet-card>#agent-empty,.agent-roster>#agent-empty{padding:12px}
+.agent-fleet-card>#agent-empty p,.agent-roster>#agent-empty p{margin:3px;font-size:9px}
+.agent-fleet-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 16px 14px;border-top:1px solid rgba(205,221,223,.75);background:rgba(245,249,249,.54)}
+.agent-fleet-tools details{min-width:0;border:1px solid rgba(205,221,223,.9);border-radius:10px;background:rgba(255,255,255,.72)}
+.agent-fleet-tools details[open]{grid-column:1/-1}
+.agent-fleet-tools summary{display:grid;grid-template-columns:30px minmax(0,1fr) 16px;align-items:center;gap:9px;min-height:48px;padding:7px 10px;cursor:pointer;list-style:none}
+.agent-fleet-tools summary::-webkit-details-marker{display:none}
+.agent-tool-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:#e5f3f1;color:var(--teal);font-size:15px;font-weight:700}
+.agent-tool-copy{display:grid;gap:1px;min-width:0}
+.agent-tool-copy strong{font-size:11px}
+.agent-tool-copy small{overflow:hidden;color:var(--muted);font-size:8px;text-overflow:ellipsis;white-space:nowrap}
+.agent-tool-arrow{color:var(--teal);font-size:18px;line-height:1;transition:transform .15s}
+.agent-fleet-tools details[open] .agent-tool-arrow{transform:rotate(90deg)}
+.agent-fleet-tools details>.table-wrap{margin:0 9px 9px}
+.agent-key-content{margin:0 9px 9px;padding:9px;border-radius:8px;background:#f4f8f8}
+.agent-key-content p{margin:0 0 7px;font-size:9px;line-height:1.35}
+.agent-key-content pre{max-height:88px;margin:0;padding:8px;overflow:auto;border:1px solid #dce7e7;border-radius:7px;background:#fff;font-size:8px}
+@media(max-width:800px){
+  .agent-fleet-head{grid-template-columns:42px minmax(0,1fr)}
+  .agent-fleet-head>#agent-build-toggle{grid-column:1/-1;width:100%}
+  .agent-platform-bar{grid-template-columns:34px minmax(0,1fr)}
+  .agent-platform-bar button{grid-column:2;justify-self:start}
+  .agent-platform-bar p{grid-column:2}
+}
+@media(max-width:600px){
+  .agent-fleet-summary,.agent-fleet-tools{grid-template-columns:1fr}
+  .agent-fleet-summary>div{border-right:0;border-bottom:1px solid rgba(213,225,227,.85)}
+  .agent-fleet-summary>div:last-child{border-bottom:0}
+  .agent-fleet-tools details[open]{grid-column:auto}
 }

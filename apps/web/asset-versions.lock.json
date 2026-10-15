@@ -1,11 +1,11 @@
 {
   "agent-fleet.js": {
-    "version": "20261014-8",
-    "sha256": "67b060362034647a9d809e3cdb6585b1b32c7d2a6adfe74ab31ec571ef9f6210"
+    "version": "20261014-10",
+    "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261014-124",
-    "sha256": "ff7b04d8e0073949a52940fa79a2054e187269c57931fa6e32cc749a1b0fa98b"
+    "version": "20261014-125",
+    "sha256": "d9e731f2fc87aead3a907ad65f738830118802fdeffb3b3afd10e2124037f020"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -16,8 +16,8 @@
     "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
   },
   "styles.css": {
-    "version": "20261014-119",
-    "sha256": "80b24b3666e76ed787bbb2cc3e062c295adea1f243b67db229581010815d1dd8"
+    "version": "20261014-120",
+    "sha256": "1e9a65b0a47e6459b59cae4f0fcf87dacd82ca4fee51af47c4f4cd9b6e4f9fff"
   },
   "upgrade-center.js": {
     "version": "20260911",
