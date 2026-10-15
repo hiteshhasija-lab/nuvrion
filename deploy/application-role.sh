@@ -23,6 +23,15 @@ owner_role="${NUVRION_OWNER_ROLE:-nuvrion}"
 
 say() { printf '%s\n' "$*"; }
 
+# True when running the statement as the application role is refused with a permission error. The output is captured before it is looked at: piping straight
+# into grep -q closes the pipe at the first match, which under pipefail turns a correct refusal into a failure.
+# usage: statement_is_refused SQL
+statement_is_refused() {
+  local output
+  output="$(as_role -c "$1" 2>&1)" || true
+  [[ "$output" == *"permission denied"* ]]
+}
+
 # Prints the env file with the user and password of NUVRION_DATABASE_URL replaced and every other line untouched.
 # usage: rewrite_database_url FILE USER PASSWORD
 rewrite_database_url() {
@@ -38,6 +47,9 @@ rewrite_database_url() {
     }
     { print }' "$file"
 }
+
+# Runs psql as the application role over the pod address (the rule that checks the password); output, errors included, on stdout.
+as_role() { PGPASSWORD="$password" PGCONNECT_TIMEOUT=5 podman exec -e PGPASSWORD -e PGCONNECT_TIMEOUT "$postgres_container" psql -h "$host_ip" -U "$role" -d "$database" -At "$@" 2>&1; }
 
 main() {
   [[ "$role" =~ ^[a-z][a-z0-9_]{2,30}$ ]] || { say "FAILED: the role name must be 3 to 31 characters of a-z, 0-9 and _"; return 1; }
@@ -78,11 +90,11 @@ GRANT nuvrion_app TO %s;"  # secret-scan:allow (a statement template; the passwo
   # proof through the pod address, which is the rule that checks the password
   host_ip="$(podman exec "$postgres_container" sh -c 'hostname -i' 2>/dev/null | awk '{print $1}')"
   [[ -n "$host_ip" ]] || rollback "could not determine the pod address"  || return 1
-  as_role() { PGPASSWORD="$password" PGCONNECT_TIMEOUT=5 podman exec -e PGPASSWORD -e PGCONNECT_TIMEOUT "$postgres_container" psql -h "$host_ip" -U "$role" -d "$database" -At "$@" 2>&1; }
   [[ "$(as_role -c 'select current_user')" == "$role" ]] || { rollback "the new role could not log in over the pod address"; return 1; }
   [[ "$(as_role -c 'select rolsuper from pg_roles where rolname = current_user')" == "f" ]] || { rollback "the new role is a superuser"; return 1; }
   as_role -c 'select count(*) from identity.users' >/dev/null 2>&1 || { rollback "the new role cannot read the application tables"; return 1; }
-  if as_role -c 'create table operations.must_not_exist(id int)' 2>&1 | grep -q -i 'permission denied'; then :; else rollback "the new role could create a table"; return 1; fi
+  statement_is_refused 'create table operations.must_not_exist(id int)' || { rollback "the new role could create a table, or the refusal was not a permission error"; return 1; }
+  statement_is_refused 'delete from audit.audit_events' || { rollback "the new role could delete audit events, or the refusal was not a permission error"; return 1; }
   say "verified over the pod address: logs in, is not a superuser, reads the application tables, cannot create objects"
 
   # the env file: only NUVRION_DATABASE_URL changes
@@ -108,8 +120,8 @@ GRANT nuvrion_app TO %s;"  # secret-scan:allow (a statement template; the passwo
     import pg from 'pg';
     const c = new pg.Client({ connectionString: process.env.NUVRION_DATABASE_URL }); await c.connect();
     const r = await c.query('select current_user as u, (select rolsuper from pg_roles where rolname = current_user) as s');
-    process.stdout.write(r.rows[0].u + ' ' + r.rows[0].s); await c.end();" 2>/dev/null)"
-  [[ "$session_user" == "$role f" ]] || { rollback "the API's database session is '$session_user', not $role"; return 1; }
+    process.stdout.write(r.rows[0].u + ' ' + (r.rows[0].s ? 'superuser' : 'not-superuser')); await c.end();" 2>/dev/null)"
+  [[ "$session_user" == "$role not-superuser" ]] || { rollback "the API's database session is '$session_user', not $role (not a superuser)"; return 1; }
   say "the API's database session runs as $role (not a superuser)"
 
   rm -rf "$backup" && say "backup removed"

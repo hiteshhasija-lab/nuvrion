@@ -324,3 +324,22 @@ test('the application-role script never prints the password it generates, and wr
   assert.match(text, /psql_owner \|\| \{ say "FAILED: PostgreSQL refused/, 'the statement carrying the password goes to psql on stdin and its errors are discarded');
   assert.match(text, /podman exec -e PGPASSWORD/, 'the password reaches podman through the environment, not a command line');
 });
+
+test('the application-role script judges a refused statement from its captured output, so a long refusal that closes the pipe early is still a refusal', () => {
+  // the function under test runs under pipefail in the real script; the fake role prints a refusal and more, and exits non-zero as psql does on an error
+  const refused = sourceRole(`set -o pipefail; as_role() { printf 'ERROR:  permission denied for schema operations\\n'; for i in $(seq 1 5000); do echo "padding $i"; done; return 3; }; statement_is_refused 'create table x(id int)'`);
+  assert.equal(refused.status, 0, refused.stderr);
+  const allowed = sourceRole(`set -o pipefail; as_role() { printf 'CREATE TABLE\\n'; return 0; }; statement_is_refused 'create table x(id int)'`);
+  assert.equal(allowed.status, 1, 'a statement that succeeded is not a refusal');
+  const otherError = sourceRole(`set -o pipefail; as_role() { printf 'ERROR:  syntax error at or near "x"\\n'; return 3; }; statement_is_refused 'create table x(id int)'`);
+  assert.equal(otherError.status, 1, 'an error that is not a permission error does not prove the role is restricted');
+  // and the script no longer pipes a role statement into grep -q
+  assert.doesNotMatch(readFileSync(roleScript, 'utf8'), /as_role[^\n]*\|\s*grep\s+-q/);
+});
+
+test('the application-role script compares what the API reports about its own session with the words it makes the API report', () => {
+  const text = readFileSync(roleScript, 'utf8');
+  const reported = [...text.matchAll(/'(superuser|not-superuser)'/g)].map(match => match[1]);
+  assert.deepEqual(reported.sort(), ['not-superuser', 'superuser'], 'the API session prints one of two words');
+  assert.match(text, /\[\[ "\$session_user" == "\$role not-superuser" \]\]/, 'and the script expects the unprivileged one (a boolean from the driver is false, not f)');
+});
