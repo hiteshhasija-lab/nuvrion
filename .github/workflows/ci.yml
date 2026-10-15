@@ -52,6 +52,7 @@ jobs:
         run: |
           bash -n deploy/upgrade-nuvrion.sh
           bash -n deploy/assemble-release.sh
+          bash -n deploy/application-role.sh
       - name: Database migrations are well formed
         run: npm run migrate:check
       - name: Secret scan

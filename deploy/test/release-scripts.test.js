@@ -283,3 +283,44 @@ test('the upgrade script says what happened to the agent build: published, alrea
   assert.match(failed.stderr, /Warning: could not publish the agent executable/);
   assert.doesNotMatch(failed.stdout, /Published agent|already on the platform/);
 });
+
+// ---- deploy/application-role.sh ---------------------------------------------------------------------------------------------------------------------
+const roleScript = new URL('./../application-role.sh', import.meta.url).pathname;
+const sourceRole = body => spawnSync('bash', ['-c', `APPLICATION_ROLE_SOURCE_ONLY=1 source "${roleScript}"; ${body}`], { encoding: 'utf8' });
+
+test('the application-role script changes only the user and password of the database URL, in any scheme, and leaves every other line alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-role-'));
+  try {
+    const file = join(dir, 'env');
+    const original = ['NODE_ENV=production', 'POSTGRES_USER=nuvrion', 'POSTGRES_PASSWORD=ownerpass', 'NUVRION_DATABASE_URL=postgresql://nuvrion:ownerpass@127.0.0.1:5432/nuvrion', 'NUVRION_BROKER_URL=amqp://u:p@127.0.0.1:5672', // secret-scan:allow (fake test credentials)
+       'NUVRION_DATABASE_URL_NOTE=keep'].join('\n') + '\n';
+    writeFileSync(file, original);
+    const result = sourceRole(`rewrite_database_url "${file}" nuvrion_api abc123def`);
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout.trimEnd().split('\n'), before = original.trimEnd().split('\n');
+    assert.deepEqual(lines.filter((line, index) => line !== before[index]), ['NUVRION_DATABASE_URL=postgresql://nuvrion_api:abc123def@127.0.0.1:5432/nuvrion']);   // secret-scan:allow (fake test credential)
+    assert.equal(lines.length, before.length);
+    writeFileSync(file, 'NUVRION_DATABASE_URL=postgres://owner:old@db.example:6543/app\n');   // secret-scan:allow (fake test credential)
+    assert.equal(sourceRole(`rewrite_database_url "${file}" nuvrion_api newpw`).stdout.trim(), 'NUVRION_DATABASE_URL=postgres://nuvrion_api:newpw@db.example:6543/app');   // secret-scan:allow (fake test credential)
+    writeFileSync(file, 'NODE_ENV=production\n');
+    assert.equal(sourceRole(`rewrite_database_url "${file}" nuvrion_api newpw`).stdout, 'NODE_ENV=production\n', 'no URL, nothing invented');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the application-role script refuses a bad role name and a missing env file before touching anything', () => {
+  const run = env => spawnSync('bash', [roleScript], { env: { ...process.env, ...env }, encoding: 'utf8' });
+  const badName = run({ NUVRION_APPLICATION_ROLE: 'Bad-Name; DROP ROLE x', NUVRION_ENV_FILE: '/nonexistent' });
+  assert.equal(badName.status, 1);
+  assert.match(badName.stdout, /role name must be 3 to 31 characters/);
+  const missing = run({ NUVRION_APPLICATION_ROLE: 'nuvrion_api', NUVRION_ENV_FILE: '/nonexistent/env' });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /does not exist/);
+});
+
+test('the application-role script never prints the password it generates, and writes it only to the env file and to PostgreSQL on stdin', () => {
+  const text = readFileSync(roleScript, 'utf8');
+  const lines = text.split('\n').filter(line => !line.trim().startsWith('#'));
+  assert.equal(lines.some(line => /(say|echo|printf '%s\\n')\s.*\$\{?password\b/.test(line) && !/ALTER ROLE/.test(line)), false, 'no line prints the password');
+  assert.match(text, /psql_owner \|\| \{ say "FAILED: PostgreSQL refused/, 'the statement carrying the password goes to psql on stdin and its errors are discarded');
+  assert.match(text, /podman exec -e PGPASSWORD/, 'the password reaches podman through the environment, not a command line');
+});

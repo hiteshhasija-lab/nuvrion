@@ -35,32 +35,77 @@ async function withAdmin(work) {
   try { return await work(client); } finally { await client.end(); }
 }
 
-// Creates an empty database; `migrate: false` leaves it empty for the migration tests themselves.
+// The role the services run as in these tests: a member of the application group role that migration 0031 defines, which is what the API connects as in
+// production. Running every PostgreSQL test through it means a query that needs a right the application does not have fails here, not in production.
+// It also gets TRUNCATE (tests clear tables between cases; the application never truncates), which is the only extra it holds.
+export const applicationTestRole = 'nuvrion_app_test';
+const applicationTestPassword = 'test-only'; // secret-scan:allow (fake test credential)
+
+async function provisionApplicationRole(adminPool, databaseName) {
+  const client = await adminPool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(7310031)');   // several test processes share the server and the role
+    try {
+      const group = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'nuvrion_app'");
+      if (!group.rowCount) return false;                       // an older schema: no application role to run as
+      await client.query(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${applicationTestRole}') THEN
+          CREATE ROLE ${applicationTestRole} LOGIN PASSWORD '${applicationTestPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE IN ROLE nuvrion_app;
+        END IF;
+      END $$`);
+      await client.query(`GRANT nuvrion_app TO ${applicationTestRole}`);
+      await client.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${applicationTestRole}`);
+      const schemas = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname NOT IN ('information_schema','public')")).rows.map(row => row.nspname);
+      for (const schema of schemas) await client.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA ${schema} TO ${applicationTestRole}`);
+      return true;
+    } finally { await client.query('SELECT pg_advisory_unlock(7310031)'); }
+  } finally { client.release(); }
+}
+
+// Creates an empty database; `migrate: false` leaves it empty for the migration tests themselves, and then `pool` is the owner's pool (they apply migrations
+// through it). With migrations applied, `pool` and `connectionString` are the application role's, and `adminPool` is the owner's, for what only an owner may do.
 export async function createTestDatabase({ migrate = true, poolSize = 20 } = {}) {
   const name = `nuvrion_test_${randomBytes(6).toString('hex')}`;
   await withAdmin(client => client.query(`CREATE DATABASE ${name}`));
-  const url = new URL(adminUrl);
-  url.pathname = `/${name}`;
+  const adminDatabaseUrl = new URL(adminUrl);
+  adminDatabaseUrl.pathname = `/${name}`;
   const { default: pg } = await import('pg');
-  const pool = new pg.Pool({ connectionString: url.toString(), max: poolSize });
+  const adminPool = new pg.Pool({ connectionString: adminDatabaseUrl.toString(), max: poolSize });
   let dropping = false;
   // While the database is being dropped, a connection that is still closing is told 'terminating connection due to administrator command'. That is expected, and
   // without a listener the error escapes and the test runner blames whichever test happened to open that connection. Any other pool error is still reported.
-  pool.on('error', error => { if (!dropping) console.error(`test database pool error: ${error.message}`); });
+  const quiet = pool => pool.on('error', error => { if (!dropping) console.error(`test database pool error: ${error.message}`); });
+  quiet(adminPool);
+  let pool = adminPool, connectionString = adminDatabaseUrl.toString(), restricted = null;
   try {
-    if (migrate) await applyMigrations(pool);
+    if (migrate) {
+      await applyMigrations(adminPool);
+      if (await provisionApplicationRole(adminPool, name)) {
+        const url = new URL(adminDatabaseUrl);
+        url.username = applicationTestRole;
+        url.password = applicationTestPassword;
+        connectionString = url.toString();
+        restricted = new pg.Pool({ connectionString, max: poolSize });
+        quiet(restricted);
+        pool = restricted;
+      }
+    }
   } catch (error) {
-    await pool.end();
+    await restricted?.end();
+    await adminPool.end();
     await withAdmin(client => client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
     throw error;
   }
   return {
     name,
     pool,
-    connectionString: url.toString(),
+    adminPool,
+    connectionString,
+    adminConnectionString: adminDatabaseUrl.toString(),
     async drop() {
       dropping = true;
-      await pool.end();
+      await restricted?.end();
+      await adminPool.end();
       await withAdmin(client => client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
     }
   };

@@ -109,6 +109,34 @@ The log line is `tasks.recovered` with the counts. Environment variables (API en
 `NUVRION_TASK_REANNOUNCE_AFTER_MS` (default 120000). The outbox relay reports a broker outage once (then at most once a minute) and logs
 `outbox.publish_recovered` when it works again.
 
+## The database roles
+
+The API does not connect as the database owner. Migration 0031 defines a group role, `nuvrion_app`, that holds what the application code does and nothing
+more; the API connects as a login role that is a member of it (`nuvrion_api` on the lab host). Migrations, backups and the upgrade script keep using the owner.
+
+| What | The API's login role | The owner |
+|---|---|---|
+| Read and write rows of the operational tables | yes | yes |
+| Change or delete an audit event | **no** (select and insert only) | yes |
+| Write `platform.schema_migrations` | **no** (select only) | yes |
+| Create, alter or drop anything; truncate | **no** | yes |
+| Read server files, run commands (`COPY ... PROGRAM`), create roles | **no** | yes (superuser) |
+
+Every PostgreSQL test runs as that role, so a query that needs a right the application does not have fails in CI, and `database/test/application-role.test.js`
+pins the table-by-table rule. A table a later migration creates is usable by the application without another grant (default privileges); a new **schema**
+needs a line in migration 0031's successor and in that test.
+
+To switch a platform over (once, after a release containing migration 0031 has been applied), run on the host:
+
+```bash
+deploy/application-role.sh
+```
+
+It creates the login role with a generated password (never printed), proves through the one PostgreSQL rule that checks passwords that it logs in, is not a
+superuser, reads the tables and cannot create objects, rewrites only `NUVRION_DATABASE_URL` in the env file, restarts the API, waits for health and readiness,
+confirms the API's own database session runs as that role, and puts everything back if any step fails. To go back to the owner, set the owner's password
+(`ALTER ROLE nuvrion PASSWORD ...` as the owner) and write the owner's URL into the env file; nothing else depends on the choice.
+
 ## Data retention
 
 The API prunes two history tables on a schedule (every 6 hours, first run a minute after start), in batches, always

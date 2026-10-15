@@ -39,7 +39,7 @@ test('a database one migration behind is not ready until that migration is appli
 test('removing the newest row from the ledger makes the platform not ready again', database, async () => {
   const db = await createTestDatabase();
   try {
-    await db.pool.query('DELETE FROM platform.schema_migrations WHERE version = $1', [latestMigrationVersion()]);
+    await db.adminPool.query('DELETE FROM platform.schema_migrations WHERE version = $1', [latestMigrationVersion()]);   // the application role cannot write the ledger
     const result = await readinessFor(db).check();
     assert.equal(result.status, 'not_ready');
     assert.match(result.issues[0], /not applied/);
