@@ -329,7 +329,9 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     const page = await newPage();
     await signIn(page); await signedIn(page);
     await openView(page, 'connections');
-    await page.waitFor(() => { const panel = document.getElementById('agent-fleet'); return panel && !panel.hidden && panel.getClientRects().length > 0; });
+    // The full CI suite runs this alongside the database and broker tests, so the four initial
+    // agent-management requests can take longer than the browser helper's general 15s limit.
+    await page.waitFor(() => { const panel = document.getElementById('agent-fleet'); return panel && !panel.hidden && panel.getClientRects().length > 0; }, { timeout: 30000 });
     await page.waitFor(id => document.querySelector(`#agent-table [data-agent-row="${id}"]`), agent.agentId);
     assert.match(await rowText(page), /UPGRADE-LAB[\s\S]*0\.1\.46[\s\S]*no upgrades yet/i);
     assert.equal(await page.evaluate(() => document.getElementById('agent-builds').textContent.includes('No builds yet')), true);
