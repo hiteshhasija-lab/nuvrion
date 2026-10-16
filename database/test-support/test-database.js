@@ -17,15 +17,17 @@ export async function migrationFiles() {
 }
 
 export async function applyMigrations(queryable, { from = 1, upTo = Infinity } = {}) {
-  const applied = [];
+  const files = [];
   for (const file of await migrationFiles()) {
     const number = Number(file.slice(0, 4));
     if (number < from) continue;
     if (number > upTo) break;
-    await queryable.query(await readFile(new URL(file, migrationsDir), 'utf8'));
-    applied.push(file);
+    files.push(file);
   }
-  return applied;
+  return withClusterLock(async () => {   // migration 0031 creates a role: see withClusterLock
+    for (const file of files) await queryable.query(await readFile(new URL(file, migrationsDir), 'utf8'));
+    return files;
+  });
 }
 
 async function withAdmin(work) {
@@ -33,6 +35,20 @@ async function withAdmin(work) {
   const client = new pg.Client({ connectionString: adminUrl });
   await client.connect();
   try { return await work(client); } finally { await client.end(); }
+}
+
+// Roles belong to the server, not to a database, so test files that each migrate a database of their own race when they create the same role (a second CREATE ROLE
+// fails with a unique violation on pg_authid, not with "already exists"). An advisory lock only excludes others in the same database, so the lock is taken in the
+// database every test file connects to first, and is held by a connection of its own for as long as the work takes; closing that connection releases it.
+async function withClusterLock(work) {
+  if (!adminUrl) return work();
+  const { default: pg } = await import('pg');
+  const client = new pg.Client({ connectionString: adminUrl });
+  await client.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(7310031)');
+    return await work();
+  } finally { await client.end(); }
 }
 
 // The role the services run as in these tests: a member of the application group role that migration 0031 defines, which is what the API connects as in
@@ -44,8 +60,7 @@ const applicationTestPassword = 'test-only'; // secret-scan:allow (fake test cre
 async function provisionApplicationRole(adminPool, databaseName) {
   const client = await adminPool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock(7310031)');   // several test processes share the server and the role
-    try {
+    return await withClusterLock(async () => {   // several test processes share the server and the role
       const group = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'nuvrion_app'");
       if (!group.rowCount) return false;                       // an older schema: no application role to run as
       await client.query(`DO $$ BEGIN
@@ -58,7 +73,7 @@ async function provisionApplicationRole(adminPool, databaseName) {
       const schemas = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname NOT IN ('information_schema','public')")).rows.map(row => row.nspname);
       for (const schema of schemas) await client.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA ${schema} TO ${applicationTestRole}`);
       return true;
-    } finally { await client.query('SELECT pg_advisory_unlock(7310031)'); }
+    });
   } finally { client.release(); }
 }
 
