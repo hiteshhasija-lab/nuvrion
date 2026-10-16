@@ -242,6 +242,21 @@ stale_version_tags() {
   grep -E '^localhost/nuvrion:[0-9]+\.[0-9]+\.[0-9]+$' | sort -t: -k2 -V -r | tail -n +"$(($1 + 1))" | grep -vxF "$target_image" || true
 }
 
+# A release directory holds two heavy payloads, the image archive (about 360 MB) and the agent executable (43 MB), next to a few hundred kilobytes of evidence
+# (manifest, checksums, SBOMs, signed attestations, scan reports). The payloads are only needed to apply or re-apply that release: the running image, the rollback
+# images and the platform's own copy of the agent do not depend on them. They are kept for the newest $1 releases, for the stable release and for the one just
+# applied. Older directories keep their evidence, which is the on-host record of what was deployed (CI keeps its copy for only 90 days).
+prune_release_payloads() {
+  local keep="$1" root="$upgrade_root/releases" stable_dir="" dir real
+  if [[ -f "$stable_record" ]]; then stable_dir="$(jq -r '.releaseDirectory // empty' "$stable_record" 2>/dev/null || true)"; fi
+  if [[ -n "$stable_dir" && -d "$stable_dir" ]]; then stable_dir="$(cd "$stable_dir" && pwd -P)"; fi
+  while IFS= read -r dir; do
+    real="$(cd "$dir" && pwd -P)"
+    if [[ "$real" == "$release_dir" || "$real" == "$stable_dir" ]]; then continue; fi
+    find "$dir" -maxdepth 1 -type f \( -name 'Nuvrion-Image-*.tar' -o -name 'nuvrion-workstation-agent-*.exe' \) -delete 2>/dev/null || true
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -name 'Nuvrion-v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null | sort -V -r | tail -n +"$((keep + 1))")
+}
+
 # Each deploy leaves a build directory, older version tags and unused build layers behind; on a small disk they add up.
 # Rollback images, the running container's image and the :stable tag are never touched. Failed deploys keep their build
 # directory for a week for diagnosis.
@@ -251,6 +266,7 @@ cleanup_after_deploy() {
   find "$upgrade_root/builds" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
   # an image archive is about 250 MB; the release can be assembled again from CI evidence for 30 days, and the running image does not depend on the file
   find "$upgrade_root/releases" -mindepth 2 -maxdepth 2 -name 'Nuvrion-Image-*.tar' -mtime +14 -delete 2>/dev/null || true
+  prune_release_payloads 5 || true
   while IFS= read -r tag; do
     if [[ -n "$tag" ]]; then podman rmi "$tag" >/dev/null 2>&1 || true; fi
   done < <(podman images --format '{{.Repository}}:{{.Tag}}' | stale_version_tags 5)

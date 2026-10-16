@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, statSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, statSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -342,4 +342,110 @@ test('the application-role script compares what the API reports about its own se
   const reported = [...text.matchAll(/'(superuser|not-superuser)'/g)].map(match => match[1]);
   assert.deepEqual(reported.sort(), ['not-superuser', 'superuser'], 'the API session prints one of two words');
   assert.match(text, /\[\[ "\$session_user" == "\$role not-superuser" \]\]/, 'and the script expects the unprivileged one (a boolean from the driver is false, not f)');
+});
+
+// ---- freeing disk: heavy payloads of old releases go, their evidence stays ----------------------------------------------------------------------------------------
+const pruneStart = upgradeScript.indexOf('prune_release_payloads() {');
+const pruneEnd = upgradeScript.indexOf('\n}\n', pruneStart) + 3;
+assert.ok(pruneStart > 0 && pruneEnd > pruneStart, 'the release payload pruning function was not found in the upgrade script');
+const pruneFunction = upgradeScript.slice(pruneStart, pruneEnd);
+const HEAVY = version => [`Nuvrion-Image-${version}.tar`, 'nuvrion-workstation-agent-0.1.51-lab.1.exe'];
+const KEPT = version => [`Nuvrion-Server-Overlay-${version}.tar.gz`, 'release-manifest.json', 'SHA256SUMS.txt', 'RELEASE-NOTES.md', 'nuvrion-sbom.cdx.json', 'image-sbom.cdx.json', 'build-provenance.attestation.sigstore.json', 'sbom.attestation.sigstore.json', 'image-scan.json', 'image-scan-summary.json'];
+
+function releasesTree(versions, { stableVersion = null, noStableRecord = false, extra = () => {} } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'nuvrion-upgrades-'));
+  mkdirSync(join(root, 'releases'));
+  for (const version of versions) {
+    const dir = join(root, 'releases', `Nuvrion-v${version}`);
+    mkdirSync(dir);
+    for (const name of [...HEAVY(version), ...KEPT(version)]) writeFileSync(join(dir, name), `${name} of ${version}`);
+  }
+  if (!noStableRecord && stableVersion) writeFileSync(join(root, 'STABLE-RELEASE.json'), JSON.stringify({ stableVersion, releaseDirectory: join(root, 'releases', `Nuvrion-v${stableVersion}`) }));
+  extra(root);
+  return root;
+}
+const present = (root, version, name) => { try { statSync(join(root, 'releases', `Nuvrion-v${version}`, name)); return true; } catch { return false; } };
+function prune(root, { keep = 5, applied = null, stableRecord = join(root, 'STABLE-RELEASE.json') } = {}) {
+  const releaseDir = applied ? realpathSync(join(root, 'releases', `Nuvrion-v${applied}`)) : '';   // the script resolves release_dir with pwd -P
+  return spawnSync('bash', ['-c', `set -Eeuo pipefail\nupgrade_root="$ROOT"; stable_record="$STABLE"; release_dir="$APPLIED"\n${pruneFunction}\nprune_release_payloads ${keep}`],
+    { env: { ...process.env, ROOT: root, STABLE: stableRecord, APPLIED: releaseDir }, encoding: 'utf8' });
+}
+const allVersions = ['0.1.99', '0.1.100', '0.1.101', '0.1.102', '0.1.103', '0.1.104', '0.1.105', '0.1.106'];
+const withTree = (versions, options, assertions) => { const root = releasesTree(versions, options); try { assertions(root); } finally { rmSync(root, { recursive: true, force: true }); } };
+
+test('the newest five releases keep their payloads; older ones lose the image archive and the agent executable but keep every evidence file', () => {
+  withTree(allVersions, { stableVersion: '0.1.106' }, root => {
+    const result = prune(root, { applied: '0.1.106' });
+    assert.equal(result.status, 0, result.stderr);
+    for (const version of ['0.1.106', '0.1.105', '0.1.104', '0.1.103', '0.1.102']) for (const name of HEAVY(version)) assert.ok(present(root, version, name), `${version} ${name} is kept`);
+    for (const version of ['0.1.101', '0.1.100', '0.1.99']) {
+      for (const name of HEAVY(version)) assert.ok(!present(root, version, name), `${version} ${name} is removed`);
+      for (const name of KEPT(version)) assert.ok(present(root, version, name), `${version} ${name} is kept`);
+    }
+  });
+});
+
+test('versions are ordered as numbers: 0.1.99 is older than 0.1.100', () => {
+  withTree(['0.1.99', '0.1.100'], { stableVersion: '0.1.100' }, root => {
+    assert.equal(prune(root, { keep: 1, applied: '0.1.100' }).status, 0);
+    assert.ok(present(root, '0.1.100', HEAVY('0.1.100')[0]));
+    assert.ok(!present(root, '0.1.99', HEAVY('0.1.99')[0]));
+  });
+});
+
+test('the stable release and the release just applied keep their payloads however old they are', () => {
+  withTree(allVersions, { stableVersion: '0.1.99' }, root => {
+    assert.equal(prune(root, { keep: 2, applied: '0.1.100' }).status, 0);
+    for (const version of ['0.1.99', '0.1.100']) for (const name of HEAVY(version)) assert.ok(present(root, version, name), `${version} ${name} is kept`);
+    for (const version of ['0.1.101', '0.1.102', '0.1.103', '0.1.104']) for (const name of HEAVY(version)) assert.ok(!present(root, version, name), `${version} ${name} is removed`);
+    for (const version of ['0.1.105', '0.1.106']) for (const name of HEAVY(version)) assert.ok(present(root, version, name), `${version} ${name} is kept (newest two)`);
+  });
+});
+
+test('the stable release is protected when the release directory is reached through a relative or symlinked path', () => {
+  withTree(allVersions, { stableVersion: '0.1.99', extra: root => spawnSync('ln', ['-s', join(root, 'releases'), join(root, 'releases-link')]) }, root => {
+    writeFileSync(join(root, 'STABLE-RELEASE.json'), JSON.stringify({ releaseDirectory: join(root, 'releases-link', 'Nuvrion-v0.1.99') }));
+    assert.equal(prune(root, { keep: 2, applied: '0.1.106' }).status, 0);
+    assert.ok(present(root, '0.1.99', HEAVY('0.1.99')[0]), 'the stable release is recognised through the symlink');
+  });
+});
+
+test('it only touches the two payload types inside release directories', () => {
+  withTree(allVersions, { stableVersion: '0.1.106', extra: root => {
+    mkdirSync(join(root, 'builds')); writeFileSync(join(root, 'builds', 'Nuvrion-Image-0.1.1.tar'), 'x');
+    writeFileSync(join(root, 'releases', 'Nuvrion-Image-0.1.1.tar'), 'x');
+    mkdirSync(join(root, 'releases', 'notes')); writeFileSync(join(root, 'releases', 'notes', 'Nuvrion-Image-0.1.2.tar'), 'x');
+    mkdirSync(join(root, 'releases', 'Nuvrion-v0.1.99', 'nested')); writeFileSync(join(root, 'releases', 'Nuvrion-v0.1.99', 'nested', 'Nuvrion-Image-0.1.3.tar'), 'x');
+    writeFileSync(join(root, 'upgrade-nuvrion.sh'), 'x');
+  } }, root => {
+    assert.equal(prune(root, { applied: '0.1.106' }).status, 0);
+    for (const path of ['builds/Nuvrion-Image-0.1.1.tar', 'releases/Nuvrion-Image-0.1.1.tar', 'releases/notes/Nuvrion-Image-0.1.2.tar', 'releases/Nuvrion-v0.1.99/nested/Nuvrion-Image-0.1.3.tar', 'upgrade-nuvrion.sh']) {
+      assert.doesNotThrow(() => statSync(join(root, path)), `${path} is untouched`);
+    }
+  });
+});
+
+test('it is harmless without a stable record, with fewer releases than the limit, with no releases directory, and when run twice', () => {
+  withTree(allVersions, { noStableRecord: true }, root => {
+    assert.equal(prune(root, { applied: '0.1.106' }).status, 0);
+    assert.equal(prune(root, { applied: '0.1.106' }).status, 0, 'a second run changes nothing and does not fail');
+    assert.ok(!present(root, '0.1.99', HEAVY('0.1.99')[0]));
+  });
+  withTree(['0.1.1', '0.1.2'], { stableVersion: '0.1.2' }, root => {
+    assert.equal(prune(root, { applied: '0.1.2' }).status, 0);
+    for (const version of ['0.1.1', '0.1.2']) assert.ok(present(root, version, HEAVY(version)[0]), `${version} is within the limit`);
+  });
+  const empty = mkdtempSync(join(tmpdir(), 'nuvrion-upgrades-'));
+  try { assert.equal(prune(empty, { applied: null, stableRecord: join(empty, 'missing.json') }).status, 0, 'no releases directory at all'); } finally { rmSync(empty, { recursive: true, force: true }); }
+  withTree(allVersions, { stableVersion: '0.1.106' }, root => {
+    writeFileSync(join(root, 'STABLE-RELEASE.json'), '{ not json');
+    assert.equal(prune(root, { applied: '0.1.106' }).status, 0, 'a damaged stable record does not stop the clean-up');
+  });
+});
+
+test('the clean-up cannot make a deploy fail or roll back: it ignores the pruning status, and runs in an if after the stable record is written', () => {
+  const call = upgradeScript.indexOf('prune_release_payloads 5');
+  assert.ok(call > 0 && upgradeScript.slice(call, call + 40).includes('|| true'));
+  const recorded = upgradeScript.indexOf('Recorded v$version as the stable release'), cleanup = upgradeScript.indexOf('if ! cleanup_after_deploy');
+  assert.ok(recorded > 0 && cleanup > recorded, 'cleanup_after_deploy is called after the stable release is recorded, and a failure of it is only a warning');
 });
