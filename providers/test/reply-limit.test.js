@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readBoundedText, ReplyTooLargeError, MAX_REPLY_BYTES, REPLY_TOO_LARGE } from '../response-body.js';
+import { readBoundedText, readBoundedJson, ReplyTooLargeError, MAX_REPLY_BYTES, REPLY_TOO_LARGE } from '../response-body.js';
+import { VsphereProvider, VsphereProviderError } from '../vmware-vsphere/src/vsphere-provider.js';
+import { WorkstationProvider, WorkstationProviderError } from '../vmware-workstation/src/workstation-provider.js';
 import { EsxiProvider, EsxiProviderError } from '../vmware-esxi/src/esxi-provider.js';
 import { VmwareSettingsClient, VmwareSettingsError } from '../vmware-settings.js';
 import { VmwareSnapshotClient, VmwareSnapshotError } from '../vmware-snapshots.js';
@@ -87,4 +89,26 @@ test('the datastore browser reports an oversized listing as a warning and carrie
   const result = await browseDatastoreIsoFiles({ base: new URL('https://esxi01.lab.example/'), credential: CREDENTIAL, datastores: ['datastore1'], fetchImpl: huge, timeoutMs: 5000 });
   assert.deepEqual(result.warnings.map(warning => [warning.datastore, warning.code]), [['datastore1', REPLY_TOO_LARGE]]);
   assert.deepEqual([...result.images ?? result.files ?? []], []);
+});
+
+test('JSON is parsed from the bounded text, and bad JSON is still a SyntaxError', async () => {
+  assert.deepEqual(await readBoundedJson(new Response('{"a":[1,2,{"b":"caf\u00e9"}]}')), { a: [1, 2, { b: 'caf\u00e9' }] });
+  await assert.rejects(() => readBoundedJson(new Response('{"a":')), SyntaxError);
+  await assert.rejects(() => readBoundedJson(new Response('[1,2,3]'), { limitBytes: 3 }), error => error.code === REPLY_TOO_LARGE);
+});
+
+test('the REST providers refuse an oversized reply with their own error type, not retryable', async () => {
+  const options = { credential: CREDENTIAL, fetchImpl: async () => streamed(OVER).response, timeoutMs: 5000, pollIntervalMs: 1 };
+  const created = async () => new Response(streamed(OVER).response.body, { status: 201 });   // vCenter answers a login with 201
+  await assert.rejects(() => new VsphereProvider({ ...options, fetchImpl: created, endpointUri: 'https://vcenter.example/' }).testConnection(), error => error instanceof VsphereProviderError && error.code === REPLY_TOO_LARGE && error.retryable === false);
+  await assert.rejects(() => new WorkstationProvider({ ...options, endpointUri: 'https://workstation.lab.example:8697/' }).testConnection(), error => error instanceof WorkstationProviderError && error.code === REPLY_TOO_LARGE && error.retryable === false);
+});
+
+test('an oversized error body is not read: the failure is reported from the HTTP status as before', async () => {
+  const pulled = { bytes: 0, cancelled: false };
+  const failing = async () => { const { response } = streamed(MAX_REPLY_BYTES * 4, pulled); return new Response(response.body, { status: 503 }); };
+  const options = { credential: CREDENTIAL, fetchImpl: failing, timeoutMs: 5000, pollIntervalMs: 1 };
+  await assert.rejects(() => new WorkstationProvider({ ...options, endpointUri: 'https://workstation.lab.example:8697/' }).testConnection(), error => error.code === 'NUV_WORKSTATION_UNAVAILABLE' && error.retryable === true);
+  assert.ok(pulled.bytes < MAX_REPLY_BYTES * 2, `stopped at the limit (${pulled.bytes})`);
+  assert.equal(pulled.cancelled, true);
 });

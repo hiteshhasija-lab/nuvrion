@@ -44,3 +44,9 @@ export async function readBoundedText(response, { limitBytes = MAX_REPLY_BYTES, 
   }
   return new TextDecoder().decode(Buffer.concat(chunks));   // UTF-8, byte order mark dropped: what response.text() does
 }
+
+// The JSON of the reply, read the same way: a reply over the limit is refused (`make` turns that into the provider's own error) and anything that is not JSON
+// throws the SyntaxError that response.json() throws.
+export async function readBoundedJson(response, options = {}) {
+  return JSON.parse(await readBoundedText(response, options));
+}

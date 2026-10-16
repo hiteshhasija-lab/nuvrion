@@ -72,11 +72,12 @@ generated and hostile replies, and the provider tests (against the fake ESXi and
 Four files use it: `esxi-provider.js`, `vmware-settings.js`, `vmware-snapshots.js`, `vsphere-quickstats.js`.
 That removed 20 `detect-unsafe-regex` and 10 `detect-non-literal-regexp` entries.
 
-**Memory is bounded too.** The five reads of XML and HTML replies (ESXi, settings, snapshots, quick statistics and the
-datastore browser) go through `providers/response-body.js`: a reply over 64 MB is refused, on its declared length or as
-the bytes arrive, and the connection is released. It is refused rather than truncated, because a cut-off document would
-parse as "missing" and the inventory would mark real machines as gone. The error is `NUV_PROVIDER_RESPONSE_TOO_LARGE`
-(not retried). The JSON replies of the vSphere and Workstation REST providers are not covered by this limit.
+**Memory is bounded too.** Every read of a reply from a VMware endpoint goes through `providers/response-body.js`: the
+five XML and HTML reads (ESXi, settings, snapshots, quick statistics, the datastore browser) and the JSON reads of the
+vSphere and Workstation REST providers. A reply over 64 MB is refused, on its declared length or as the bytes arrive,
+and the connection is released. It is refused rather than truncated, because a cut-off document would parse as
+"missing" and the inventory would mark real machines as gone. The error is `NUV_PROVIDER_RESPONSE_TOO_LARGE` (not
+retried). An oversized error body is not read at all: the failure is reported from the HTTP status, as before.
 
 **The remaining `detect-unsafe-regex` entries** were read: they are anchored, bounded (`{0,500}`), or each scan
 consumes a distinct run of input, so they are linear in practice; the rule flags nested optional groups as a pattern,
