@@ -4,8 +4,8 @@
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261014-125",
-    "sha256": "d9e731f2fc87aead3a907ad65f738830118802fdeffb3b3afd10e2124037f020"
+    "version": "20261015-126",
+    "sha256": "8987d2b3a260a82d46e83715b3e7c280fe63e6270cb967a5086b6eb967b49665"
   },
   "connection-issue.js": {
     "version": "20261006-115",

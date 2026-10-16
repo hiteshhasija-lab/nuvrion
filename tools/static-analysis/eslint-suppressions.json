@@ -17,7 +17,7 @@
   },
   "apps/web/app.js": {
     "no-unsanitized/method": {
-      "count": 8
+      "count": 6
     },
     "no-unsanitized/property": {
       "count": 56
