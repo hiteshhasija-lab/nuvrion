@@ -1,4 +1,5 @@
 import {allElements,elementInner,scalarText,stripTags} from '../../soap-xml.js';
+import {readBoundedText} from '../../response-body.js';
 const escapeXml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');
 const decodeXml=value=>String(value??'').replaceAll('&lt;','<').replaceAll('&gt;','>').replaceAll('&quot;','"').replaceAll('&apos;',"'").replaceAll('&amp;','&');
 const tag=(xml,name)=>{const inner=elementInner(xml,name);return inner===null?null:decodeXml(stripTags(inner).trim());};
@@ -9,7 +10,7 @@ const property=(xml,path)=>{const sets=allElements(xml,'propSet');for(const set 
 export async function collectVsphereQuickStats({endpointUri,credential,vmIds,fetchImpl=fetch,timeoutMs=15000}){
   if(!vmIds.length)return new Map();
   const base=new URL(endpointUri),envelope=body=>`<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="urn:vim25"><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`;
-  const soap=async(body,cookie=null)=>{const headers={accept:'text/xml','content-type':'text/xml; charset=utf-8',soapaction:'urn:vim25/8.0.0.0'};if(cookie)headers.cookie=cookie;const response=await fetchImpl(new URL('/sdk',base),{method:'POST',headers,body:envelope(body),signal:AbortSignal.timeout(timeoutMs)}),xml=await response.text();if(!response.ok||/<(?:\w+:)?Fault[\s>]/i.test(xml))throw Error(tag(xml,'faultstring')??`vSphere Web Services API returned HTTP ${response.status}.`);const setCookie=response.headers?.getSetCookie?.()[0]??response.headers?.get?.('set-cookie')??null;return {xml,cookie:setCookie?.split(';')[0]??cookie};};
+  const soap=async(body,cookie=null)=>{const headers={accept:'text/xml','content-type':'text/xml; charset=utf-8',soapaction:'urn:vim25/8.0.0.0'};if(cookie)headers.cookie=cookie;const response=await fetchImpl(new URL('/sdk',base),{method:'POST',headers,body:envelope(body),signal:AbortSignal.timeout(timeoutMs)}),xml=await readBoundedText(response);if(!response.ok||/<(?:\w+:)?Fault[\s>]/i.test(xml))throw Error(tag(xml,'faultstring')??`vSphere Web Services API returned HTTP ${response.status}.`);const setCookie=response.headers?.getSetCookie?.()[0]??response.headers?.get?.('set-cookie')??null;return {xml,cookie:setCookie?.split(';')[0]??cookie};};
   let session=null;
   try{
     const service=await soap('<vim25:RetrieveServiceContent><vim25:_this type="ServiceInstance">ServiceInstance</vim25:_this></vim25:RetrieveServiceContent>'),sessionManager=ref(service.xml,'sessionManager'),propertyCollector=ref(service.xml,'propertyCollector');

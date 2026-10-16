@@ -1,4 +1,5 @@
 import {allElements,elementInner,scalarText,stripTags,tagTokens} from './soap-xml.js';
+import {readBoundedText} from './response-body.js';
 export class VmwareSnapshotError extends Error{constructor(code,message,{status=null,retryable=false}={}){super(message);this.code=code;this.status=status;this.retryable=retryable;}}
 
 const escapeXml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');
@@ -20,7 +21,7 @@ export class VmwareSnapshotClient {
   async #soap(body,cookie=null){
     const headers={accept:'text/xml','content-type':'text/xml; charset=utf-8',soapaction:'urn:vim25/8.0.0.0'};if(cookie)headers.cookie=cookie;let response;
     try{response=await this.fetch(new URL('/sdk',this.base),{method:'POST',headers,body:this.#envelope(body),signal:AbortSignal.timeout(this.timeoutMs)});}catch(error){throw new VmwareSnapshotError('NUV_SNAPSHOT_PROVIDER_UNREACHABLE',error.message,{retryable:true});}
-    const xml=await response.text();
+    const xml=await readBoundedText(response,{make:error=>new VmwareSnapshotError(error.code,error.message)});
     if(!response.ok||/<(?:\w+:)?Fault[\s>]/i.test(xml)){const message=tag(xml,'faultstring')??tag(xml,'localizedMessage')??`VMware snapshot API returned HTTP ${response.status}.`,faultType=xml.match(/<detail>\s*<(?:\w+:)?(\w+?)Fault\b/i)?.[1],/* VMware carries a wrong password or a missing permission as a SOAP fault inside HTTP 500, so the fault type decides, not the status */code=faultType==='InvalidLogin'?'NUV_SNAPSHOT_AUTH_FAILED':faultType==='NoPermission'||/NoPermission|permission/i.test(message)?'NUV_SNAPSHOT_PERMISSION_DENIED':/^(InvalidState|InvalidPowerState)$/.test(faultType??'')||/InvalidState|InvalidPowerState/i.test(message)?'NUV_SNAPSHOT_STATE_CONFLICT':'NUV_SNAPSHOT_PROVIDER_FAILED',final=code==='NUV_SNAPSHOT_AUTH_FAILED'||code==='NUV_SNAPSHOT_PERMISSION_DENIED'||code==='NUV_SNAPSHOT_STATE_CONFLICT';throw new VmwareSnapshotError(code,message,{status:code==='NUV_SNAPSHOT_PERMISSION_DENIED'?403:422,retryable:response.status>=500&&!final});}
     const setCookie=response.headers?.getSetCookie?.()[0]??response.headers?.get?.('set-cookie')??null;return {xml,cookie:setCookie?.split(';')[0]??cookie};
   }

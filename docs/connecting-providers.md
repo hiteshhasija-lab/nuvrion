@@ -55,6 +55,7 @@ Common outcomes (the code is in the error, and it is what the alert and task res
 | `NUV_ESXI_PERMISSION_DENIED` | The account lacks the privilege | Grant it; not retried |
 | `NUV_ESXI_UNREACHABLE` | The host did not answer (powered off, network, firewall) | Retried with backoff; raises an alert that recovers by itself |
 | `NUV_ESXI_UNAVAILABLE` | The host answered with a server error | Retried with backoff |
+| `NUV_PROVIDER_RESPONSE_TOO_LARGE` | A VMware endpoint sent a reply over 64 MB (a real reply is a few MB at most), so Nuvrion stopped reading it | Not retried. Check that the address points at ESXi or vCenter and not at something else; a datastore listing that is too large is reported as a warning and the rest of the inventory is kept |
 | `NUV_ESXI_GUEST_TOOLS_UNAVAILABLE` | A guest shutdown or restart needs VMware Tools running in the guest | Not retried. Start the guest's Tools, or use **Power off** to force it |
 | `NUV_ESXI_RESOURCE_NOT_FOUND` | The VM is no longer on the host | Run discovery; the VM is shown as missing |
 

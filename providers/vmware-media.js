@@ -1,3 +1,4 @@
+import {readBoundedText,REPLY_TOO_LARGE} from './response-body.js';
 const htmlEntity=value=>String(value).replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replace(/&#(\d+);/g,(_,code)=>String.fromCharCode(Number(code)));
 
 export function normalizeDatastoreIsoPath(value){
@@ -20,7 +21,8 @@ export async function browseDatastoreIsoFiles({base,credential,datastores,datace
       const current=queue.shift(),key=current.href;if(visited.has(key))continue;visited.add(key);
       let response;try{response=await fetchImpl(current,{headers:{accept:'text/html,application/xhtml+xml',authorization},signal:AbortSignal.timeout(timeoutMs)});}catch(error){warnings.push({datastore:name,code:'NUV_MEDIA_BROWSE_UNREACHABLE',detail:error.message});break;}
       if(!response.ok){warnings.push({datastore:name,code:response.status===403?'NUV_MEDIA_BROWSE_PERMISSION_DENIED':'NUV_MEDIA_BROWSE_FAILED',detail:`Datastore browser returned HTTP ${response.status}.`});break;}
-      const html=await response.text(),links=[...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(match=>htmlEntity(match[1]));
+      let html;try{html=await readBoundedText(response);}catch(error){if(error.code!==REPLY_TOO_LARGE)throw error;warnings.push({datastore:name,code:REPLY_TOO_LARGE,detail:error.message});break;}
+      const links=[...html.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(match=>htmlEntity(match[1]));
       for(const href of links){
         if(!href||href.startsWith('#')||href.startsWith('javascript:'))continue;
         let target;try{target=new URL(href,current);}catch{continue;}
