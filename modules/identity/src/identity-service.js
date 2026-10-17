@@ -1,22 +1,17 @@
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import {hashPassword,passwordMatches,needsPasswordRehash} from './password-hasher.js';
 import {cleanUserIdentity,passwordAcceptable} from './user-input.js';
-
-const DEFAULT_PERMISSIONS = {
-  platform_admin: ['resource.view','resource.operate','connection.view','connection.manage','identity.manage','audit.view','platform.manage'],
-  operator: ['resource.view','resource.operate','connection.view'],
-  auditor: ['resource.view','connection.view','audit.view']
-};
+import {SYSTEM_ROLES,ROLE_LIMITS,RoleError,roleDisplayName,parseRoleRequest} from './roles.js';
 
 export class IdentityService {
-  #users = new Map(); #sessions = new Map(); #idleTimeoutMs; #absoluteTimeoutMs;
+  #users = new Map(); #sessions = new Map(); #roles = new Map(Object.entries(SYSTEM_ROLES).map(([name,role])=>[name,{id:randomUUID(),name,displayName:roleDisplayName(name),description:role.description,system:true,permissions:[...role.permissions],rowVersion:1}])); #idleTimeoutMs; #absoluteTimeoutMs;
   constructor({ bootstrapPassword = process.env.NUVRION_BOOTSTRAP_PASSWORD ?? 'ChangeMe-Nuvrion-01!', idleTimeoutMs=30*60_000, absoluteTimeoutMs=8*60*60_000 } = {}) {
     this.#idleTimeoutMs=idleTimeoutMs;this.#absoluteTimeoutMs=absoluteTimeoutMs;
     this.createUser({ username:'admin', displayName:'Platform Administrator', password:bootstrapPassword, roles:['platform_admin'] });
   }
   createUser({ username, displayName, password, roles=['operator'], status='active' }) {
     const identity = cleanUserIdentity({ username, displayName });
-    if(!['active','pending','locked','disabled'].includes(status)||!Array.isArray(roles)||roles.some(role=>!DEFAULT_PERMISSIONS[role]))throw new Error('USER_INVALID');
+    if(!['active','pending','locked','disabled'].includes(status)||!Array.isArray(roles)||roles.some(role=>!this.#roles.has(role)))throw new Error('USER_INVALID');
     if (!passwordAcceptable(password)) throw new Error('PASSWORD_TOO_SHORT');
     if (this.findUser(identity.normalized)) throw new Error('USERNAME_EXISTS');
     const recoveryCode=randomBytes(18).toString('base64url');
@@ -37,13 +32,19 @@ export class IdentityService {
   }
   logout(token){if(!token)return;this.#sessions.delete(createHash('sha256').update(token).digest('hex'));}
   listUsers(){return [...this.#users.values()].map(user=>this.publicUser(user)).sort((a,b)=>a.username.localeCompare(b.username));}
-  updateUser(userId,{status,roles},expectedVersion){const user=this.#users.get(userId);if(!user)return null;if(user.rowVersion!==expectedVersion)throw new Error('VERSION_CONFLICT');if(!['active','locked','disabled'].includes(status)||!Array.isArray(roles)||!roles.length||roles.some(role=>!DEFAULT_PERMISSIONS[role]))throw new Error('USER_INVALID');const removesActiveAdmin=user.status==='active'&&user.roles.includes('platform_admin')&&(status!=='active'||!roles.includes('platform_admin'));if(removesActiveAdmin&&[...this.#users.values()].filter(item=>item.id!==userId&&item.status==='active'&&item.roles.includes('platform_admin')).length===0)throw new Error('LAST_ADMIN');user.status=status;user.roles=[...new Set(roles)];user.rowVersion+=1;if(status!=='active')this.revokeSessions(userId);return this.publicUser(user);}
+  updateUser(userId,{status,roles},expectedVersion){const user=this.#users.get(userId);if(!user)return null;if(user.rowVersion!==expectedVersion)throw new Error('VERSION_CONFLICT');if(!['active','locked','disabled'].includes(status)||!Array.isArray(roles)||!roles.length||roles.some(role=>!this.#roles.has(role)))throw new Error('USER_INVALID');const removesActiveAdmin=user.status==='active'&&user.roles.includes('platform_admin')&&(status!=='active'||!roles.includes('platform_admin'));if(removesActiveAdmin&&[...this.#users.values()].filter(item=>item.id!==userId&&item.status==='active'&&item.roles.includes('platform_admin')).length===0)throw new Error('LAST_ADMIN');user.status=status;user.roles=[...new Set(roles)];user.rowVersion+=1;if(status!=='active')this.revokeSessions(userId);return this.publicUser(user);}
   revokeSessions(userId){let count=0;for(const [key,session] of this.#sessions)if(session.userId===userId){this.#sessions.delete(key);count+=1}return {revoked:count};}
   listSessions(userId,currentToken){const currentHash=currentToken?createHash('sha256').update(currentToken).digest('hex'):null,now=Date.now();return [...this.#sessions.values()].filter(session=>session.userId===userId&&session.idleExpiresAt>now&&session.absoluteExpiresAt>now).map(session=>({id:session.idHash,createdAt:new Date(session.createdAt).toISOString(),lastSeenAt:new Date(session.lastSeenAt??session.createdAt).toISOString(),idleExpiresAt:new Date(session.idleExpiresAt).toISOString(),absoluteExpiresAt:new Date(session.absoluteExpiresAt).toISOString(),current:session.idHash===currentHash})).sort((a,b)=>b.lastSeenAt.localeCompare(a.lastSeenAt));}
   revokeSession(userId,sessionId){const session=this.#sessions.get(sessionId);if(!session||session.userId!==userId)return {revoked:0};this.#sessions.delete(sessionId);return {revoked:1};}
   rotateRecoveryCode(userId){const user=this.#users.get(userId);if(!user)throw new Error('USER_NOT_FOUND');const recoveryCode=randomBytes(18).toString('base64url');user.recoveryCodeHash=createHash('sha256').update(recoveryCode).digest();return {recoveryCode};}
   resetPassword(username,recoveryCode,newPassword){const user=this.findUser(username),normalizedRecoveryCode=typeof recoveryCode==='string'?recoveryCode.trim():'';if(!user||!normalizedRecoveryCode||!user.recoveryCodeHash)return null;const supplied=createHash('sha256').update(normalizedRecoveryCode).digest();if(!timingSafeEqual(supplied,user.recoveryCodeHash))return null;if(!passwordAcceptable(newPassword))throw new Error('PASSWORD_TOO_SHORT');user.passwordHash=hashPassword(newPassword);for(const [key,session] of this.#sessions)if(session.userId===user.id)this.#sessions.delete(key);return this.rotateRecoveryCode(user.id);}
-  publicUser(user){const permissions=[...new Set(user.roles.flatMap(r=>DEFAULT_PERMISSIONS[r]??[]))];return {id:user.id,username:user.username,displayName:user.displayName,status:user.status,roles:[...user.roles],permissions,rowVersion:user.rowVersion};}
+  publicUser(user){const permissions=[...new Set(user.roles.flatMap(r=>this.#roles.get(r)?.permissions??[]))];return {id:user.id,username:user.username,displayName:user.displayName,status:user.status,roles:[...user.roles],permissions,rowVersion:user.rowVersion};}
+
+  #publicRole(role){return {id:role.id,name:role.name,displayName:role.displayName,description:role.description,system:role.system,permissions:[...role.permissions],userCount:[...this.#users.values()].filter(user=>user.roles.includes(role.name)).length,rowVersion:role.rowVersion};}
+  listRoles(){return [...this.#roles.values()].map(role=>this.#publicRole(role)).sort((a,b)=>Number(b.system)-Number(a.system)||a.name.localeCompare(b.name));}
+  createRole(request){const {name,description,permissions}=parseRoleRequest(request);if(this.#roles.has(name))throw new RoleError(`A role named "${name}" already exists.`,'NUV_ROLE_EXISTS');if([...this.#roles.values()].filter(role=>!role.system).length>=ROLE_LIMITS.customRoles)throw new RoleError(`At most ${ROLE_LIMITS.customRoles} custom roles may exist.`,'NUV_ROLE_LIMIT');const role={id:randomUUID(),name,displayName:roleDisplayName(name),description,system:false,permissions,rowVersion:1};this.#roles.set(name,role);return this.#publicRole(role);}
+  updateRole(name,request,expectedVersion){const role=this.#roles.get(name);if(!role)return null;if(role.system)throw new RoleError('Built-in roles cannot be changed.','NUV_ROLE_SYSTEM');if(role.rowVersion!==expectedVersion)throw new Error('VERSION_CONFLICT');const {description,permissions}=parseRoleRequest(request,{name:false});role.description=description;role.permissions=permissions;role.rowVersion+=1;return this.#publicRole(role);}
+  deleteRole(name){const role=this.#roles.get(name);if(!role)return null;if(role.system)throw new RoleError('Built-in roles cannot be deleted.','NUV_ROLE_SYSTEM');const holders=[...this.#users.values()].filter(user=>user.roles.includes(name)).length;if(holders)throw new RoleError(`${holders} user${holders===1?' holds':'s hold'} this role. Give them another role first.`,'NUV_ROLE_IN_USE');this.#roles.delete(name);return {deleted:1};}
   authorize(principal,permission){return Boolean(principal?.user.permissions.includes(permission));}
 }
 

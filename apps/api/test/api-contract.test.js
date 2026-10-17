@@ -142,7 +142,7 @@ describe('the OpenAPI description', { skip: SKIP }, () => {
   });
 
   test('required permissions are named permissions', () => {
-    const known = new Set(['resource.view', 'resource.operate', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage']);
+    const known = new Set(['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage']);
     for (const { id, op } of operations.values()) if (op['x-required-permission']) assert.ok(known.has(op['x-required-permission']), `${id}: ${op['x-required-permission']}`);
   });
 });
@@ -299,6 +299,29 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     sessions.operator = await login('newbie', 'Another-Password-2!'); // secret-scan:allow (fake test credential)
     assert.equal(sessions.operator.status, 200);
     assert.deepEqual(sessions.operator.user.roles, ['operator']);
+  });
+
+  test('listPermissions, listRoles, createRole, updateRole, deleteRole', async () => {
+    const catalogue = await call('listPermissions', { expect: 200 });
+    assert.ok(catalogue.json.items.some(item => item.key === 'resource.tag' && item.requires.includes('resource.view')));
+    const listed = await call('listRoles', { expect: 200 });
+    assert.deepEqual(listed.json.items.filter(role => role.system).map(role => role.name).sort(), ['auditor', 'operator', 'platform_admin']);
+    const created = await call('createRole', { body: { name: 'Contract Role', description: 'for the contract test', permissions: ['resource.view', 'resource.tag'] }, expect: 201 });
+    assert.equal(created.json.name, 'contract_role');
+    assert.ok(created.headers.get('etag'));
+    await call('createRole', { body: { name: 'contract_role', permissions: ['resource.view'] }, expect: 409, invalid: true });
+    await call('createRole', { body: { name: 'bad name!', permissions: ['resource.view'] }, expect: 422, invalid: true });
+    await call('createRole', { body: { name: 'operator', permissions: ['resource.view'] }, expect: 422, invalid: true });
+    const updated = await call('updateRole', { params: { roleName: 'contract_role' }, headers: { 'if-match': `"${created.json.rowVersion}"` }, body: { description: 'changed', permissions: ['resource.view'] }, expect: 200 });
+    assert.equal(updated.json.rowVersion, created.json.rowVersion + 1);
+    await call('updateRole', { params: { roleName: 'contract_role' }, headers: { 'if-match': '"99"' }, body: { permissions: ['resource.view'] }, expect: 412, invalid: true });
+    await call('updateRole', { params: { roleName: 'contract_role' }, headers: {}, body: { permissions: ['resource.view'] }, expect: 428, invalid: true });
+    await call('updateRole', { params: { roleName: 'operator' }, headers: { 'if-match': '"1"' }, body: { permissions: ['resource.view'] }, expect: 409, invalid: true });
+    await call('updateRole', { params: { roleName: 'no_such_role' }, headers: { 'if-match': '"1"' }, body: { permissions: ['resource.view'] }, expect: 404, invalid: true });
+    await call('deleteRole', { params: { roleName: 'platform_admin' }, expect: 409 });
+    await call('deleteRole', { params: { roleName: 'no_such_role' }, expect: 404 });
+    assert.equal((await call('deleteRole', { params: { roleName: 'contract_role' }, expect: 200 })).json.deleted, 1);
+    await call('listRoles', { as: 'operator', expect: 403 });
   });
 
   test('an auditor account for the permission checks', async () => {

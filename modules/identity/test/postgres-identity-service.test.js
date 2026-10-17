@@ -155,9 +155,9 @@ test('logging out ends the session, and logging out with an unknown token does n
 
 test('each role carries exactly its documented permissions, and no principal means no access', database, async () => {
   const permissions = async roles => { const u = await activeUser(roles); return [...(await identity.session((await identity.authenticate(u.username, PASSWORD)).token)).user.permissions].sort(); };
-  assert.deepEqual(await permissions(['operator']), ['connection.view', 'resource.operate', 'resource.view']);
+  assert.deepEqual(await permissions(['operator']), ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
   assert.deepEqual(await permissions(['auditor']), ['audit.view', 'connection.view', 'resource.view']);
-  assert.deepEqual(await permissions(['platform_admin']), ['audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.view']);
+  assert.deepEqual(await permissions(['platform_admin']), ['audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view']);
   const operator = await identity.session((await identity.authenticate((await activeUser()).username, PASSWORD)).token);
   assert.equal(identity.authorize(operator, 'resource.operate'), true);
   assert.equal(identity.authorize(operator, 'platform.manage'), false);
@@ -251,4 +251,57 @@ test('recovery codes work once: rotating issues a new code and retires the old, 
   await assert.rejects(() => identity.rotateRecoveryCode(randomUUID()), /USER_NOT_FOUND/);
   const pending = await newUser({ status: 'pending' });
   assert.equal(await identity.resetPassword(pending.user.username, pending.recoveryCode, '12-chars-pending-ok'), null, 'a pending account cannot reset');
+});
+
+// ---- custom roles ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+test('the built-in roles are in the database with their descriptions, and the catalogue is stored (resource.tag included)', database, async () => {
+  const roles = await identity.listRoles();
+  const system = roles.filter(role => role.system).map(role => role.name).sort();
+  assert.deepEqual(system, ['auditor', 'operator', 'platform_admin']);
+  assert.deepEqual(roles.find(role => role.name === 'operator').permissions, ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
+  assert.ok(roles.filter(role => role.system).every(role => role.description.length > 10));
+  assert.equal((await db.pool.query("SELECT count(*)::int n FROM identity.permissions WHERE permission_key='resource.tag'")).rows[0].n, 1);
+});
+
+test('custom roles behave the same in PostgreSQL as in memory: create, change with a version, list with the number of holders, and apply at once', database, async () => {
+  const name = `tagger_${randomUUID().slice(0, 6)}`;
+  const created = await identity.createRole({ name, description: ' tags ', permissions: ['resource.tag', 'resource.view'] });
+  assert.deepEqual([created.name, created.description, created.system, created.userCount, created.rowVersion, created.permissions], [name, 'tags', false, 0, 1, ['resource.tag', 'resource.view']]);
+  const holder = await activeUser([name]);
+  const session = async () => identity.session((await identity.authenticate(holder.username, PASSWORD)).token);
+  assert.deepEqual([...(await session()).user.permissions].sort(), ['resource.tag', 'resource.view']);
+  assert.equal((await identity.listRoles()).find(role => role.name === name).userCount, 1);
+  await assert.rejects(identity.updateRole(name, { permissions: ['resource.view'] }, 7), error => error.message === 'VERSION_CONFLICT');
+  const changed = await identity.updateRole(name, { description: 'view', permissions: ['resource.view'] }, 1);
+  assert.deepEqual([changed.rowVersion, changed.permissions], [2, ['resource.view']]);
+  assert.deepEqual((await session()).user.permissions, ['resource.view']);
+  await assert.rejects(identity.createRole({ name, permissions: ['resource.view'] }), error => error.code === 'NUV_ROLE_EXISTS');
+  await assert.rejects(identity.deleteRole(name), error => error.code === 'NUV_ROLE_IN_USE');
+});
+
+test('PostgreSQL refuses to change or delete a built-in role, and to give a user a role that is not there; an unknown role leaves the user as they were', database, async () => {
+  await assert.rejects(identity.updateRole('operator', { permissions: ['resource.view'] }, 1), error => error.code === 'NUV_ROLE_SYSTEM');
+  await assert.rejects(identity.deleteRole('platform_admin'), error => error.code === 'NUV_ROLE_SYSTEM');
+  assert.equal(await identity.updateRole('no_such_role', { permissions: ['resource.view'] }, 1), null);
+  assert.equal(await identity.deleteRole('no_such_role'), null);
+  const { user } = await newUser();
+  await assert.rejects(identity.updateUser(user.id, { status: 'active', roles: ['operator', 'no_such_role'] }, user.rowVersion), error => error.message === 'USER_INVALID');
+  assert.deepEqual((await identity.listUsers()).find(item => item.id === user.id).roles, ['operator'], 'the failed change was rolled back whole');
+  await assert.rejects(identity.createUser({ username: `ghost.${randomUUID().slice(0, 6)}`, displayName: 'Ghost', password: PASSWORD, roles: ['no_such_role'] }), error => error.message === 'USER_INVALID');
+});
+
+test('a role nobody holds can be deleted, and it is then gone with its permissions; the database rejects a role name that is not well formed', database, async () => {
+  const name = `temp_${randomUUID().slice(0, 6)}`;
+  const role = await identity.createRole({ name, permissions: ['resource.view'] });
+  assert.deepEqual(await identity.deleteRole(name), { deleted: 1 });
+  assert.equal((await db.pool.query('SELECT count(*)::int n FROM identity.role_permissions WHERE role_id=$1', [role.id])).rows[0].n, 0);
+  await assert.rejects(db.pool.query("INSERT INTO identity.roles(role_id,normalized_name,display_name,is_system) VALUES(gen_random_uuid(),'Bad Name','x',false)"), error => error.code === '23514');
+});
+
+test('at most 50 custom roles, even when many are created at the same moment', database, async () => {
+  const existing = (await identity.listRoles()).filter(role => !role.system).length;
+  const results = await Promise.allSettled(Array.from({ length: 60 - existing }, (_, i) => identity.createRole({ name: `bulk_${randomUUID().slice(0, 8)}_${i}`, permissions: ['resource.view'] })));
+  assert.equal((await identity.listRoles()).filter(role => !role.system).length, 50);
+  assert.ok(results.filter(result => result.status === 'rejected').every(result => result.reason.code === 'NUV_ROLE_LIMIT'));
 });

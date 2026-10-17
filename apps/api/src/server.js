@@ -42,6 +42,7 @@ import { ReadinessService } from '../../../modules/platform/src/readiness-servic
 import { latestMigrationVersion } from '../../../modules/platform/src/migrations.js';
 import { RetentionService, retentionPoliciesFromEnv } from '../../../modules/platform/src/retention-service.js';
 import { VerificationReconciler } from '../../../modules/tasks/src/verification-reconciler.js';
+import { PERMISSIONS, PERMISSION_KEYS, RoleError, permissionsBeyond } from '../../../modules/identity/src/roles.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
 import { OperationalMetrics } from '../../../modules/platform/src/operational-metrics.js';
 import { PerformanceService } from '../../../modules/monitoring/src/performance-service.js';
@@ -167,6 +168,8 @@ function json(res, status, payload, correlationId) {
 function problem(res, status, code, detail, correlationId) {
   json(res, status, { type: `https://nuvrion.local/problems/${code.toLowerCase()}`, title: 'Request failed', status, detail, code, correlationId, retryable: false }, correlationId);
 }
+// The permissions that giving someone these roles would add beyond what the signed-in person holds: nobody may hand out more than they have.
+async function rolesBeyond(principal,roleNames){const known=await identity.listRoles(),wanted=new Set();for(const name of Array.isArray(roleNames)?roleNames:[])for(const key of known.find(role=>role.name===name)?.permissions??[])wanted.add(key);return permissionsBeyond(principal.user.permissions,[...wanted]);}
 async function safeAudit(event){try{await store.recordAudit?.(event);}catch(error){console.error(JSON.stringify({level:'error',event:'audit.record_failed',action:event.action,correlationId:event.correlationId,error:error.message}));}}
 async function body(req) {
   let raw = '';
@@ -207,9 +210,54 @@ export async function handler(req, res) {
     if(req.method==='POST'&&url.pathname==='/api/v1/auth/logout'){const p=await requireAuth(req,res,correlationId);if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;await identity.logout(parseCookies(req.headers.cookie).nuvrion_session);await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.logout',targetType:'session',targetId:null,correlationId,outcome:'succeeded',detail:{}});res.setHeader('set-cookie',production?['nuvrion_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0','nuvrion_csrf=; Secure; SameSite=Strict; Path=/; Max-Age=0']:'nuvrion_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');res.writeHead(204,{...securityHeaders('application/json; charset=utf-8'),'x-correlation-id':correlationId});return res.end();}
     if(req.method==='GET'&&url.pathname==='/api/v1/users'){const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;const items=await identity.listUsers();return json(res,200,{items,nextCursor:null,count:items.length,meta:{correlationId}},correlationId);}
     const userMatch=url.pathname.match(/^\/api\/v1\/users\/([0-9a-f-]+)$/i),userSessionsMatch=url.pathname.match(/^\/api\/v1\/users\/([0-9a-f-]+)\/revoke-sessions$/i),userRecoveryMatch=url.pathname.match(/^\/api\/v1\/users\/([0-9a-f-]+)\/recovery-code$/i);
-    if(req.method==='PATCH'&&userMatch){const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);try{const input=await body(req),user=await identity.updateUser(userMatch[1],{status:input.status,roles:input.roles},version);if(!user)return problem(res,404,'NUV_USER_NOT_FOUND','User was not found.',correlationId);await store.recordAudit?.({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.user_updated',targetType:'user',targetId:user.id,correlationId,outcome:'succeeded',detail:{status:user.status,roles:user.roles}});res.setHeader('etag',`"${user.rowVersion}"`);return json(res,200,user,correlationId);}catch(error){const status=error.message==='VERSION_CONFLICT'?412:error.message==='LAST_ADMIN'?409:422,code=error.message==='VERSION_CONFLICT'?'NUV_VERSION_CONFLICT':error.message==='LAST_ADMIN'?'NUV_LAST_ADMIN_REQUIRED':'NUV_USER_UPDATE_INVALID',detail=error.message==='VERSION_CONFLICT'?'The user changed. Refresh and retry.':error.message==='LAST_ADMIN'?'At least one active Platform Administrator is required.':'User status or roles are invalid.';return problem(res,status,code,detail,correlationId);}}
+    if(req.method==='PATCH'&&userMatch){const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);try{const input=await body(req),beyond=await rolesBeyond(p,input.roles);if(beyond.length)return problem(res,403,'NUV_ROLE_ESCALATION',`You cannot give a user permissions you do not have yourself (${beyond.join(', ')}).`,correlationId);const user=await identity.updateUser(userMatch[1],{status:input.status,roles:input.roles},version);if(!user)return problem(res,404,'NUV_USER_NOT_FOUND','User was not found.',correlationId);await store.recordAudit?.({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.user_updated',targetType:'user',targetId:user.id,correlationId,outcome:'succeeded',detail:{status:user.status,roles:user.roles}});res.setHeader('etag',`"${user.rowVersion}"`);return json(res,200,user,correlationId);}catch(error){const status=error.message==='VERSION_CONFLICT'?412:error.message==='LAST_ADMIN'?409:422,code=error.message==='VERSION_CONFLICT'?'NUV_VERSION_CONFLICT':error.message==='LAST_ADMIN'?'NUV_LAST_ADMIN_REQUIRED':'NUV_USER_UPDATE_INVALID',detail=error.message==='VERSION_CONFLICT'?'The user changed. Refresh and retry.':error.message==='LAST_ADMIN'?'At least one active Platform Administrator is required.':'User status or roles are invalid.';return problem(res,status,code,detail,correlationId);}}
     if(req.method==='POST'&&userSessionsMatch){const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;const result=await identity.revokeSessions(userSessionsMatch[1]);await store.recordAudit?.({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.sessions_revoked',targetType:'user',targetId:userSessionsMatch[1],correlationId,outcome:'succeeded',detail:{revoked:result.revoked}});return json(res,200,result,correlationId);}
     if(req.method==='POST'&&userRecoveryMatch){const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;try{const result=await identity.rotateRecoveryCode(userRecoveryMatch[1]);await store.recordAudit?.({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.recovery_code_rotated',targetType:'user',targetId:userRecoveryMatch[1],correlationId,outcome:'succeeded',detail:{labRecovery:true,administrative:true}});return json(res,200,result,correlationId);}catch{return problem(res,404,'NUV_USER_NOT_FOUND','User was not found.',correlationId);}}
+    if (req.method === 'GET' && url.pathname === '/api/v1/permissions') {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;
+      return json(res,200,{items:PERMISSIONS,count:PERMISSIONS.length,meta:{correlationId}},correlationId);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/v1/roles') {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;
+      const items=await identity.listRoles();return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    const roleRefused=(error)=>{
+      if(error instanceof RoleError){const status={NUV_ROLE_EXISTS:409,NUV_ROLE_IN_USE:409,NUV_ROLE_SYSTEM:409,NUV_ROLE_LIMIT:409}[error.code]??422;return problem(res,status,error.code,error.message,correlationId);}
+      if(error.message==='VERSION_CONFLICT')return problem(res,412,'NUV_VERSION_CONFLICT','The role changed. Refresh and retry.',correlationId);
+      throw error;
+    };
+    if (req.method === 'POST' && url.pathname === '/api/v1/roles') {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const input=await body(req),beyond=Array.isArray(input?.permissions)?permissionsBeyond(p.user.permissions,input.permissions.filter(key=>PERMISSION_KEYS.includes(key))):[];
+        if(beyond.length)return problem(res,403,'NUV_ROLE_ESCALATION',`You cannot give a role permissions you do not have yourself (${beyond.join(', ')}).`,correlationId);
+        const role=await identity.createRole(input);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.role_created',targetType:'role',targetId:role.name,correlationId,outcome:'succeeded',detail:{permissions:role.permissions}});
+        res.setHeader('etag',`"${role.rowVersion}"`);return json(res,201,role,correlationId);
+      }catch(error){return roleRefused(error);}
+    }
+    const roleMatch=url.pathname.match(/^\/api\/v1\/roles\/([A-Za-z0-9_-]{1,64})$/);
+    if (req.method === 'PATCH' && roleMatch) {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);
+      try{
+        const input=await body(req),beyond=Array.isArray(input?.permissions)?permissionsBeyond(p.user.permissions,input.permissions.filter(key=>PERMISSION_KEYS.includes(key))):[];
+        if(beyond.length)return problem(res,403,'NUV_ROLE_ESCALATION',`You cannot give a role permissions you do not have yourself (${beyond.join(', ')}).`,correlationId);
+        const role=await identity.updateRole(roleMatch[1],input,version);
+        if(!role)return problem(res,404,'NUV_ROLE_NOT_FOUND','Role was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.role_updated',targetType:'role',targetId:role.name,correlationId,outcome:'succeeded',detail:{permissions:role.permissions}});
+        res.setHeader('etag',`"${role.rowVersion}"`);return json(res,200,role,correlationId);
+      }catch(error){return roleRefused(error);}
+    }
+    if (req.method === 'DELETE' && roleMatch) {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const result=await identity.deleteRole(roleMatch[1]);
+        if(!result)return problem(res,404,'NUV_ROLE_NOT_FOUND','Role was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.role_deleted',targetType:'role',targetId:roleMatch[1],correlationId,outcome:'succeeded',detail:{}});
+        return json(res,200,result,correlationId);
+      }catch(error){return roleRefused(error);}
+    }
     if (req.method === 'GET' && url.pathname === '/api/v1/tasks') {const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;const items=await store.list();return json(res, 200, { items, nextCursor: null, count: items.length, meta: { correlationId } }, correlationId);}
     const match = url.pathname.match(/^\/api\/v1\/tasks\/([0-9a-f-]+)$/i);
     if (req.method === 'GET' && match) {
@@ -286,7 +334,7 @@ export async function handler(req, res) {
     if(req.method==='GET'&&url.pathname==='/api/v1/performance/latest'){const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;const resources=await inventory.list({resourceType:'virtual_machine'}),items=await performance.latestForResources(resources.map(resource=>resource.id));return json(res,200,{items,count:items.length},correlationId);}
     if(req.method==='GET'&&url.pathname==='/api/v1/infrastructure'){const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;const kind=url.searchParams.get('kind'),lifecycleState=url.searchParams.get('lifecycleState');let items=await infrastructure.list({connectionId:url.searchParams.get('connectionId'),kind,lifecycleState});if(!lifecycleState)items=items.filter(item=>item.lifecycleState!=='deleted');return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);}
     if(req.method==='GET'&&url.pathname==='/api/v1/tags'){const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;const items=await tags.catalog();return json(res,200,{items,count:items.length},correlationId);}
-    if(req.method==='POST'&&url.pathname==='/api/v1/tag-operations'){const p=await requireAuth(req,res,correlationId,'resource.operate');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;let operation;try{operation=parseTagOperation(await body(req));}catch(error){if(error instanceof TagError)return problem(res,422,error.code,error.message,correlationId);throw error;}const targets=[];for(const id of operation.resourceIds){const resource=await inventory.get(id);if(!resource)return problem(res,404,'NUV_RESOURCE_NOT_FOUND',`Resource ${id} was not found; nothing was changed.`,correlationId);targets.push(resource);}let plan;try{plan=await tags.apply(operation);}catch(error){if(error instanceof TagError)return problem(res,422,error.code,error.message,correlationId);throw error;}const names=new Map(targets.map(resource=>[resource.id,resource.name]));for(const entry of plan.filter(item=>item.changedAnything))await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'resource.tags_updated',targetType:'resource',targetId:entry.resourceId,correlationId,outcome:'succeeded',detail:{resourceName:names.get(entry.resourceId),added:entry.added,changed:entry.changed,removed:entry.removed}});return json(res,200,{count:plan.length,changedCount:plan.filter(item=>item.changedAnything).length,items:plan.map(entry=>({resourceId:entry.resourceId,changed:entry.changedAnything,tags:entry.after.map(tag=>({...tag,source:'nuvrion'}))}))},correlationId);}
+    if(req.method==='POST'&&url.pathname==='/api/v1/tag-operations'){const p=await requireAuth(req,res,correlationId,'resource.tag');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;let operation;try{operation=parseTagOperation(await body(req));}catch(error){if(error instanceof TagError)return problem(res,422,error.code,error.message,correlationId);throw error;}const targets=[];for(const id of operation.resourceIds){const resource=await inventory.get(id);if(!resource)return problem(res,404,'NUV_RESOURCE_NOT_FOUND',`Resource ${id} was not found; nothing was changed.`,correlationId);targets.push(resource);}let plan;try{plan=await tags.apply(operation);}catch(error){if(error instanceof TagError)return problem(res,422,error.code,error.message,correlationId);throw error;}const names=new Map(targets.map(resource=>[resource.id,resource.name]));for(const entry of plan.filter(item=>item.changedAnything))await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'resource.tags_updated',targetType:'resource',targetId:entry.resourceId,correlationId,outcome:'succeeded',detail:{resourceName:names.get(entry.resourceId),added:entry.added,changed:entry.changed,removed:entry.removed}});return json(res,200,{count:plan.length,changedCount:plan.filter(item=>item.changedAnything).length,items:plan.map(entry=>({resourceId:entry.resourceId,changed:entry.changedAnything,tags:entry.after.map(tag=>({...tag,source:'nuvrion'}))}))},correlationId);}
     const resourceMatch=url.pathname.match(/^\/api\/v1\/resources\/([0-9a-f-]+)$/i);
     if(req.method==='GET'&&resourceMatch){const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;const resource=await inventory.get(resourceMatch[1]);return resource?json(res,200,(await withTags([resource]))[0],correlationId):problem(res,404,'NUV_RESOURCE_NOT_FOUND','Resource was not found.',correlationId);}
     const resourceMetricsMatch=url.pathname.match(/^\/api\/v1\/resources\/([0-9a-f-]+)\/metrics$/i);
@@ -348,6 +396,10 @@ export async function handler(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/tags.js') {
       const js = await readFile(resolve(webRoot, 'tags.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/roles.js') {
+      const js = await readFile(resolve(webRoot, 'roles.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
     if (req.method === 'GET' && url.pathname === '/infrastructure.js') {

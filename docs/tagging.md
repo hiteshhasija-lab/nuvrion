@@ -25,7 +25,7 @@ VMware ESXi, vCenter and Workstation report no tags today, so those VMs carry on
   next to its tags does the same for that VM alone.
 - **The dialog** lists the tags Nuvrion holds on the chosen VMs and how many of them carry each ("on all 3", "on 2 of 3"), with Remove for each, and a form to add or change a tag
   (it suggests the keys already in use). Each action is its own request and the dialog shows the result. A key that is not valid is explained in the dialog, which stays open.
-- Who may change tags: anyone allowed to operate resources (operators and administrators). Auditors see tags but are not offered the button, and the server refuses them anyway.
+- Who may change tags: anyone whose role has the `resource.tag` permission (operators and administrators, and any custom role given it; see [roles](roles.md)). Auditors see tags but are not offered the button, and the server refuses them anyway.
 
 ## In the API
 

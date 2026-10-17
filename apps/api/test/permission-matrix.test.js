@@ -16,8 +16,8 @@ const dependenciesInstalled = await Promise.all(['ws', 'pg', 'ssh2', 'amqplib'].
 const PASSWORD = 'Matrix-Test-Password-1!'; // secret-scan:allow (fake test credential)
 const ID = '00000000-0000-4000-8000-000000000001', SESSION_HASH = 'a'.repeat(64);
 const PERMISSIONS = {
-  admin: ['resource.view', 'resource.operate', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage'],
-  operator: ['resource.view', 'resource.operate', 'connection.view'],
+  admin: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage'],
+  operator: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view'],
   auditor: ['resource.view', 'connection.view', 'audit.view']
 };
 // [method, path, permission, route id used by the coverage check]
@@ -28,6 +28,11 @@ const PROTECTED = [
   ['GET', '/api/v1/platform/metrics', 'platform.manage', '/api/v1/platform/metrics'],
   ['GET', '/api/v1/platform/metrics/prometheus', 'platform.manage', '/api/v1/platform/metrics/prometheus'],
   ['GET', '/api/v1/users', 'identity.manage', '/api/v1/users'],
+  ['GET', '/api/v1/permissions', 'identity.manage', '/api/v1/permissions'],
+  ['GET', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
+  ['POST', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
+  ['PATCH', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
+  ['DELETE', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
   ['PATCH', `/api/v1/users/${ID}`, 'identity.manage', 'userMatch'],
   ['POST', `/api/v1/users/${ID}/revoke-sessions`, 'identity.manage', 'userSessionsMatch'],
   ['POST', `/api/v1/users/${ID}/recovery-code`, 'identity.manage', 'userRecoveryMatch'],
@@ -70,7 +75,7 @@ const PROTECTED = [
   ['GET', '/api/v1/resources', 'resource.view', '/api/v1/resources'],
   ['GET', '/api/v1/tags', 'resource.view', '/api/v1/tags'],
   ['GET', '/api/v1/infrastructure', 'resource.view', '/api/v1/infrastructure'],
-  ['POST', '/api/v1/tag-operations', 'resource.operate', '/api/v1/tag-operations'],
+  ['POST', '/api/v1/tag-operations', 'resource.tag', '/api/v1/tag-operations'],
   ['GET', '/api/v1/performance/latest', 'resource.view', '/api/v1/performance/latest'],
   ['GET', `/api/v1/resources/${ID}`, 'resource.view', 'resourceMatch'],
   ['GET', `/api/v1/resources/${ID}/metrics`, 'resource.view', 'resourceMetricsMatch'],

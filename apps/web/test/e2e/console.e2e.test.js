@@ -665,4 +665,57 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(page.problems()), []);
     await page.close();
   });
+
+  // ---- roles on the Users page (apps/web/roles.js) ----------------------------------------------------------------------------------------------------------------------
+  test('an administrator creates a role in the console, gives it to a user who then sees what it allows and nothing more, and a role people hold cannot be deleted', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'users');
+    await page.waitFor(() => document.querySelectorAll('#role-table tr[data-role-row]').length >= 3);
+    const builtIn = await page.evaluate(() => [...document.querySelectorAll('#role-table tr[data-role-row]')].map(r => [r.dataset.roleRow, /built-in/i.test(r.innerText), Boolean(r.querySelector('[data-role-delete]'))]));
+    assert.deepEqual(builtIn.filter(r => r[1]).map(r => r[0]).sort(), ['auditor', 'operator', 'platform_admin']);
+    assert.ok(builtIn.filter(r => r[1]).every(r => r[2] === false), 'a built-in role offers no Delete');
+    // a built-in role opens read-only
+    await page.click('[data-role-open=operator]');
+    await page.waitFor(() => document.getElementById('role-dialog').open && /Built-in roles are part of the platform/.test(document.getElementById('role-form').innerText));
+    assert.equal(await page.evaluate(() => !document.getElementById('role-save') && [...document.querySelectorAll('#role-form input[name=permission]')].every(box => box.disabled)), true);
+    await page.click('#role-close'); await page.waitFor(() => !document.getElementById('role-dialog').open);
+    // a new role: ticking resource.tag keeps resource.view ticked; unticking resource.view takes resource.tag with it; a refused name is explained in the dialog
+    await page.click('[data-role-new]');
+    await page.waitFor(() => document.getElementById('role-dialog').open && document.getElementById('role-name'));
+    await page.evaluate(() => document.querySelector('#role-form input[value="resource.view"]').click());
+    await page.waitFor(() => !document.querySelector('#role-form input[value="resource.view"]').checked);
+    await page.evaluate(() => document.querySelector('#role-form input[value="resource.tag"]').click());
+    await page.waitFor(() => document.querySelector('#role-form input[value="resource.view"]').checked && document.querySelector('#role-form input[value="resource.tag"]').checked);
+    await page.fill('#role-name', 'operator'); await page.click('#role-save');
+    await page.waitFor(() => /built-in role/.test(document.getElementById('role-error').innerText) && !document.getElementById('role-error').hidden);
+    assert.equal(await page.evaluate(() => document.getElementById('role-dialog').open), true, 'the dialog stays open with the reason');
+    await page.fill('#role-name', 'Night Shift'); await page.fill('#role-description', 'tags machines at night');
+    await page.click('#role-save');
+    await page.waitFor(() => !document.getElementById('role-dialog').open && document.querySelector('#role-table [data-role-row=night_shift]'));
+    assert.match(await page.text('#role-table [data-role-row=night_shift]'), /tags machines at night[\s\S]*resource\.view[\s\S]*resource\.tag/);
+    // the role is offered in the user list, and a user who holds it sees the Tag button but not the Users page
+    const keeper = await lab.createUser({ username: 'nina.night', displayName: 'Nina Night', role: 'night_shift' });
+    const other = await newPage();
+    await signIn(other, keeper.username, keeper.password); await signedIn(other);
+    await openView(other, 'inventory');
+    await other.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length >= 2);
+    assert.equal(await other.evaluate(() => document.getElementById('inventory-tag-button').hidden), false, 'the role allows tagging');
+    assert.equal(await other.evaluate(() => document.querySelector('[data-view=users]').hidden), true, 'and not administration');
+    await other.click('input[aria-label="Select nuvrion-app-01"]');
+    await other.waitFor(() => /1 selected/.test(document.querySelector('#vm-action-toolbar .bulk-count')?.innerText ?? ''));
+    assert.equal(await other.evaluate(() => [...document.querySelectorAll('[data-bulk-operation]')].every(button => button.disabled)), true, 'nor operating machines: with a machine chosen, every power action is still disabled');
+    assert.deepEqual(unexpected(other.problems()), []);
+    await other.close();
+    // refresh: the user list now shows the role for Nina, the table counts her, and Delete is not offered while she holds it
+    await page.evaluate(() => document.querySelector('#navigation button[data-view=overview]').click());
+    await openView(page, 'users');
+    await page.waitFor(() => [...document.querySelectorAll('#role-table [data-role-row=night_shift] td')][2]?.textContent.trim() === '1', undefined, { timeout: 20000 });
+    assert.equal(await page.evaluate(() => document.querySelector('[data-role-delete=night_shift]').disabled), true);
+    assert.match(await page.evaluate(() => document.querySelector('[data-role-delete=night_shift]').title), /Held by 1 user/);
+    const refusals = unexpected(page.problems()).filter(p => /status of 422.*\/api\/v1\/roles/.test(p));
+    assert.equal(refusals.length, 1, 'the browser logged the one refusal this test provoked (a built-in name), and nothing else');
+    assert.deepEqual(unexpected(page.problems()).filter(p => !refusals.includes(p)), []);
+    await page.close();
+  });
 });

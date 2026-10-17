@@ -1116,3 +1116,19 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .infra-detail-card h2,.infra-detail-card h3,.infra-tree-card h2{text-transform:none}
 .infra-detail-card .text-button{padding:0;text-align:left}
 .infra-detail-card .infra-facts dd{font-size:13px}
+
+/* Roles */
+.role-card{margin-top:16px}
+.role-head{padding:20px 20px 0;align-items:center}
+.role-head small{display:block;color:#4d5b60;font-size:12px;margin-top:4px;max-width:60ch}
+.role-perms{display:flex;flex-wrap:wrap;gap:4px}
+.role-chip{display:inline-block;padding:2px 8px;border-radius:999px;background:#e8f2f1;color:#0f5b56;font-size:11px;font-weight:600}
+.role-chip.is-more{background:#edf1f2;color:#3d4b50}
+.role-dialog{width:min(640px,calc(100% - 30px));max-height:calc(100vh - 40px)}
+.role-dialog h2{text-transform:none}
+.role-group{border:1px solid #dce3e4;border-radius:10px;padding:8px 12px 10px;margin:0}
+.role-group legend{padding:0 6px;font-size:12px;font-weight:700;color:#3d4b50}
+.role-permission{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:13px}
+.role-permission input{margin-top:3px;height:auto}
+.role-permission strong{display:block;font-size:13px}
+.role-permission small{display:block;color:#4d5b60;font-size:12px}

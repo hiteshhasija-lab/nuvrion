@@ -18,9 +18,9 @@ test('a bootstrap administrator exists and can sign in', () => {
 test('the three roles carry exactly the documented permissions', () => {
   const identity = service();
   const grant = roles => identity.createUser({ username: `u-${roles.join('-')}`, displayName: 'Test', password: PASSWORD, roles }).user.permissions.sort();
-  assert.deepEqual(grant(['operator']), ['connection.view', 'resource.operate', 'resource.view']);
+  assert.deepEqual(grant(['operator']), ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
   assert.deepEqual(grant(['auditor']), ['audit.view', 'connection.view', 'resource.view']);
-  assert.deepEqual(grant(['platform_admin']), ['audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.view']);
+  assert.deepEqual(grant(['platform_admin']), ['audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view']);
 });
 
 test('authorize reflects the role, and nothing is allowed without a principal', () => {
@@ -172,4 +172,39 @@ test('an invalid request is reported before a duplicate one, and a duplicate is 
   assert.throws(() => identity.createUser({ username: 'ADMIN', displayName: 'Dup', password: PASSWORD }), /USERNAME_EXISTS/);
   assert.throws(() => identity.createUser({ username: 'admin', displayName: 'Dup', password: 'short' }), /PASSWORD_TOO_SHORT/);
   assert.throws(() => identity.createUser({ username: 'admin', displayName: '', password: PASSWORD }), /USER_INVALID/);
+});
+
+// ---- custom roles ----------------------------------------------------------------------------------------------------------------------------------------------------
+
+test('a custom role gives a user exactly its permissions, and a change to the role applies to the next request', () => {
+  const identity = service();
+  const role = identity.createRole({ name: 'Tag Keeper', description: 'tags', permissions: ['resource.tag', 'resource.view'] });
+  assert.deepEqual([role.name, role.system, role.userCount, role.rowVersion], ['tag_keeper', false, 0, 1]);
+  identity.createUser({ username: 'keeper', displayName: 'Keeper', password: PASSWORD, roles: ['tag_keeper'] });
+  const principal = identity.session(identity.authenticate('keeper', PASSWORD).token);
+  assert.deepEqual([...principal.user.permissions].sort(), ['resource.tag', 'resource.view']);
+  assert.equal(identity.listRoles().find(item => item.name === 'tag_keeper').userCount, 1);
+  identity.updateRole('tag_keeper', { permissions: ['resource.view'] }, 1);
+  assert.deepEqual(identity.session(identity.authenticate('keeper', PASSWORD).token).user.permissions, ['resource.view']);
+});
+
+test('roles: built-in ones are protected, names are unique, versions are checked, and a held role cannot be deleted', () => {
+  const identity = service();
+  assert.deepEqual(identity.listRoles().map(role => role.name), ['auditor', 'operator', 'platform_admin'].sort((a, b) => a.localeCompare(b)));
+  assert.throws(() => identity.updateRole('operator', { permissions: ['resource.view'] }, 1), error => error.code === 'NUV_ROLE_SYSTEM');
+  assert.throws(() => identity.deleteRole('auditor'), error => error.code === 'NUV_ROLE_SYSTEM');
+  identity.createRole({ name: 'viewers', permissions: ['resource.view'] });
+  assert.throws(() => identity.createRole({ name: 'Viewers', permissions: ['resource.view'] }), error => error.code === 'NUV_ROLE_EXISTS');
+  assert.throws(() => identity.updateRole('viewers', { permissions: ['resource.view'] }, 9), error => error.message === 'VERSION_CONFLICT');
+  assert.equal(identity.updateRole('nobody', { permissions: ['resource.view'] }, 1), null);
+  assert.equal(identity.deleteRole('nobody'), null);
+  identity.createUser({ username: 'holder', displayName: 'Holder', password: PASSWORD, roles: ['viewers'] });
+  assert.throws(() => identity.deleteRole('viewers'), error => error.code === 'NUV_ROLE_IN_USE');
+  assert.throws(() => identity.createUser({ username: 'ghost', displayName: 'Ghost', password: PASSWORD, roles: ['no_such_role'] }), error => error.message === 'USER_INVALID');
+});
+
+test('the custom role limit holds', () => {
+  const identity = service();
+  for (let i = 0; i < 50; i++) identity.createRole({ name: `role_${i}`, permissions: ['resource.view'] });
+  assert.throws(() => identity.createRole({ name: 'one_too_many', permissions: ['resource.view'] }), error => error.code === 'NUV_ROLE_LIMIT');
 });

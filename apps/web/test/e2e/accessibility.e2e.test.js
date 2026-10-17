@@ -96,6 +96,18 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await settle(300);
   });
 
+  test('the roles table and the role dialog (new, custom and built-in)', async () => {
+    await openView('users');
+    await page.waitFor(() => document.querySelectorAll('#role-table tr[data-role-row]').length >= 3);
+    await expectNoViolations('roles table');
+    await page.click('[data-role-new]'); await shown('#role-form #role-name'); await settle(300);
+    await expectNoViolations('new role dialog');
+    await closeDialog('#role-close');
+    await page.click('[data-role-open=operator]'); await shown('#role-form'); await settle(300);
+    await expectNoViolations('built-in role dialog');
+    await closeDialog('#role-close');
+  });
+
   test('the add-connection form and the dialogs opened for a VM', async () => {
     await openView('connections');
     await page.click('#show-connection-form');
