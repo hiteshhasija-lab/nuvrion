@@ -27,7 +27,7 @@ export function roleTableHtml(roles, { esc }) {
     const chips = `<span class="role-perms" title="${esc(role.permissions.join(', '))}">${shown.map(key => `<span class="role-chip">${esc(key)}</span>`).join('')}${more > 0 ? `<span class="role-chip is-more">+${more}</span>` : ''}</span>`;
     const actions = role.system
       ? `<button type="button" data-role-open="${esc(role.name)}">View<span class="sr-only"> role ${esc(roleLabel(role))}</span></button>`
-      : `<button type="button" class="primary" data-role-open="${esc(role.name)}">Edit<span class="sr-only"> role ${esc(roleLabel(role))}</span></button><button type="button" data-role-delete="${esc(role.name)}"${role.userCount ? ` disabled title="${esc(`Held by ${plural(role.userCount, 'user')}: give them another role first.`)}"` : ''}>Delete<span class="sr-only"> role ${esc(roleLabel(role))}</span></button>`;
+      : `<button type="button" data-role-open="${esc(role.name)}">Edit<span class="sr-only"> role ${esc(roleLabel(role))}</span></button><button type="button" data-role-delete="${esc(role.name)}"${role.userCount ? ` disabled title="${esc(`Held by ${plural(role.userCount, 'user')}: give them another role first.`)}"` : ''}>Delete<span class="sr-only"> role ${esc(roleLabel(role))}</span></button>`;
     return `<tr data-role-row="${esc(role.name)}"><td><strong>${esc(roleLabel(role))}</strong>${role.system ? ' <span class="badge">Built-in</span>' : ''}<small class="block">${esc(role.description || 'No description')}</small></td><td>${chips}</td><td>${role.userCount}</td><td class="row-actions right">${actions}</td></tr>`;
   }).join('');
 }

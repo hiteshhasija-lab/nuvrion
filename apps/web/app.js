@@ -1,6 +1,6 @@
 import {connectionIssueHtml,startRetryCountdowns,failureReason} from '/connection-issue.js?v=20261006-115';
 import {tagChipsHtml,tagFilterOptions,matchesTagSpec,tagFilterOptionsHtml,tagDialogHtml,tagOperationBody,tagResultText} from '/tags.js?v=20261017-1';
-import {roleTableHtml,roleDialogHtml,roleRequestBody,permissionsAfterToggle,userRoleOptionsHtml} from '/roles.js?v=20261017-1';
+import {roleTableHtml,roleDialogHtml,roleRequestBody,permissionsAfterToggle,userRoleOptionsHtml} from '/roles.js?v=20261017-2';
 import {hostFactHtml,buildIndex as buildInfrastructureIndex,treeHtml as infrastructureTreeHtml,detailHtml as infrastructureDetailHtml,placementRowsHtml,placementSearchText} from '/infrastructure.js?v=20261017-4';
 import {summarizeEstate,recentAlerts,matchesDrill,drillIsEmpty,estateHealthHtml,providerOverviewHtml,recentAlertsHtml,drillChipsHtml} from '/dashboard.js?v=20261017-4';
 const $=id=>document.getElementById(id);const esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
