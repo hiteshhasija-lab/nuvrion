@@ -38,7 +38,7 @@ export function environment() {
   const config = join(root, 'config'), backups = join(root, 'backups'), bin = join(root, 'bin');
   for (const dir of [config, bin, join(config, 'tls')]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(config, 'nuvrion-api-final.env'), 'NUVRION_MASTER_KEY=very-secret-master-key-value\nPOSTGRES_PASSWORD=very-secret-db-password\n'); // secret-scan:allow (fake test values)
-  writeFileSync(join(config, 'agent-signing-private.pem'), '-----BEGIN PRIVATE KEY-----\nfake-agent-signing-key\n-----END PRIVATE KEY-----\n');
+  writeFileSync(join(config, 'agent-signing-private.pem'), '-----BEGIN PRIVATE KEY-----\nfake-agent-signing-key\n-----END PRIVATE KEY-----\n'); // secret-scan:allow (fake test value, not a key)
   writeFileSync(join(config, 'agent-signing-public.pem'), 'fake public key\n');
   writeFileSync(join(config, 'nuvrion-lab-root-ca.pem'), 'fake ca\n');
   writeFileSync(join(config, 'Caddyfile'), 'example.test { }\n');

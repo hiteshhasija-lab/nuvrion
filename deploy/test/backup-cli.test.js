@@ -90,7 +90,7 @@ test('init creates the recovery key and the configuration once and never replace
     const second = run(['init', '--host', 'h.example', '--user', 'owner', '--destination', destination]);
     assert.equal(second.status, 1); assert.match(second.stderr, /already exists/);
     assert.deepEqual(readFileSync(key), before, 'the key is untouched');
-    writeFileSync(join(home, 'private.pem'), '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n');
+    writeFileSync(join(home, 'private.pem'), '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n'); // secret-scan:allow (fake test value, not a key)
     assert.equal(run(['host-key', join(home, 'private.pem')]).status, 1, 'a private key is not accepted as the host’s public key');
     writeFileSync(join(home, 'public.pem'), 'noise\n-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----\n');
     assert.equal(run(['host-key', join(home, 'public.pem')]).status, 0);
