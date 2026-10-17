@@ -58,6 +58,8 @@ export function buildIndex(objects, resources, connections) {
 const byName = (a, b) => a.name.localeCompare(b.name);
 export const vmsOn = (index, object) => (index.vmsOf.get(object.id) ?? []).slice().sort(byName);
 
+const icon = kind => `<span class="infra-node-icon infra-node-icon-${kind}" aria-hidden="true"><svg viewBox="0 0 24 24">${kind === 'connection' ? '<path d="M5 7h14v10H5zM8 11h.01M11 11h5M8 14h.01M11 14h5"/>' : kind === 'host' ? '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5M17 15h.01"/>' : kind === 'datastore' ? '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>' : kind === 'network' ? '<circle cx="12" cy="5" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M10.8 7.2 7.3 15.8M13.2 7.2l3.5 8.6M8.5 18h7"/>' : '<path d="M4 5h16v14H4zM8 9h8M8 13h5"/>'}</svg></span>`;
+
 // VMs on everything under an object (a cluster's hosts, a datacenter's hosts), counted once each.
 export function vmCountUnder(index, object) {
   const seen = new Set(), walk = node => {
@@ -76,7 +78,7 @@ function nodeButton(index, object, selected, { esc }) {
   const count = object.kind === 'host' ? vmsOn(index, object).length : object.kind === 'datastore' || object.kind === 'network' ? vmsOn(index, object).length : vmCountUnder(index, object);
   const note = object.lifecycleState === 'missing' ? ' · missing' : '';
   const dot = object.kind === 'host' ? `<span class="infra-dot ${object.attributes.connectionState && object.attributes.connectionState !== 'connected' ? 'tone-bad' : 'tone-good'}" aria-hidden="true"></span>` : '';
-  return `<button type="button" class="infra-node${object.id === selected ? ' is-selected' : ''}" data-infra-select="${esc(object.id)}"${object.id === selected ? ' aria-current="true"' : ''}><span class="infra-kind">${esc(KIND_LABELS[object.kind])}</span><span class="infra-name">${dot}${esc(object.name)}</span><small>${object.kind === 'datacenter' || object.kind === 'cluster' || object.kind === 'host' || object.kind === 'datastore' || object.kind === 'network' ? `${plural(count, 'VM')}${esc(note)}` : ''}</small></button>`;
+  return `<button type="button" class="infra-node${object.id === selected ? ' is-selected' : ''}" data-infra-select="${esc(object.id)}"${object.id === selected ? ' aria-current="true"' : ''}>${icon(object.kind)}<span class="infra-node-copy"><span class="infra-kind">${esc(KIND_LABELS[object.kind])}</span><span class="infra-name">${dot}${esc(object.name)}</span></span><small>${object.kind === 'datacenter' || object.kind === 'cluster' || object.kind === 'host' || object.kind === 'datastore' || object.kind === 'network' ? `${plural(count, 'VM')}${esc(note)}` : ''}</small></button>`;
 }
 
 function branch(index, objects, selected, ctx) {
@@ -100,7 +102,7 @@ export function treeHtml(index, selected, ctx) {
   if (!index.objects.length) return `<div class="empty compact"><strong>No infrastructure reported yet</strong><p>Hosts, datastores and networks appear here once a VMware ESXi or vCenter connection has been discovered. VMware Workstation, AWS and Azure do not report them.</p></div>${silent}`;
   const connections = index.reporting.map(connection => {
     const down = DOWN.has(connection.healthState), id = `connection:${connection.id}`;
-    return `<li><button type="button" class="infra-node infra-connection${id === selected ? ' is-selected' : ''}" data-infra-select="${esc(id)}"${id === selected ? ' aria-current="true"' : ''}><span class="infra-kind">${esc(labelOf(connection))}</span><span class="infra-name">${esc(connection.name)}</span><small>${down ? 'unreachable · last known' : ''}</small></button>${branch(index, index.roots.get(connection.id) ?? [], selected, ctx)}</li>`;
+    return `<li><button type="button" class="infra-node infra-connection${id === selected ? ' is-selected' : ''}" data-infra-select="${esc(id)}"${id === selected ? ' aria-current="true"' : ''}>${icon('connection')}<span class="infra-node-copy"><span class="infra-kind">${esc(labelOf(connection))}</span><span class="infra-name">${esc(connection.name)}</span></span><small>${down ? 'unreachable · last known' : 'Connected'}</small></button>${branch(index, index.roots.get(connection.id) ?? [], selected, ctx)}</li>`;
   });
   return `<ul class="infra-tree">${connections.join('')}</ul>${silent}`;
 }
@@ -135,12 +137,13 @@ function header(object, ctx, subtitle) {
 
 export function detailHtml(index, selected, ctx) {
   const { esc, when, powerOf, labelOf } = ctx;
-  if (!selected) return '<div class="empty compact"><strong>Select something in the tree</strong><p>Its details and the virtual machines on it appear here.</p></div>';
+  if (!selected) return '<div class="infra-empty-state"><span class="infra-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg></span><strong>Select something in the tree</strong><p>Its details and the virtual machines on it appear here.</p></div>';
   if (selected.startsWith('connection:')) {
     const connection = index.connectionById.get(selected.slice('connection:'.length));
     if (!connection) return '<div class="empty compact"><p>That connection is no longer there.</p></div>';
     const mine = index.objects.filter(object => object.connectionId === connection.id), count = kind => mine.filter(object => object.kind === kind).length;
-    return `<div class="card-head"><div><p class="eyebrow">CONNECTION</p><h2>${esc(connection.name)}</h2><small>${esc(labelOf(connection))}</small></div></div>${isDown(index, connection.id) ? '<p class="infra-warning" role="status">This connection cannot be reached; what is shown is what was last seen.</p>' : ''}${factsHtml([['Health', connection.healthState], ['Last sync', connection.lastSuccessAt ? when(connection.lastSuccessAt) : 'Never'], ['Datacenters', count('datacenter')], ['Clusters', count('cluster')], ['Hosts', count('host')], ['Datastores', count('datastore')], ['Networks', count('network')]], ctx)}`;
+    const health = isDown(index, connection.id) ? 'Unavailable' : 'Connected';
+    return `<div class="infra-detail-hero"><div class="infra-detail-icon">${icon('connection')}</div><div><p class="eyebrow">CONNECTION</p><h2>${esc(connection.name)}</h2><small>${esc(labelOf(connection))}</small></div><span class="infra-status ${isDown(index, connection.id) ? 'is-bad' : ''}">${health}</span></div>${isDown(index, connection.id) ? '<p class="infra-warning" role="status">This connection cannot be reached; what is shown is what was last seen.</p>' : ''}<div class="infra-kpis"><div><span>Hosts</span><strong>${count('host')}</strong></div><div><span>Datastores</span><strong>${count('datastore')}</strong></div><div><span>Networks</span><strong>${count('network')}</strong></div></div>${factsHtml([['Health', connection.healthState], ['Last sync', connection.lastSuccessAt ? when(connection.lastSuccessAt) : 'Never'], ['Datacenters', count('datacenter')], ['Clusters', count('cluster')], ['Hosts', count('host')], ['Datastores', count('datastore')], ['Networks', count('network')]], ctx)}`;
   }
   const object = index.byId.get(selected);
   if (!object) return '<div class="empty compact"><strong>That object is no longer reported</strong><p>Choose another in the tree.</p></div>';
