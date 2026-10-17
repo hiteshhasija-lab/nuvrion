@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
+import { totpCode } from '../../../../modules/identity/src/totp.js';
 
 // End-to-end tests of the console in a real browser: the real API and web files run in-process with in-memory services and the mock provider, Chrome drives the
 // pages the way a person would (typing, clicking, pressing keys), and each test checks what the person would see. They need Chrome (NUVRION_CHROME, or the usual
@@ -717,5 +718,124 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.equal(refusals.length, 1, 'the browser logged the one refusal this test provoked (a built-in name), and nothing else');
     assert.deepEqual(unexpected(page.problems()).filter(p => !refusals.includes(p)), []);
     await page.close();
+  });
+
+  // ---- two-step verification (apps/web/mfa.js) -----------------------------------------------------------------------------------------------------------------------------
+  // Codes are computed with the real clock; the steps one person uses are strictly increasing (previous, current, next), which the one-use rule needs and the tolerance allows.
+  const codeAt = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
+  const openAccountMfa = async page => { await page.click('details.account-menu summary'); await page.click('#my-mfa'); await page.waitFor(() => document.getElementById('mfa-dialog').open && /Two-step verification/.test(document.getElementById('mfa-form').innerText)); };
+  const signOut = async page => { await page.click('details.account-menu summary'); await page.click('#logout'); await page.waitFor(() => document.getElementById('login')?.getClientRects().length > 0); };
+  const mfaRefusals = problems => unexpected(problems).filter(p => /status of (422|403|429)/.test(p));
+
+  test('a person sets up two-step verification from the account menu; the next sign-in asks for a code, refuses a wrong one, and accepts a backup code once', async () => {
+    const mia = await lab.createUser({ username: 'mia.mfa', displayName: 'Mia MFA', role: 'operator' });
+    const page = await newPage();
+    await signIn(page, mia.username, mia.password); await signedIn(page);
+    await openAccountMfa(page);
+    assert.match(await page.text('#mfa-form'), /Status\s*Off/);
+    await page.click('[data-mfa-action=setup]');
+    await page.waitFor(() => document.getElementById('mfa-secret'));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#mfa-form .mfa-qr svg[role=img]').length), 1, 'the QR code is drawn in the page');
+    const secret = (await page.text('#mfa-secret')).replace(/\s/g, '');
+    assert.match(secret, /^[A-Z2-7]{32}$/);
+    await page.fill('#mfa-code', '000000'); await page.click('#mfa-submit');
+    await page.waitFor(() => !document.getElementById('mfa-error').hidden && /not right/.test(document.getElementById('mfa-error').innerText));
+    await page.fill('#mfa-code', codeAt(secret, -1)); await page.click('#mfa-submit');
+    await page.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10);
+    const backupCodes = await page.evaluate(() => [...document.querySelectorAll('#mfa-form .mfa-codes code')].map(code => code.textContent));
+    assert.ok(backupCodes.every(code => /^[a-z2-9]{5}-[a-z2-9]{5}$/.test(code)));
+    await page.click('#mfa-done');
+    await page.waitFor(() => !document.getElementById('mfa-dialog').open);
+    await openAccountMfa(page);
+    assert.match(await page.text('#mfa-form'), /On since[\s\S]*10 codes left/);
+    await page.click('#mfa-close'); await page.waitFor(() => !document.getElementById('mfa-dialog').open);
+    // sign in again: the password is not enough
+    await signOut(page);
+    await signIn(page, mia.username, mia.password);
+    await page.waitFor(() => document.getElementById('mfa-dialog').open && /Enter your code/.test(document.getElementById('mfa-form').innerText));
+    assert.equal(await page.evaluate(() => document.getElementById('application').hidden), true, 'nothing of the console is shown yet');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'mfa-code', 'the code field has the focus');
+    await page.fill('#mfa-code', '123456'); await page.click('#mfa-submit');
+    await page.waitFor(() => /not right/.test(document.getElementById('mfa-error').innerText) && !document.getElementById('mfa-error').hidden);
+    await page.click('[data-mfa-toggle-backup]');
+    await page.waitFor(() => /Backup code/.test(document.getElementById('mfa-form').innerText));
+    await page.fill('#mfa-code', backupCodes[0]); await page.click('#mfa-submit');
+    await signedIn(page);
+    await openAccountMfa(page);
+    assert.match(await page.text('#mfa-form'), /9 codes left/);
+    await page.click('#mfa-close');
+    // the same backup code does not work twice; the code from the app does (the next step)
+    await signOut(page);
+    await signIn(page, mia.username, mia.password);
+    await page.waitFor(() => document.getElementById('mfa-dialog').open);
+    await page.click('[data-mfa-toggle-backup]'); await page.waitFor(() => /Backup code/.test(document.getElementById('mfa-form').innerText));
+    await page.fill('#mfa-code', backupCodes[0]); await page.click('#mfa-submit');
+    await page.waitFor(() => !document.getElementById('mfa-error').hidden);
+    await page.click('[data-mfa-toggle-backup]'); await page.waitFor(() => /Open your authenticator app/.test(document.getElementById('mfa-form').innerText));
+    await page.fill('#mfa-code', codeAt(secret, 1)); await page.click('#mfa-submit');
+    await signedIn(page);
+    assert.ok(mfaRefusals(page.problems()).length >= 3, 'the browser logged the refusals this test provoked');
+    assert.deepEqual(unexpected(page.problems()).filter(p => !/status of (422|403)/.test(p)), []);
+    await page.close();
+  });
+
+  test('cancelling the code prompt signs the person out; five wrong codes end the sign-in', async () => {
+    const user = await lab.createUser({ username: 'ned.mfa', displayName: 'Ned MFA', role: 'operator' });
+    const page = await newPage();
+    await signIn(page, user.username, user.password); await signedIn(page);
+    await openAccountMfa(page); await page.click('[data-mfa-action=setup]'); await page.waitFor(() => document.getElementById('mfa-secret'));
+    const secret = (await page.text('#mfa-secret')).replace(/\s/g, '');
+    await page.fill('#mfa-code', codeAt(secret, -1)); await page.click('#mfa-submit');
+    await page.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10);
+    await page.click('#mfa-done'); await signOut(page);
+    await signIn(page, user.username, user.password);
+    await page.waitFor(() => document.getElementById('mfa-dialog').open);
+    await page.press('Escape');
+    assert.equal(await page.evaluate(() => document.getElementById('mfa-dialog').open), true, 'the prompt cannot be dismissed with Escape');
+    await page.click('[data-mfa-cancel]');
+    await page.waitFor(() => !document.getElementById('mfa-dialog').open && document.getElementById('login-form').getClientRects().length > 0);
+    await signIn(page, user.username, user.password);
+    await page.waitFor(() => document.getElementById('mfa-dialog').open);
+    for (let i = 0; i < 5; i++) { await page.fill('#mfa-code', '000000'); await page.click('#mfa-submit'); if (i < 4) await page.waitFor(n => document.getElementById('mfa-error').innerText.length > 0 && !document.getElementById('mfa-error').hidden, i); }
+    await page.waitFor(() => !document.getElementById('mfa-dialog').open && /ended this sign-in/.test(document.getElementById('login-error').innerText));
+    await page.close();
+  });
+
+  test('a policy makes a role set up two-step verification at once, even in a session that is already open; an administrator can reset it, and turning it off is refused meanwhile', async () => {
+    await lab.api('POST', '/api/v1/roles', { name: 'needs_two_step', permissions: ['resource.view', 'connection.view'] });
+    const user = await lab.createUser({ username: 'pat.policy', displayName: 'Pat Policy', role: 'needs_two_step' });
+    const person = await newPage();
+    await signIn(person, user.username, user.password); await signedIn(person);
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openView(admin, 'users');
+    await admin.waitFor(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]'));
+    await admin.evaluate(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]').click());
+    await admin.click('#mfa-policy-save');
+    await admin.waitFor(() => /now required for the chosen roles/.test(document.getElementById('notice').innerText));
+    // her open session is held: within a refresh or two the setup prompt appears over the sign-in page
+    await person.waitFor(() => document.getElementById('mfa-dialog').open && /Set up two-step verification/.test(document.getElementById('mfa-form').innerText), undefined, { timeout: 20000 });
+    assert.equal(await person.evaluate(() => document.getElementById('application').hidden), true);
+    const secret = (await person.text('#mfa-secret')).replace(/\s/g, '');
+    await person.fill('#mfa-code', codeAt(secret, -1)); await person.click('#mfa-submit');
+    await person.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10);
+    await person.click('#mfa-done');
+    await signedIn(person).catch(() => {});                       // she has no Overview-only permissions; what matters is that the console is shown
+    await person.waitFor(() => !document.getElementById('application').hidden);
+    await openAccountMfa(person);
+    assert.match(await person.text('#mfa-form'), /Yes, by your role/);
+    assert.equal(await person.evaluate(() => document.querySelector('[data-mfa-action=disable]').disabled), true, 'turning it off is not offered while her role requires it');
+    await person.click('#mfa-close');
+    // the administrator sees she has it, and resets it: her session ends
+    await admin.evaluate(() => document.querySelector('#navigation button[data-view=overview]').click()); await openView(admin, 'users');
+    await admin.waitFor(() => /pat\.policy · 2-step on/.test(document.getElementById('user-table').innerText), undefined, { timeout: 20000 });
+    await admin.evaluate(() => [...document.querySelectorAll('[data-user-mfa-reset]')].find(button => /Pat Policy/.test(button.innerText)).click());
+    await admin.waitFor(() => /Two-step verification reset for pat\.policy/.test(document.getElementById('notice').innerText));
+    await person.waitFor(() => document.getElementById('login')?.getClientRects().length > 0, undefined, { timeout: 20000 });
+    // clean up: the policy applies to the whole lab
+    await admin.evaluate(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]').click());
+    await admin.click('#mfa-policy-save');
+    await admin.waitFor(() => /no longer required/.test(document.getElementById('notice').innerText));
+    await person.close(); await admin.close();
   });
 });

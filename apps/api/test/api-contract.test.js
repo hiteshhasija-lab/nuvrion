@@ -324,6 +324,36 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('listRoles', { as: 'operator', expect: 403 });
   });
 
+  test('two-factor sign-in: getMfaStatus, startMfaEnrollment, confirmMfaEnrollment, verifyMfa, regenerateMfaBackupCodes, disableMfa, getMfaPolicy, setMfaPolicy, resetUserMfa', async () => {
+    const { totpCode } = await import('../../../modules/identity/src/totp.js');
+    const at = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
+    const signup = await call('signup', { as: null, body: { username: 'mfa1', displayName: 'Two Factor', password: PASSWORD }, expect: 201 });
+    await call('updateUser', { params: { userId: signup.json.user.id }, body: { status: 'active', roles: ['operator'] }, headers: { 'if-match': `"${signup.json.user.rowVersion}"` }, expect: 200 });
+    sessions.mfa1 = await login('mfa1');
+    assert.equal((await call('getMfaStatus', { as: 'mfa1', expect: 200 })).json.enrolled, false);
+    await call('verifyMfa', { as: 'mfa1', body: { code: '000000' }, expect: 409, invalid: true });
+    const started = await call('startMfaEnrollment', { as: 'mfa1', expect: 200 });
+    await call('confirmMfaEnrollment', { as: 'mfa1', body: { code: '000000' }, expect: 422, invalid: true });
+    await call('confirmMfaEnrollment', { as: 'mfa1', body: { code: at(started.json.secret, -1) }, expect: 200 }).then(result => { ctx.mfaBackupCodes = result.json.backupCodes; });
+    await call('startMfaEnrollment', { as: 'mfa1', expect: 409, invalid: true });
+    sessions.mfa2 = await login('mfa1');
+    await call('getMfaStatus', { as: 'mfa2', expect: 200 });
+    await call('verifyMfa', { as: 'mfa2', body: { code: '000000' }, expect: 422, invalid: true });
+    await call('verifyMfa', { as: 'mfa2', body: { backupCode: ctx.mfaBackupCodes[0] }, expect: 200 });
+    await call('regenerateMfaBackupCodes', { as: 'mfa2', body: { code: '000000' }, expect: 422, invalid: true });
+    assert.equal((await call('regenerateMfaBackupCodes', { as: 'mfa2', body: { code: at(started.json.secret, 0) }, expect: 200 })).json.backupCodes.length, 10);
+    await call('disableMfa', { as: 'mfa2', body: { code: '000000' }, expect: 422, invalid: true });
+    await call('disableMfa', { as: 'mfa2', body: { code: at(started.json.secret, 1) }, expect: 200 });
+    await call('disableMfa', { as: 'mfa2', body: { code: '000000' }, expect: 409, invalid: true });
+    assert.deepEqual((await call('getMfaPolicy', { expect: 200 })).json, { requiredRoles: [] });
+    await call('setMfaPolicy', { body: { requiredRoles: ['nobody'] }, expect: 422, invalid: true });
+    assert.deepEqual((await call('setMfaPolicy', { body: { requiredRoles: ['auditor'] }, expect: 200 })).json, { requiredRoles: ['auditor'] });
+    await call('setMfaPolicy', { body: { requiredRoles: [] }, expect: 200 });
+    await call('resetUserMfa', { params: { userId: signup.json.user.id }, expect: 200 });
+    await call('resetUserMfa', { params: { userId: ABSENT }, expect: 404 });
+    await call('getMfaPolicy', { as: 'operator', expect: 403 });
+  });
+
   test('an auditor account for the permission checks', async () => {
     const signup = await call('signup', { as: null, body: { username: 'auditor1', displayName: 'Auditor', password: PASSWORD }, expect: 201 });
     await call('updateUser', { params: { userId: signup.json.user.id }, body: { status: 'active', roles: ['auditor'] }, headers: { 'if-match': `"${signup.json.user.rowVersion}"` }, expect: 200 });

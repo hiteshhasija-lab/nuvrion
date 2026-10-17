@@ -1132,3 +1132,22 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .role-permission input{margin-top:3px;height:auto}
 .role-permission strong{display:block;font-size:13px}
 .role-permission small{display:block;color:#4d5b60;font-size:12px}
+
+/* Two-step verification */
+.mfa-dialog{width:min(520px,calc(100% - 30px));max-height:calc(100vh - 40px)}
+.mfa-dialog h2{text-transform:none}
+.mfa-field{display:grid;gap:6px;font-size:13px;font-weight:600}
+.mfa-field input{font-size:20px;letter-spacing:.12em;text-align:center}
+.mfa-links{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0}
+.mfa-steps{margin:0;padding-left:20px;display:grid;gap:4px;font-size:13px}
+.mfa-qr{display:flex;justify-content:center}.mfa-qr svg{width:min(240px,100%);height:auto;border:1px solid #dce3e4;border-radius:10px}
+.mfa-key{margin:0;font-size:13px;overflow-wrap:anywhere}.mfa-key code{font-size:14px;font-weight:700;letter-spacing:.04em}
+.mfa-codes{list-style:none;margin:0;padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;border:1px solid #dce3e4;border-radius:10px;background:#f6f9f9}
+.mfa-codes code{font-size:15px;font-weight:700;letter-spacing:.06em}
+.mfa-facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:0}
+.mfa-facts dt{color:#4d5b60;font-size:12px}.mfa-facts dd{margin:0;font-weight:600}
+.mfa-actions{display:flex;gap:10px;margin:0}
+.mfa-policy-card{margin-top:16px}
+.mfa-policy-roles{display:flex;flex-wrap:wrap;gap:8px 22px;border:0;margin:0;padding:6px 20px 20px}
+.mfa-policy-role{display:flex;gap:8px;align-items:flex-start;font-size:13px}.mfa-policy-role input{margin-top:3px;height:auto}
+.mfa-policy-role strong{display:block}.mfa-policy-role small{display:block;color:#4d5b60;font-size:12px}

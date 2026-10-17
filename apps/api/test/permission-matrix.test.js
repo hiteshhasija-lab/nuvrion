@@ -33,6 +33,9 @@ const PROTECTED = [
   ['POST', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
   ['PATCH', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
   ['DELETE', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
+  ['GET', '/api/v1/mfa-policy', 'identity.manage', '/api/v1/mfa-policy'],
+  ['PUT', '/api/v1/mfa-policy', 'identity.manage', '/api/v1/mfa-policy'],
+  ['DELETE', `/api/v1/users/${ID}/mfa`, 'identity.manage', 'userMfaMatch'],
   ['PATCH', `/api/v1/users/${ID}`, 'identity.manage', 'userMatch'],
   ['POST', `/api/v1/users/${ID}/revoke-sessions`, 'identity.manage', 'userSessionsMatch'],
   ['POST', `/api/v1/users/${ID}/recovery-code`, 'identity.manage', 'userRecoveryMatch'],
@@ -98,6 +101,12 @@ const SESSION_ONLY = [
   ['GET', '/api/v1/auth/sessions', '/api/v1/auth/sessions'],
   ['DELETE', `/api/v1/auth/sessions/${SESSION_HASH}`, 'ownSessionMatch'],
   ['POST', '/api/v1/auth/recovery-code', '/api/v1/auth/recovery-code'],
+  ['GET', '/api/v1/auth/mfa', '/api/v1/auth/mfa'],
+  ['POST', '/api/v1/auth/mfa/verify', '/api/v1/auth/mfa/verify'],
+  ['POST', '/api/v1/auth/mfa/enrollment', '/api/v1/auth/mfa/enrollment'],
+  ['POST', '/api/v1/auth/mfa/enrollment/confirm', '/api/v1/auth/mfa/enrollment/confirm'],
+  ['POST', '/api/v1/auth/mfa/backup-codes', '/api/v1/auth/mfa/backup-codes'],
+  ['POST', '/api/v1/auth/mfa/disable', '/api/v1/auth/mfa/disable'],
   ['POST', '/api/v1/auth/logout', '/api/v1/auth/logout']
 ];
 // Authenticated by an agent secret, not by a user session.
@@ -286,5 +295,37 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
     sessions.short = await login('auditor1');
     assert.equal((await call('short', 'POST', '/api/v1/auth/logout', { csrf: 'valid' })).status, 204);
     assert.equal((await call('short', 'GET', '/api/v1/auth/me')).status, 401);
+  });
+
+  test('a session that has not finished two-factor sign-in can use no protected route and no session-only route but the ones that finish it, whatever its role allows', async () => {
+    const role = await call('admin', 'POST', '/api/v1/roles', { csrf: 'valid', body: { name: 'everything_mfa', permissions: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'audit.view', 'identity.manage', 'platform.manage'] } });
+    assert.equal(role.status, 201, role.text);
+    try {
+      await addUser('pending1', 'everything_mfa');
+      sessions.pending = await login('pending1');
+      assert.equal(sessions.pending.status, 200); assert.equal(sessions.pending.json.mfa.state, 'verified', 'no policy yet: nothing more is needed');
+      const policy = await call('admin', 'PUT', '/api/v1/mfa-policy', { csrf: 'valid', body: { requiredRoles: ['everything_mfa'] } });
+      assert.equal(policy.status, 200, policy.text);
+      const held = await login('pending1');
+      assert.equal(held.json.mfa.state, 'enrollment_required'); assert.deepEqual(held.json.user.permissions, [], 'the sign-in response shows who the person is and nothing they may do');
+      sessions.pending = held;
+      for (const [method, path] of PROTECTED) {
+        const result = await call('pending', method, path, { csrf: 'valid' });
+        assert.equal(result.status, 403, `${method} ${path}`); assert.equal(result.code, 'NUV_MFA_REQUIRED', `${method} ${path} must be refused for want of two-factor sign-in, not for anything else`);
+      }
+      const FINISHING = ['/api/v1/auth/me', '/api/v1/auth/logout', '/api/v1/auth/mfa', '/api/v1/auth/mfa/verify', '/api/v1/auth/mfa/enrollment', '/api/v1/auth/mfa/enrollment/confirm'];
+      for (const [method, path] of SESSION_ONLY.filter(([, path]) => !FINISHING.includes(path))) {
+        const result = await call('pending', method, path, { csrf: 'valid' });
+        assert.equal(result.code, 'NUV_MFA_REQUIRED', `${method} ${path}`);
+      }
+      const me = await call('pending', 'GET', '/api/v1/auth/me');
+      assert.equal(me.status, 200); assert.equal(me.json.mfa.state, 'enrollment_required'); assert.deepEqual(me.json.user.permissions, []);
+      assert.equal((await call('pending', 'GET', '/api/v1/auth/mfa')).status, 200);
+      // the websocket for host terminals refuses it, too (it needs platform.manage, which the role has)
+      const terminal = await call('pending', 'POST', `/api/v1/connections/${ID}/terminal-sessions`, { csrf: 'valid' });
+      assert.equal(terminal.code, 'NUV_MFA_REQUIRED');
+    } finally {
+      await call('admin', 'PUT', '/api/v1/mfa-policy', { csrf: 'valid', body: { requiredRoles: [] } });
+    }
   });
 });

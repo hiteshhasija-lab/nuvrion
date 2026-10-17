@@ -208,3 +208,143 @@ test('the custom role limit holds', () => {
   for (let i = 0; i < 50; i++) identity.createRole({ name: `role_${i}`, permissions: ['resource.view'] });
   assert.throws(() => identity.createRole({ name: 'one_too_many', permissions: ['resource.view'] }), error => error.code === 'NUV_ROLE_LIMIT');
 });
+
+// ---- two-factor sign-in ----------------------------------------------------------------------------------------------------------------------------------------------
+
+import { totpCode } from '../src/totp.js';
+// A service with a clock the test moves: codes are bound to 30-second steps, and the lock-out and replay rules are about time.
+function clocked() {
+  const time = { now: 1_800_000_000_000 };
+  const identity = new IdentityService({ bootstrapPassword: PASSWORD, clock: () => time.now });
+  const code = (secret, steps = 0) => totpCode(secret, time.now + steps * 30_000);
+  return { identity, time, code, advance: ms => { time.now += ms; } };
+}
+function signedIn(identity, username = 'mfa.user', roles = ['operator']) {
+  identity.createUser({ username, displayName: 'MFA User', password: PASSWORD, roles });
+  const login = identity.authenticate(username, PASSWORD);
+  return { login, userId: login.user.id, sessionId: identity.session(login.token).session.idHash, token: login.token };
+}
+function enrolled({ identity, code }, who) {
+  const started = identity.mfaStartEnrollment(who.userId, {});
+  const result = identity.mfaConfirmEnrollment(who.userId, who.sessionId, code(started.secret));
+  return { ...result, secret: started.secret };
+}
+const newSession = (identity, username = 'mfa.user') => { const login = identity.authenticate(username, PASSWORD); return { id: identity.session(login.token).session.idHash, token: login.token, mfa: login.mfa }; };
+const code_ = expected => error => error.code === expected;
+
+test('without a policy or an authenticator a session is verified at once; enrolling needs a correct code and returns ten backup codes once', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity);
+  assert.equal(who.login.mfa.state, 'verified');
+  assert.deepEqual(identity.mfaStatus(who.userId), { enrolled: false, enrolledAt: null, backupCodesRemaining: 0, requiredByPolicy: false });
+  const started = identity.mfaStartEnrollment(who.userId, { account: 'ann@example.com' });
+  assert.match(started.secret, /^[A-Z2-7]{32}$/);
+  assert.match(started.uri, /^otpauth:\/\/totp\/Nuvrion:ann%40example\.com\?secret=/);
+  assert.throws(() => identity.mfaConfirmEnrollment(who.userId, who.sessionId, '000000'), code_('NUV_MFA_CODE_INVALID'));
+  assert.equal(identity.mfaStatus(who.userId).enrolled, false, 'a wrong code enrols nothing');
+  const { backupCodes } = identity.mfaConfirmEnrollment(who.userId, who.sessionId, lab.code(started.secret));
+  assert.equal(backupCodes.length, 10);
+  assert.deepEqual([identity.mfaStatus(who.userId).enrolled, identity.mfaStatus(who.userId).backupCodesRemaining], [true, 10]);
+  assert.equal(identity.session(who.token).mfa.state, 'verified', 'the session that enrolled is verified');
+  assert.equal(identity.listUsers().find(user => user.id === who.userId).mfaEnrolled, true);
+  assert.throws(() => identity.mfaStartEnrollment(who.userId), code_('NUV_MFA_ALREADY_ENROLLED'));
+  assert.throws(() => identity.mfaConfirmEnrollment(who.userId, who.sessionId, lab.code(started.secret)), code_('NUV_MFA_ALREADY_ENROLLED'));
+});
+
+test('after enrolling, a new sign-in needs a code; each code works once, each backup code works once, and other sessions must verify again', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity), { secret, backupCodes } = enrolled(lab, who);
+  assert.equal(identity.session(who.token).mfa.state, 'verified');
+  const other = newSession(identity);
+  assert.equal(other.mfa.state, 'verification_required');
+  assert.throws(() => identity.mfaVerify(who.userId, other.id, { code: lab.code(secret) }), code_('NUV_MFA_CODE_INVALID'), 'the code that enrolled is already used');
+  assert.equal(identity.mfaVerify(who.userId, other.id, { code: lab.code(secret, 1) }).method, 'totp');
+  assert.equal(identity.session(other.token).mfa.state, 'verified');
+  const third = newSession(identity);
+  assert.throws(() => identity.mfaVerify(who.userId, third.id, { code: lab.code(secret, 1) }), code_('NUV_MFA_CODE_INVALID'), 'a code is good once');
+  assert.throws(() => identity.mfaVerify(who.userId, third.id, { code: lab.code(secret, -1) }), code_('NUV_MFA_CODE_INVALID'), 'and an older one is no use once a newer is used');
+  lab.advance(60_000);
+  assert.equal(identity.mfaVerify(who.userId, third.id, { code: lab.code(secret) }).method, 'totp', 'a later step works');
+  const fourth = newSession(identity), used = backupCodes[0];
+  assert.deepEqual(identity.mfaVerify(who.userId, fourth.id, { backupCode: used.toUpperCase().replace('-', ' ') }), { method: 'backup', backupCodesRemaining: 9 });
+  const fifth = newSession(identity);
+  assert.throws(() => identity.mfaVerify(who.userId, fifth.id, { backupCode: used }), code_('NUV_MFA_CODE_INVALID'), 'a backup code is good once');
+  assert.equal(identity.mfaVerify(who.userId, fifth.id, { backupCode: backupCodes[1] }).backupCodesRemaining, 8);
+  assert.equal(identity.session(who.token).mfa.state, 'verified', 'the session that enrolled stays verified');
+});
+
+test('five wrong codes end the sign-in; ten in a quarter of an hour lock the account, even against a correct code, until the time is up', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity), { secret } = enrolled(lab, who);
+  let a = newSession(identity);
+  for (let i = 0; i < 4; i++) assert.throws(() => identity.mfaVerify(who.userId, a.id, { code: '000000' }), code_('NUV_MFA_CODE_INVALID'));
+  assert.throws(() => identity.mfaVerify(who.userId, a.id, { code: '000000' }), code_('NUV_MFA_SESSION_REVOKED'));
+  assert.equal(identity.session(a.token), null, 'the fifth wrong code ended the session');
+  a = newSession(identity);
+  for (let i = 0; i < 4; i++) assert.throws(() => identity.mfaVerify(who.userId, a.id, { code: '111111' }), code_('NUV_MFA_CODE_INVALID'));
+  assert.throws(() => identity.mfaVerify(who.userId, a.id, { code: '111111' }), code_('NUV_MFA_SESSION_REVOKED'), 'ten wrong codes in all');
+  a = newSession(identity);
+  const refused = (() => { try { identity.mfaVerify(who.userId, a.id, { code: lab.code(secret, 1) }); } catch (error) { return error; } })();
+  assert.equal(refused.code, 'NUV_MFA_THROTTLED', 'locked: even the right code is not looked at');
+  assert.ok(refused.retryAfterSeconds > 890 && refused.retryAfterSeconds <= 900);
+  lab.advance(901_000);
+  assert.equal(identity.mfaVerify(who.userId, a.id, { code: lab.code(secret) }).method, 'totp', 'after the lock the person can sign in again');
+});
+
+test('failures older than the window do not add up', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity), { secret } = enrolled(lab, who);
+  for (let round = 0; round < 3; round++) {
+    const a = newSession(identity);
+    for (let i = 0; i < 4; i++) assert.throws(() => identity.mfaVerify(who.userId, a.id, { code: '000000' }), code_('NUV_MFA_CODE_INVALID'));
+    lab.advance(16 * 60_000);
+  }
+  const b = newSession(identity);
+  assert.equal(identity.mfaVerify(who.userId, b.id, { code: lab.code(secret) }).method, 'totp', 'twelve wrong codes over three quarters of an hour never locked the account');
+});
+
+test('a request that is not one code is refused as invalid, not as a wrong code, and does not count against the person', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity); enrolled(lab, who);
+  const a = newSession(identity);
+  for (let i = 0; i < 12; i++) for (const bad of [null, [], {}, { code: 123456 }, { code: '1', backupCode: 'x' }, { code: 'x'.repeat(65) }, { other: '1' }]) assert.throws(() => identity.mfaVerify(who.userId, a.id, bad), code_('NUV_MFA_REQUEST_INVALID'), JSON.stringify(bad));
+  assert.equal(identity.session(a.token).mfa.state, 'verification_required');
+});
+
+test('the policy makes a role need an authenticator: its holders must enrol, the change applies to sessions already open, and they cannot turn it off', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity, 'policy.user', ['operator']);
+  assert.deepEqual(identity.setMfaPolicy(['operator', 'platform_admin']), { requiredRoles: ['operator', 'platform_admin'] });
+  assert.equal(identity.session(who.token).mfa.state, 'enrollment_required', 'an open session is held at enrolment at once');
+  assert.equal(identity.authenticate('policy.user', PASSWORD).mfa.state, 'enrollment_required');
+  const { secret } = enrolled(lab, who);
+  assert.equal(identity.session(who.token).mfa.state, 'verified');
+  lab.advance(30_000);
+  assert.throws(() => identity.mfaDisable(who.userId, lab.code(secret)), code_('NUV_MFA_REQUIRED_BY_POLICY'));
+  assert.equal(identity.mfaStatus(who.userId).requiredByPolicy, true);
+  assert.deepEqual(identity.setMfaPolicy([]), { requiredRoles: [] });
+  assert.throws(() => identity.setMfaPolicy(['nobody']), code_('NUV_MFA_REQUEST_INVALID'));
+  assert.throws(() => identity.setMfaPolicy('operator'), code_('NUV_MFA_REQUEST_INVALID'));
+  assert.deepEqual(identity.setMfaPolicy(['operator', 'operator']), { requiredRoles: ['operator'] });
+});
+
+test('turning it off, new backup codes and an administrator’s reset', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity), { secret, backupCodes } = enrolled(lab, who);
+  assert.throws(() => identity.mfaDisable(who.userId, '000000'), code_('NUV_MFA_CODE_INVALID'));
+  lab.advance(30_000);
+  const fresh = identity.mfaRegenerateBackupCodes(who.userId, lab.code(secret)).backupCodes;
+  assert.equal(fresh.length, 10); assert.ok(fresh.every(code => !backupCodes.includes(code)));
+  const a = newSession(identity);
+  assert.throws(() => identity.mfaVerify(who.userId, a.id, { backupCode: backupCodes[0] }), code_('NUV_MFA_CODE_INVALID'), 'the old backup codes no longer work');
+  assert.equal(identity.mfaVerify(who.userId, a.id, { backupCode: fresh[0] }).backupCodesRemaining, 9);
+  lab.advance(30_000);
+  assert.deepEqual(identity.mfaDisable(who.userId, lab.code(secret)), { disabled: true });
+  assert.equal(identity.mfaStatus(who.userId).enrolled, false);
+  assert.equal(identity.authenticate('mfa.user', PASSWORD).mfa.state, 'verified');
+  const again = enrolled(lab, who);
+  assert.deepEqual(identity.mfaReset(who.userId), { reset: true });
+  assert.equal(identity.mfaStatus(who.userId).enrolled, false);
+  assert.equal(identity.session(who.token), null, 'a reset ends the person’s sessions');
+  assert.equal(identity.mfaReset('00000000-0000-4000-8000-000000000000'), null);
+  assert.ok(again.secret);
+});
+
+test('a pending secret is not an enrolment, and the secret is not kept in the clear', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity), started = identity.mfaStartEnrollment(who.userId, {});
+  assert.throws(() => identity.mfaVerify(who.userId, who.sessionId, { code: '123456' }), code_('NUV_MFA_NOT_ENROLLED'));
+  assert.ok(!JSON.stringify(identity.listUsers()).includes(started.secret));
+});

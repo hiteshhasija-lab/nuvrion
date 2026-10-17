@@ -299,6 +299,131 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: A built-in role (NUV_ROLE_SYSTEM) or still held by users (NUV_ROLE_IN_USE), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /auth/mfa:
+    get:
+      tags: [Authentication]
+      operationId: getMfaStatus
+      summary: Whether two-factor sign-in is set up, whether the caller's role requires it, and the state of this session
+      description: Also available to a session that has not finished two-factor sign-in. Every other call from such a session is refused with 403 NUV_MFA_REQUIRED.
+      responses:
+        '200': { description: Two-factor status, content: { application/json: { schema: { $ref: '#/components/schemas/MfaStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/mfa/verify:
+    post:
+      tags: [Authentication]
+      operationId: verifyMfa
+      summary: Finish signing in with a code from the authenticator app, or with a backup code
+      description: Send exactly one of code (six digits) or backupCode. A code works once. Five wrong codes end the session (401 NUV_MFA_SESSION_REVOKED); ten in fifteen minutes lock the account for fifteen minutes (429 NUV_MFA_THROTTLED, with Retry-After).
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MfaCode' } } }
+      responses:
+        '200': { description: The session is verified, content: { application/json: { schema: { $ref: '#/components/schemas/MfaVerified' } } } }
+        '401': { description: Too many wrong codes ended the session (NUV_MFA_SESSION_REVOKED), or there is no session, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Two-factor sign-in is not set up (NUV_MFA_NOT_ENROLLED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: The code is wrong (NUV_MFA_CODE_INVALID) or the request is not one code (NUV_MFA_REQUEST_INVALID), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/Throttled' }
+  /auth/mfa/enrollment:
+    post:
+      tags: [Authentication]
+      operationId: startMfaEnrollment
+      summary: Start setting up an authenticator app; returns the secret and the otpauth link for its QR code
+      description: Available to a session that must set up two-factor sign-in before it can do anything else. Calling it again replaces the secret that was not yet confirmed.
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: The secret to enter or scan, content: { application/json: { schema: { $ref: '#/components/schemas/MfaEnrollment' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Already set up (NUV_MFA_ALREADY_ENROLLED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /auth/mfa/enrollment/confirm:
+    post:
+      tags: [Authentication]
+      operationId: confirmMfaEnrollment
+      summary: Finish setting up with a code from the app; returns ten backup codes, once
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code], properties: { code: { type: string } } } } }
+      responses:
+        '200': { description: Two-factor sign-in is set up and this session is verified, content: { application/json: { schema: { $ref: '#/components/schemas/MfaBackupCodes' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Already set up (NUV_MFA_ALREADY_ENROLLED) or not started (NUV_MFA_ENROLLMENT_NOT_STARTED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: The code is wrong (NUV_MFA_CODE_INVALID) or not a code (NUV_MFA_REQUEST_INVALID), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/Throttled' }
+  /auth/mfa/backup-codes:
+    post:
+      tags: [Authentication]
+      operationId: regenerateMfaBackupCodes
+      summary: Replace the backup codes (the old ones stop working); needs a current code
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code], properties: { code: { type: string } } } } }
+      responses:
+        '200': { description: Ten new backup codes, shown once, content: { application/json: { schema: { type: object, required: [backupCodes], properties: { backupCodes: { type: array, items: { type: string } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Not set up (NUV_MFA_NOT_ENROLLED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: The code is wrong or not a code, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/Throttled' }
+  /auth/mfa/disable:
+    post:
+      tags: [Authentication]
+      operationId: disableMfa
+      summary: Turn two-factor sign-in off for the caller; needs a current code, and is refused when the caller's role requires it
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code], properties: { code: { type: string } } } } }
+      responses:
+        '200': { description: Turned off, content: { application/json: { schema: { type: object, required: [disabled], properties: { disabled: { type: boolean } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Not set up (NUV_MFA_NOT_ENROLLED) or required by the role (NUV_MFA_REQUIRED_BY_POLICY), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: The code is wrong or not a code, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/Throttled' }
+  /mfa-policy:
+    get:
+      tags: [Users]
+      operationId: getMfaPolicy
+      summary: The roles whose holders must use two-factor sign-in
+      x-required-permission: identity.manage
+      responses:
+        '200': { description: The policy, content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Users]
+      operationId: setMfaPolicy
+      summary: Choose the roles whose holders must use two-factor sign-in
+      description: Applies at once, to sessions already open, so a holder who has not set it up is held at setup until they do. Built-in roles can be named.
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } }
+      responses:
+        '200': { description: The policy now in force, content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /users/{userId}/mfa:
+    delete:
+      tags: [Users]
+      operationId: resetUserMfa
+      summary: Remove a user's two-factor enrolment (a lost device) and end their sessions
+      description: They sign in with their password and, if their role requires it, set two-factor sign-in up again.
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Reset (reset is false when the user had nothing set up), content: { application/json: { schema: { type: object, required: [reset], properties: { reset: { type: boolean } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /users/{userId}/revoke-sessions:
     post:
       tags: [Users]
@@ -1205,7 +1330,7 @@ components:
   responses:
     Unauthorized: { description: Not signed in (NUV_AUTH_REQUIRED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     AgentUnauthorized: { description: Agent authentication failed (NUV_AGENT_AUTH_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-    Forbidden: { description: 'The role lacks the permission (NUV_PERMISSION_DENIED) or the CSRF token is missing or wrong (NUV_CSRF_INVALID)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Forbidden: { description: 'The role lacks the permission (NUV_PERMISSION_DENIED), the CSRF token is missing or wrong (NUV_CSRF_INVALID), or the session has not finished two-factor sign-in (NUV_MFA_REQUIRED)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     NotFound: { description: The thing asked for does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     Conflict: { description: The request conflicts with the current state, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     Unprocessable: { description: The request is understood but not valid or not supported here, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
@@ -1334,6 +1459,7 @@ components:
         status: { $ref: '#/components/schemas/UserStatus' }
         roles: { type: array, items: { $ref: '#/components/schemas/RoleName' } }
         permissions: { type: array, items: { type: string } }
+        mfaEnrolled: { type: boolean, description: Whether the user has two-factor sign-in set up }
         rowVersion: { type: integer, minimum: 1 }
     UserWithRecoveryCode:
       type: object
@@ -1359,11 +1485,46 @@ components:
       type: object
       required: [idleTimeoutMs, absoluteTimeoutMs]
       properties: { idleTimeoutMs: { type: integer }, absoluteTimeoutMs: { type: integer } }
+    MfaState: { type: string, enum: [verified, verification_required, enrollment_required], description: 'verified: nothing more is needed. verification_required: enter a code. enrollment_required: the role needs two-factor sign-in and it is not set up.' }
+    MfaSessionState:
+      type: object
+      required: [state]
+      properties: { state: { $ref: '#/components/schemas/MfaState' } }
+    MfaStatus:
+      type: object
+      required: [enrolled, enrolledAt, backupCodesRemaining, requiredByPolicy, state]
+      properties:
+        enrolled: { type: boolean }
+        enrolledAt: { type: [string, 'null'], format: date-time }
+        backupCodesRemaining: { type: integer, minimum: 0 }
+        requiredByPolicy: { type: boolean }
+        state: { $ref: '#/components/schemas/MfaState' }
+    MfaCode:
+      type: object
+      description: Exactly one of code (six digits, spaces allowed) or backupCode.
+      properties: { code: { type: string }, backupCode: { type: string } }
+    MfaVerified:
+      type: object
+      required: [state, method, backupCodesRemaining]
+      properties: { state: { type: string, enum: [verified] }, method: { type: string, enum: [totp, backup] }, backupCodesRemaining: { type: integer, minimum: 0 } }
+    MfaEnrollment:
+      type: object
+      required: [secret, uri, account, issuer]
+      properties: { secret: { type: string }, uri: { type: string }, account: { type: string }, issuer: { type: string } }
+    MfaBackupCodes:
+      type: object
+      required: [state, backupCodes]
+      properties: { state: { type: string, enum: [verified] }, backupCodes: { type: array, items: { type: string } } }
+    MfaPolicy:
+      type: object
+      required: [requiredRoles]
+      properties: { requiredRoles: { type: array, items: { $ref: '#/components/schemas/RoleName' } } }
     AuthSession:
       type: object
-      required: [user, csrfToken, expiresAt, sessionPolicy]
+      required: [user, mfa, csrfToken, expiresAt, sessionPolicy]
       properties:
         user: { $ref: '#/components/schemas/User' }
+        mfa: { $ref: '#/components/schemas/MfaSessionState' }
         csrfToken: { type: string }
         expiresAt: { type: string, format: date-time }
         sessionPolicy: { $ref: '#/components/schemas/SessionPolicy' }

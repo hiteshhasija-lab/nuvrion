@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
+import { totpCode } from '../../../../modules/identity/src/totp.js';
 
 // Automated accessibility checks (axe-core, WCAG 2.0 and 2.1 levels A and AA) on every page of the console and on the dialogs and menus a person can open from
 // them, run in a real browser. A violation fails the test, with the rule, the elements and how many there are. These checks find what a machine can find (names,
@@ -136,5 +137,38 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.waitFor(() => /Virtual machines \/ nuvrion-app-01 \/ Monitor/.test(document.getElementById('breadcrumb').innerText));
     await settle(600);
     await expectNoViolations('VM monitor page');
+  });
+
+  test('the two-step verification dialogs: status, setting up, backup codes, and the code prompt at sign-in (with a code and with a backup code)', async () => {
+    const codeAt = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
+    const openMenuMfa = async () => { await page.click('details.account-menu summary'); await page.click('#my-mfa'); await page.waitFor(() => document.getElementById('mfa-dialog').open && /Two-step verification/.test(document.getElementById('mfa-form').innerText)); await settle(300); };
+    await openMenuMfa();
+    await expectNoViolations('two-step status (off)');
+    await page.click('[data-mfa-action=setup]'); await shown('#mfa-secret'); await settle(300);
+    await expectNoViolations('two-step setup (QR code and key)');
+    const secret = (await page.text('#mfa-secret')).replace(/\s/g, '');
+    await page.fill('#mfa-code', codeAt(secret, -1)); await page.click('#mfa-submit');
+    await page.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10); await settle(300);
+    await expectNoViolations('two-step backup codes');
+    const codes = await page.evaluate(() => [...document.querySelectorAll('#mfa-form .mfa-codes code')].map(code => code.textContent));
+    await page.click('#mfa-done'); await page.waitFor(() => !document.getElementById('mfa-dialog').open);
+    await openMenuMfa();
+    await expectNoViolations('two-step status (on)');
+    await closeDialog('#mfa-close');
+    // sign out and in again: the prompt over the sign-in page
+    await page.click('details.account-menu summary'); await page.click('#logout'); await page.waitFor(() => document.getElementById('login')?.getClientRects().length > 0);
+    await page.fill('#login-form [name=username]', 'admin'); await page.fill('#login-form [name=password]', ADMIN_PASSWORD); await page.clickText('Sign in →', '#login-form');
+    await page.waitFor(() => document.getElementById('mfa-dialog').open && /Enter your code/.test(document.getElementById('mfa-form').innerText)); await settle(300);
+    await expectNoViolations('two-step code prompt at sign-in');
+    await page.click('[data-mfa-toggle-backup]'); await page.waitFor(() => /Backup code/.test(document.getElementById('mfa-form').innerText)); await settle(300);
+    await expectNoViolations('two-step backup code prompt at sign-in');
+    await page.fill('#mfa-code', codes[0]); await page.click('#mfa-submit');
+    await page.waitFor(() => !document.getElementById('application').hidden && !document.getElementById('mfa-dialog').open);
+    // turn it off again so the other tests see the lab as they expect it
+    await openMenuMfa(); await page.click('[data-mfa-action=disable]'); await page.waitFor(() => /Turn off/.test(document.getElementById('mfa-submit')?.innerText ?? '')); await settle(300);
+    await expectNoViolations('two-step confirm with a code');
+    await page.fill('#mfa-code', codeAt(secret, 1)); await page.click('#mfa-submit');
+    await page.waitFor(() => /Status\s*Off/.test(document.getElementById('mfa-form').innerText));
+    await closeDialog('#mfa-close');
   });
 });

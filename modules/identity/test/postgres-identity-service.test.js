@@ -305,3 +305,132 @@ test('at most 50 custom roles, even when many are created at the same moment', d
   assert.equal((await identity.listRoles()).filter(role => !role.system).length, 50);
   assert.ok(results.filter(result => result.status === 'rejected').every(result => result.reason.code === 'NUV_ROLE_LIMIT'));
 });
+
+// ---- two-factor sign-in ----------------------------------------------------------------------------------------------------------------------------------------------
+
+import { totpCode } from '../src/totp.js';
+// The same rules as the in-memory tests, against PostgreSQL, with a clock the test moves; plus what only a database can get wrong: simultaneous use of one code, wrong codes that
+// must stay counted although the request failed, and the secret at rest.
+const time = { now: 1_800_000_000_000 };
+const mfa = db ? new PostgresIdentityService(db.pool, { clock: () => time.now }) : null;
+const stepCode = (secret, steps = 0) => totpCode(secret, time.now + steps * 30_000);
+const mfaFail = expected => error => error.code === expected;
+async function mfaUser(roles = ['operator']) {
+  const { user } = await mfa.createUser({ username: `mfa.${randomUUID().slice(0, 8)}`, displayName: 'MFA', password: PASSWORD, roles });
+  return user;
+}
+async function mfaLogin(user) {
+  const login = await mfa.authenticate(user.username, PASSWORD), principal = await mfa.session(login.token);
+  return { token: login.token, id: principal.session.idHash, state: login.mfa.state, userId: user.id };
+}
+async function mfaEnrolled(user) {
+  const who = await mfaLogin(user), started = await mfa.mfaStartEnrollment(user.id, {});
+  const { backupCodes } = await mfa.mfaConfirmEnrollment(user.id, who.id, stepCode(started.secret));
+  return { who, secret: started.secret, backupCodes };
+}
+
+test('PostgreSQL: enrolment needs a correct code; then a new sign-in needs a code that works once, and a backup code works once', database, async () => {
+  const user = await mfaUser(), first = await mfaLogin(user);
+  assert.equal(first.state, 'verified');
+  const started = await mfa.mfaStartEnrollment(user.id, { account: 'ann@example.com' });
+  assert.match(started.uri, /^otpauth:\/\/totp\/Nuvrion:ann%40example\.com\?secret=/);
+  await assert.rejects(mfa.mfaConfirmEnrollment(user.id, first.id, '000000'), mfaFail('NUV_MFA_CODE_INVALID'));
+  assert.equal((await mfa.mfaStatus(user.id)).enrolled, false);
+  const { backupCodes } = await mfa.mfaConfirmEnrollment(user.id, first.id, stepCode(started.secret));
+  assert.equal(backupCodes.length, 10);
+  assert.equal((await mfa.session(first.token)).mfa.state, 'verified');
+  assert.deepEqual(await mfa.mfaStatus(user.id), { enrolled: true, enrolledAt: new Date(time.now).toISOString(), backupCodesRemaining: 10, requiredByPolicy: false });
+  assert.equal((await mfa.listUsers()).find(item => item.id === user.id).mfaEnrolled, true);
+  await assert.rejects(mfa.mfaStartEnrollment(user.id), mfaFail('NUV_MFA_ALREADY_ENROLLED'));
+  const second = await mfaLogin(user);
+  assert.equal(second.state, 'verification_required');
+  await assert.rejects(mfa.mfaVerify(user.id, second.id, { code: stepCode(started.secret) }), mfaFail('NUV_MFA_CODE_INVALID'), 'the enrolling code is spent');
+  assert.equal((await mfa.mfaVerify(user.id, second.id, { code: stepCode(started.secret, 1) })).method, 'totp');
+  assert.equal((await mfa.session(second.token)).mfa.state, 'verified');
+  const third = await mfaLogin(user);
+  assert.deepEqual(await mfa.mfaVerify(user.id, third.id, { backupCode: backupCodes[0].toUpperCase().replace('-', ' ') }), { method: 'backup', backupCodesRemaining: 9 });
+  const fourth = await mfaLogin(user);
+  await assert.rejects(mfa.mfaVerify(user.id, fourth.id, { backupCode: backupCodes[0] }), mfaFail('NUV_MFA_CODE_INVALID'));
+  await assert.rejects(mfa.mfaVerify(user.id, fourth.id, { code: 'x'.repeat(65) }), mfaFail('NUV_MFA_REQUEST_INVALID'));
+});
+
+test('PostgreSQL: one code used by several sessions at the same moment works for exactly one of them; so does one backup code', database, async () => {
+  const user = await mfaUser(), { secret, backupCodes } = await mfaEnrolled(user);
+  const sessions = await Promise.all(Array.from({ length: 6 }, () => mfaLogin(user)));
+  const code = stepCode(secret, 1), results = await Promise.allSettled(sessions.map(who => mfa.mfaVerify(user.id, who.id, { code })));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1, 'a code is good once, even when six sessions try it together');
+  assert.ok(results.filter(result => result.status === 'rejected').every(result => result.reason.code === 'NUV_MFA_CODE_INVALID'));
+  time.now += 300_000;
+  const more = await Promise.all(Array.from({ length: 6 }, () => mfaLogin(user)));
+  const spent = await Promise.allSettled(more.map(who => mfa.mfaVerify(user.id, who.id, { backupCode: backupCodes[3] })));
+  assert.equal(spent.filter(result => result.status === 'fulfilled').length, 1, 'and a backup code too');
+  assert.equal((await mfa.mfaStatus(user.id)).backupCodesRemaining, 9);
+});
+
+test('PostgreSQL: wrong codes are counted although the request failed; five end the sign-in, ten lock the account until the time is up', database, async () => {
+  const user = await mfaUser(), { secret } = await mfaEnrolled(user);
+  let a = await mfaLogin(user);
+  for (let i = 0; i < 4; i++) await assert.rejects(mfa.mfaVerify(user.id, a.id, { code: '000000' }), mfaFail('NUV_MFA_CODE_INVALID'));
+  await assert.rejects(mfa.mfaVerify(user.id, a.id, { code: '000000' }), mfaFail('NUV_MFA_SESSION_REVOKED'));
+  assert.equal(await mfa.session(a.token), null, 'the fifth wrong code ended the session');
+  a = await mfaLogin(user);
+  for (let i = 0; i < 4; i++) await assert.rejects(mfa.mfaVerify(user.id, a.id, { code: '111111' }), mfaFail('NUV_MFA_CODE_INVALID'));
+  await assert.rejects(mfa.mfaVerify(user.id, a.id, { code: '111111' }), mfaFail('NUV_MFA_SESSION_REVOKED'));
+  a = await mfaLogin(user);
+  const refused = await mfa.mfaVerify(user.id, a.id, { code: stepCode(secret, 1) }).catch(error => error);
+  assert.equal(refused.code, 'NUV_MFA_THROTTLED'); assert.ok(refused.retryAfterSeconds > 890);
+  time.now += 901_000;
+  assert.equal((await mfa.mfaVerify(user.id, a.id, { code: stepCode(secret) })).method, 'totp');
+  const row = (await db.pool.query('SELECT failed_count,locked_until FROM identity.user_mfa WHERE user_id=$1', [user.id])).rows[0];
+  assert.deepEqual([row.failed_count, row.locked_until], [0, null], 'a success clears the count');
+});
+
+test('PostgreSQL: the policy holds roles to two-factor sign-in at once, and what it names must exist', database, async () => {
+  const user = await mfaUser(['auditor']), who = await mfaLogin(user);
+  try {
+    assert.deepEqual(await mfa.setMfaPolicy(['auditor', 'platform_admin']), { requiredRoles: ['auditor', 'platform_admin'] });
+    assert.equal((await mfa.session(who.token)).mfa.state, 'enrollment_required');
+    const started = await mfa.mfaStartEnrollment(user.id, {});
+    await mfa.mfaConfirmEnrollment(user.id, who.id, stepCode(started.secret));
+    assert.equal((await mfa.session(who.token)).mfa.state, 'verified');
+    time.now += 30_000;
+    await assert.rejects(mfa.mfaDisable(user.id, stepCode(started.secret)), mfaFail('NUV_MFA_REQUIRED_BY_POLICY'));
+    assert.equal((await mfa.mfaStatus(user.id)).requiredByPolicy, true);
+    await assert.rejects(mfa.setMfaPolicy(['nobody']), mfaFail('NUV_MFA_REQUEST_INVALID'));
+    await assert.rejects(mfa.setMfaPolicy('auditor'), mfaFail('NUV_MFA_REQUEST_INVALID'));
+    assert.deepEqual(await mfa.getMfaPolicy(), { requiredRoles: ['auditor', 'platform_admin'] }, 'a refused change changed nothing');
+  } finally { await mfa.setMfaPolicy([]); }
+});
+
+test('PostgreSQL: new backup codes replace the old, turning it off needs a code, and a reset removes the enrolment and ends every session', database, async () => {
+  const user = await mfaUser(), { who, secret, backupCodes } = await mfaEnrolled(user);
+  time.now += 30_000;
+  await assert.rejects(mfa.mfaDisable(user.id, '000000'), mfaFail('NUV_MFA_CODE_INVALID'));
+  const fresh = (await mfa.mfaRegenerateBackupCodes(user.id, stepCode(secret))).backupCodes;
+  assert.ok(fresh.every(code => !backupCodes.includes(code)));
+  const a = await mfaLogin(user);
+  await assert.rejects(mfa.mfaVerify(user.id, a.id, { backupCode: backupCodes[0] }), mfaFail('NUV_MFA_CODE_INVALID'));
+  assert.equal((await mfa.mfaVerify(user.id, a.id, { backupCode: fresh[0] })).backupCodesRemaining, 9);
+  time.now += 30_000;
+  assert.deepEqual(await mfa.mfaDisable(user.id, stepCode(secret)), { disabled: true });
+  assert.equal((await mfa.mfaStatus(user.id)).enrolled, false);
+  const again = await mfaEnrolled(user);
+  assert.deepEqual(await mfa.mfaReset(user.id), { reset: true });
+  assert.equal(await mfa.session(again.who.token), null);
+  assert.equal((await mfa.mfaStatus(user.id)).enrolled, false);
+  assert.equal(await mfa.mfaReset(randomUUID()), null);
+  assert.ok(who);
+});
+
+test('PostgreSQL: the secret is stored encrypted and bound to its user, and the table refuses an enabled row without one', database, async () => {
+  const user = await mfaUser(), { secret } = await mfaEnrolled(user), other = await mfaUser();
+  const row = (await db.pool.query('SELECT * FROM identity.user_mfa WHERE user_id=$1', [user.id])).rows[0];
+  assert.ok(!JSON.stringify(row).includes(secret), 'no plain secret in the row');
+  assert.equal(row.secret_cipher.algorithm, 'aes-256-gcm');
+  await db.pool.query('INSERT INTO identity.user_mfa(user_id,pending_cipher) VALUES($1,$2)', [other.id, row.secret_cipher]);
+  await db.pool.query('UPDATE identity.user_mfa SET secret_cipher=$2 WHERE user_id=$1', [other.id, row.secret_cipher]);
+  await db.pool.query('UPDATE identity.user_mfa SET enabled=true WHERE user_id=$1', [other.id]);   // another user's ciphertext: stored, but it will not decrypt for this user
+  const login = await mfaLogin(other);
+  await assert.rejects(mfa.mfaVerify(other.id, login.id, { code: stepCode(secret) }), error => /Unsupported state|auth/i.test(error.message), 'a ciphertext moved to another user does not decrypt');
+  await assert.rejects(db.pool.query("INSERT INTO identity.user_mfa(user_id,enabled) VALUES($1,true)", [(await mfaUser()).id]), error => error.code === '23514');
+});
