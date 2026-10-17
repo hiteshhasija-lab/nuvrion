@@ -1017,3 +1017,47 @@ nav button:hover .nav-icon svg,nav button.active .nav-icon svg{stroke:#e9fffb;fi
   .agent-fleet-summary>div:last-child{border-bottom:0}
   .agent-fleet-tools details[open]{grid-column:auto}
 }
+
+/* Overview estate panels and drill-down (apps/web/dashboard.js). Colour is never the only signal: every group has a text label and a count. */
+#view-overview .content-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+#view-overview .content-grid .span-2{grid-column:auto}
+#view-overview .content-grid .span-full{grid-column:1/-1}
+@media(max-width:1050px){#view-overview .content-grid{grid-template-columns:1fr}}
+button.metric-card{appearance:none;font:inherit;color:inherit;text-align:left;width:100%;cursor:pointer}
+.legend>button.legend-row{appearance:none;display:grid;grid-template-columns:12px 1fr auto;gap:8px;width:100%;border:0;border-bottom:1px solid #edf0f1;background:none;padding:11px 0;font:inherit;font-size:12px;color:inherit;text-align:left;cursor:pointer;align-items:center}
+.legend>button.legend-row:hover strong{text-decoration:underline}
+button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-visible,.provider-card:focus-visible,.alert-row:focus-visible,.drill-chip button:focus-visible{outline:2px solid #0d756f;outline-offset:2px}
+.estate-health{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:22px}
+.breakdown h3{margin:0 0 10px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#4d5b60}
+.breakdown-bar{display:flex;height:10px;border-radius:6px;overflow:hidden;background:#e7eded;margin-bottom:10px}
+.breakdown-segment{display:block;height:100%;min-width:3px}
+.breakdown ul{list-style:none;margin:0;padding:0}
+.breakdown li{border-bottom:1px solid #edf0f1}
+.breakdown-row,.breakdown-zero{display:grid;grid-template-columns:12px 1fr auto;gap:8px;align-items:center;width:100%;padding:8px 0;font-size:12px}
+.breakdown-row{appearance:none;border:0;background:none;font:inherit;font-size:12px;color:inherit;text-align:left;cursor:pointer}
+.breakdown-row:hover .breakdown-label{text-decoration:underline}
+.breakdown-zero{color:#647277}
+.breakdown-dot{display:inline-block;width:9px;height:9px;border-radius:50%}
+.tone-good{background:#2f9e68}.tone-bad{background:#d6504a}.tone-warn{background:#d9930d}.tone-neutral{background:#9aa6aa}
+.provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.provider-card{appearance:none;display:flex;flex-direction:column;gap:5px;text-align:left;font:inherit;color:inherit;cursor:pointer;background:#fff;border:1px solid var(--line);border-left:4px solid #9aa6aa;border-radius:12px;padding:13px 14px}
+.provider-card.tone-good{border-left-color:#2f9e68;background:#fff}.provider-card.tone-bad{border-left-color:#d6504a;background:#fff}.provider-card.tone-warn{border-left-color:#d9930d;background:#fff}
+.provider-card:hover{border-color:#b9c7c8}
+.provider-name{font-size:12px;font-weight:700;color:#0b1b2c}
+.provider-count{font-size:26px;line-height:1.1;color:#0b1b2c}.provider-count small{font-size:12px;font-weight:600;color:#4d5b60}
+.provider-line{font-size:11px;color:#4d5b60;display:flex;align-items:center;gap:6px}
+.alert-list{list-style:none;margin:0;padding:0}
+.alert-list li{border-bottom:1px solid #edf0f1}
+.alert-row{appearance:none;display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer;padding:11px 0}
+.alert-row:hover strong{text-decoration:underline}
+.alert-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:12px}.alert-text small{color:#4d5b60;font-size:11px}
+.alert-row:not(.is-open){opacity:.78}
+.drill-chips{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.drill-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #b9d9d6;background:#e7f4f3;color:#0b4f4b;border-radius:999px;padding:3px 4px 3px 10px;font-size:12px;font-weight:600}
+.drill-chip button{appearance:none;border:0;background:none;color:inherit;cursor:pointer;border-radius:50%;width:20px;height:20px;line-height:1;font-size:11px}
+.drill-chip button:hover{background:#cfe8e5}
+.metric-card,.legend-row,.breakdown-row,.provider-card,.alert-row{position:relative}
+.drill-chips{justify-content:flex-start;text-align:left}
+.drill-chip,.drill-chips .text-button{white-space:nowrap}
+.vm-filter-toolbar .drill-chips .text-button{width:auto;display:inline-flex;align-items:center;min-height:0;padding:2px 6px}
+.vm-filter-toolbar .drill-chips .drill-chip{height:auto;min-height:0}

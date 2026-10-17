@@ -414,4 +414,96 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.equal(await operatorPage.evaluate(() => { const panel = document.getElementById('agent-fleet'); return !panel || panel.hidden; }), true, 'an operator does not see agent management');
     await operatorPage.close();
   });
+  // ---- the Overview's estate panels and their click-through (apps/web/dashboard.js) ---------------------------------------------------------------------------------
+  const inventoryRows = page => page.evaluate(() => document.querySelectorAll('#view-inventory tbody tr').length);
+  const estateTotal = page => page.evaluate(() => Number(document.querySelector('#summary-cards [data-drill-clear] strong').textContent));
+  const countOf = (page, selector) => page.evaluate(selector => Number(document.querySelector(selector)?.textContent.replace(/\D+/g, '')), selector);
+
+  test('the Overview shows the power and health of the estate, a card for each provider, and the latest alerts', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await page.waitFor(() => document.querySelectorAll('#estate-health .breakdown-row').length > 0 && document.querySelectorAll('#provider-overview .provider-card').length > 0);
+    const text = await page.text('#view-overview');
+    assert.match(text, /Power and health/i); assert.match(text, /Provider overview/i); assert.match(text, /Recent alerts/i);
+    assert.match(await page.text('#provider-overview'), /VMware vSphere \/ vCenter[\s\S]*connection healthy/i);
+    const powerTotal = await page.evaluate(() => [...document.querySelectorAll('#estate-health [data-drill-power] strong, #estate-health .breakdown:first-child .breakdown-zero strong')].reduce((a, e) => a + Number(e.textContent), 0));
+    assert.equal(powerTotal, await estateTotal(page), 'the power groups add up to the estate');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#summary-cards button.metric-card')].map(b => b.querySelector('p').textContent)), ['Virtual machines', 'Running', 'Open tasks', 'Critical alerts'], 'the four tiles are buttons');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('a count on the Overview opens the inventory showing exactly those VMs; the chip says why, and removing it shows them all again', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await page.waitFor(() => document.querySelectorAll('#estate-health [data-drill-power]').length > 0);
+    const total = await estateTotal(page);
+    const groups = await page.evaluate(() => [...document.querySelectorAll('#estate-health [data-drill-power]')].map(b => [b.dataset.drillPower, Number(b.querySelector('strong').textContent)]));
+    assert.ok(groups.length > 0);
+    for (const [group, expected] of groups) {
+      await openView(page, 'overview');
+      await page.click(`#estate-health [data-drill-power=${group}]`);
+      await page.waitFor(() => document.getElementById('view-inventory')?.getClientRects().length > 0);
+      assert.equal(await inventoryRows(page), expected, `${group}: the list has the ${expected} the Overview counted`);
+      assert.match(await page.text('#inventory-drill-chips'), new RegExp(`Power: ${group[0].toUpperCase()}`, 'i'));
+    }
+    // one chip off leaves the other filters; "Clear filters" removes everything
+    await openView(page, 'overview');
+    await page.click('#estate-health [data-drill-health]');
+    await page.waitFor(() => /Health:/.test(document.getElementById('inventory-drill-chips')?.innerText ?? ''));
+    await page.click('#inventory-drill-chips [data-clear-drill=health]');
+    await page.waitFor(() => document.getElementById('inventory-drill-chips').hidden);
+    assert.equal(await inventoryRows(page), total, 'removing the only chip shows every VM');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the Running tile and a provider card open the inventory on what they count; the platform filter shows the provider', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await page.waitFor(() => document.querySelectorAll('#provider-overview .provider-card').length > 0);
+    await page.click('#summary-cards [data-drill-power=running]');
+    await page.waitFor(() => document.getElementById('view-inventory')?.getClientRects().length > 0);
+    assert.match(await page.text('#inventory-drill-chips'), /Power: Running/);
+    await openView(page, 'overview');
+    const vcenterVms = await countOf(page, '#provider-overview [data-drill-platform=vmware_vcenter] .provider-count');
+    await page.click('#provider-overview [data-drill-platform=vmware_vcenter]');
+    await page.waitFor(() => document.getElementById('view-inventory')?.getClientRects().length > 0);
+    assert.equal(await page.evaluate(() => document.getElementById('inventory-state').value), 'vmware_vcenter');
+    assert.equal(await inventoryRows(page), vcenterVms, 'the provider card’s count is the list it opens');
+    assert.equal(await page.evaluate(() => document.getElementById('inventory-drill-chips').hidden), true, 'a provider card does not leave an old power filter behind');
+    await openView(page, 'overview');
+    const firstLegend = await countOf(page, '#estate-summary [data-drill-platform] em');
+    await page.click('#estate-summary [data-drill-platform]');
+    await page.waitFor(() => document.getElementById('view-inventory')?.getClientRects().length > 0);
+    assert.equal(await inventoryRows(page), firstLegend, 'the legend’s count is the list it opens');
+    await page.evaluate(() => { const select = document.getElementById('inventory-state'); select.value = 'aws'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitFor(() => !document.getElementById('inventory-empty').hidden);
+    assert.match(await page.text('#inventory-empty'), /No virtual machines match/, 'a filtered-out list says so instead of "add a connection"');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('a failing connection raises an alert that appears on the Overview, and the alert opens the alert history', async () => {
+    const created = await lab.api('POST', '/api/v1/connections', { name: 'Broken ESXi', providerType: 'vmware_vsphere', connectionType: 'esxi', endpointUri: 'https://127.0.0.1:1/sdk', credential: { username: 'user', password: 'pass' } }); // secret-scan:allow (fake test credential)
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    try {
+      await lab.api('POST', `/api/v1/connections/${created.json.id}/discover`);
+      const deadline = Date.now() + 10000;
+      let alerts = [];
+      while (Date.now() < deadline && !alerts.length) { alerts = ((await lab.api('GET', '/api/v1/connection-alerts')).json?.items ?? []).filter(a => a.connectionName === 'Broken ESXi' || a.connectionId === created.json.id); if (!alerts.length) await new Promise(resolve => setTimeout(resolve, 250)); }
+      assert.ok(alerts.length, 'the failed discovery raised an alert');
+      const page = await newPage();
+      await signIn(page); await signedIn(page);
+      await page.waitFor(() => /Broken ESXi/.test(document.getElementById('recent-alerts')?.innerText ?? ''));
+      const row = await page.text('#recent-alerts .alert-row');
+      assert.match(row, /Broken ESXi/); assert.match(row, /active/i);
+      assert.match(await page.text('#provider-overview'), /VMware ESXi[\s\S]*unreachable|VMware ESXi[\s\S]*connection/);
+      await page.click('#recent-alerts .alert-row');
+      await page.waitFor(() => document.getElementById('view-monitor')?.getClientRects().length > 0 && document.querySelector('#view-monitor [data-monitor-tab].active')?.dataset.monitorTab === 'alerts');
+      await page.waitFor(() => /Alert history/.test(document.getElementById('view-monitor').innerText));
+      assert.deepEqual(unexpected(page.problems()), []);
+      await page.close();
+    } finally { await lab.api('DELETE', `/api/v1/connections/${created.json.id}`); }
+  });
 });
