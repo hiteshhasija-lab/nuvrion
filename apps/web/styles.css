@@ -1089,14 +1089,14 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .infra-layout{display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:16px;align-items:start}
 .infra-tree ul,.infra-tree-card ul{list-style:none;margin:0;padding:0}
 .infra-tree-card li>ul{margin-left:14px;padding-left:10px;border-left:1px solid var(--line)}
-.infra-node{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline;width:100%;text-align:left;border:1px solid transparent;background:transparent;padding:6px 8px;border-radius:7px;color:#1f2d33}
+.infra-node{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;border:1px solid transparent;background:transparent;padding:6px 8px;border-radius:7px;color:#1f2d33}
 .infra-node:hover{background:#eef4f4}
 .infra-node.is-selected{background:#e3f1ef;border-color:#9fcfc9}
-.infra-kind{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#4d5b60;font-weight:700}
-.infra-name{font-weight:650;overflow-wrap:anywhere}
-.infra-node small{color:#4d5b60;font-size:11px;white-space:nowrap}
-.infra-connection .infra-name{font-size:14px}
-.infra-dot{display:inline-block;width:8px;height:8px;border-radius:50%;align-self:center}
+.infra-kind{flex:0 0 76px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#4d5b60;font-weight:700}
+.infra-name{flex:1 1 auto;min-width:0;font-weight:650;overflow-wrap:anywhere}
+.infra-node small{margin-left:auto;color:#4d5b60;font-size:11px;white-space:nowrap}
+.infra-connection .infra-kind{flex:0 0 auto}.infra-connection .infra-name{font-size:14px}
+.infra-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
 .infra-group{margin:8px 0 2px 8px;font-size:11px;font-weight:700;color:#4d5b60;text-transform:uppercase;letter-spacing:.06em}
 .infra-silent{margin:12px 0 0;color:#4d5b60;font-size:12px}
 .infra-detail-card h3{margin:18px 0 6px;font-size:13px}
@@ -1112,3 +1112,7 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .usage-bar{height:8px;border-radius:999px;background:#e7eded;overflow:hidden}
 .usage-bar span{display:block;height:100%}
 @media(max-width:900px){.infra-layout{grid-template-columns:1fr}}
+.infra-detail-card ul{list-style:none;margin:0;padding:0}
+.infra-detail-card h2,.infra-detail-card h3,.infra-tree-card h2{text-transform:none}
+.infra-detail-card .text-button{padding:0;text-align:left}
+.infra-detail-card .infra-facts dd{font-size:13px}

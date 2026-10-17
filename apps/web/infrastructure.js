@@ -76,7 +76,7 @@ function nodeButton(index, object, selected, { esc }) {
   const count = object.kind === 'host' ? vmsOn(index, object).length : object.kind === 'datastore' || object.kind === 'network' ? vmsOn(index, object).length : vmCountUnder(index, object);
   const note = object.lifecycleState === 'missing' ? ' · missing' : '';
   const dot = object.kind === 'host' ? `<span class="infra-dot ${object.attributes.connectionState && object.attributes.connectionState !== 'connected' ? 'tone-bad' : 'tone-good'}" aria-hidden="true"></span>` : '';
-  return `<button type="button" class="infra-node${object.id === selected ? ' is-selected' : ''}" data-infra-select="${esc(object.id)}"${object.id === selected ? ' aria-current="true"' : ''}>${dot}<span class="infra-kind">${esc(KIND_LABELS[object.kind])}</span><span class="infra-name">${esc(object.name)}</span><small>${object.kind === 'datacenter' || object.kind === 'cluster' || object.kind === 'host' || object.kind === 'datastore' || object.kind === 'network' ? `${plural(count, 'VM')}${esc(note)}` : ''}</small></button>`;
+  return `<button type="button" class="infra-node${object.id === selected ? ' is-selected' : ''}" data-infra-select="${esc(object.id)}"${object.id === selected ? ' aria-current="true"' : ''}><span class="infra-kind">${esc(KIND_LABELS[object.kind])}</span><span class="infra-name">${dot}${esc(object.name)}</span><small>${object.kind === 'datacenter' || object.kind === 'cluster' || object.kind === 'host' || object.kind === 'datastore' || object.kind === 'network' ? `${plural(count, 'VM')}${esc(note)}` : ''}</small></button>`;
 }
 
 function branch(index, objects, selected, ctx) {
@@ -96,12 +96,12 @@ function branch(index, objects, selected, ctx) {
 
 export function treeHtml(index, selected, ctx) {
   const { esc, labelOf } = ctx;
-  if (!index.objects.length) return `<div class="empty compact"><strong>No infrastructure reported yet</strong><p>Hosts, datastores and networks appear here once a VMware connection has been discovered.</p></div>`;
+  const silent = index.silent.length ? `<p class="infra-silent">Not reported by this kind of connection: ${index.silent.map(connection => esc(connection.name)).join(', ')}.</p>` : '';
+  if (!index.objects.length) return `<div class="empty compact"><strong>No infrastructure reported yet</strong><p>Hosts, datastores and networks appear here once a VMware ESXi or vCenter connection has been discovered. VMware Workstation, AWS and Azure do not report them.</p></div>${silent}`;
   const connections = index.reporting.map(connection => {
     const down = DOWN.has(connection.healthState), id = `connection:${connection.id}`;
     return `<li><button type="button" class="infra-node infra-connection${id === selected ? ' is-selected' : ''}" data-infra-select="${esc(id)}"${id === selected ? ' aria-current="true"' : ''}><span class="infra-kind">${esc(labelOf(connection))}</span><span class="infra-name">${esc(connection.name)}</span><small>${down ? 'unreachable · last known' : ''}</small></button>${branch(index, index.roots.get(connection.id) ?? [], selected, ctx)}</li>`;
   });
-  const silent = index.silent.length ? `<p class="infra-silent">Not reported by this kind of connection: ${index.silent.map(connection => esc(connection.name)).join(', ')}.</p>` : '';
   return `<ul class="infra-tree">${connections.join('')}</ul>${silent}`;
 }
 

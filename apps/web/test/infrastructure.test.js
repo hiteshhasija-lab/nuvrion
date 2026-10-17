@@ -62,6 +62,9 @@ test('an empty estate says so instead of drawing an empty tree', () => {
   const html = treeHtml(buildIndex([], [], [connection('c1', 'vCenter')]), null, ctx);
   assert.match(html, /No infrastructure reported yet/);
   assert.doesNotMatch(html, /infra-tree/);
+  const named = treeHtml(buildIndex([], [], [connection('c1', 'TECHY Workstation'), connection('c2', 'Gone', { status: 'deleted' })]), null, ctx);
+  assert.match(named, /Not reported by this kind of connection: TECHY Workstation\./, 'the empty page still says which connections cannot report');
+  assert.doesNotMatch(named, /Gone/);
 });
 
 test('objects a deleted connection left behind are not shown', () => {
