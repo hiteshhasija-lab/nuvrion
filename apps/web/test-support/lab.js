@@ -8,7 +8,7 @@ export const ADMIN_PASSWORD = 'E2e-Test-Password-1!'; // secret-scan:allow (fake
 
 export async function startConsole() {
   const workDir = mkdtempSync(join(tmpdir(), 'nuvrion-e2e-'));
-  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
+  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
   delete process.env.NUVRION_RUNTIME_PROFILE;
   const log = console.log;                                          // the server logs every request as a JSON line; keep the test output readable
   console.log = (...args) => { if (!(typeof args[0] === 'string' && args[0].startsWith('{"level":'))) log(...args); };

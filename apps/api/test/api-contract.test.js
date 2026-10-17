@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -403,6 +403,56 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     const metrics = await call('getResourceMetrics', { params: { resourceId: ctx.vm.id }, query: { hours: '6', limit: '10' }, expect: 200 });
     assert.equal(metrics.json.hours, 6);
     await call('getResourceMetrics', { params: { resourceId: ABSENT }, expect: 404 });
+  });
+
+  test('listTags, applyTagOperation: set, change and remove tags on resources, the tags on a resource, the ?tag filter, and the documented refusals', async () => {
+    const operation = body => call('applyTagOperation', { body, expect: 200 });
+    const first = await operation({ resourceIds: [ctx.vm.id], set: [{ key: 'Env', value: ' prod ' }, { key: 'team', value: 'core' }] });
+    assert.deepEqual([first.json.count, first.json.changedCount], [1, 1]);
+    assert.deepEqual(first.json.items[0].tags, [{ key: 'env', value: 'prod', source: 'nuvrion' }, { key: 'team', value: 'core', source: 'nuvrion' }], 'keys are lower case and values are trimmed');
+    const resource = (await call('getResource', { params: { resourceId: ctx.vm.id }, expect: 200 })).json;
+    assert.deepEqual(resource.tags.filter(tag => tag.source === 'nuvrion').map(tag => `${tag.key}=${tag.value}`), ['env=prod', 'team=core']);
+    const catalog = (await call('listTags', { expect: 200 })).json;
+    assert.deepEqual(catalog.items.find(item => item.key === 'env'), { key: 'env', resourceCount: 1, values: [{ value: 'prod', count: 1 }] });
+    assert.equal(catalog.count, catalog.items.length);
+    // the same request again changes nothing; a new value changes the tag; remove drops it
+    assert.deepEqual([(await operation({ resourceIds: [ctx.vm.id], set: [{ key: 'env', value: 'prod' }] })).json.changedCount], [0]);
+    assert.equal((await operation({ resourceIds: [ctx.vm.id], set: [{ key: 'env', value: 'staging' }], remove: ['team'] })).json.items[0].tags.map(tag => `${tag.key}=${tag.value}`).join(), 'env=staging');
+    // the filter on the resource list: by key, by key and value, several together, and one that matches nothing
+    const ids = query => call('listResources', { query, expect: 200 }).then(r => r.json.items.map(item => item.id));
+    assert.deepEqual(await ids({ tag: ['env'] }), [ctx.vm.id]);
+    assert.deepEqual(await ids({ tag: ['ENV=staging'] }), [ctx.vm.id]);
+    assert.deepEqual(await ids({ tag: ['env=prod'] }), []);
+    assert.deepEqual(await ids(new URLSearchParams([['tag', 'env'], ['tag', 'team']])), []);
+    await call('listResources', { query: { tag: ['=x'] }, expect: 422 });
+    // refusals: a bad tag, nothing to change, an unknown resource (and nothing changes), too many, a view-only role, no CSRF header
+    const refused = async (body, code, status = 422) => assert.equal(codeOf(await call('applyTagOperation', { body, expect: status, invalid: true })), code);
+    await refused({ resourceIds: [ctx.vm.id], set: [{ key: 'aws:x', value: '1' }] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [ctx.vm.id], set: [{ key: 'has space', value: '1' }] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [ctx.vm.id] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [], set: [{ key: 'a' }] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: ['not-an-id'], set: [{ key: 'a' }] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [ctx.vm.id], set: [{ key: 'a' }], extra: 1 }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [ctx.vm.id], set: [{ key: 'a', value: 'x'.repeat(129) }] }, 'NUV_TAG_REQUEST_INVALID');
+    await refused({ resourceIds: [ctx.vm.id, ABSENT], set: [{ key: 'ghost', value: '1' }] }, 'NUV_RESOURCE_NOT_FOUND', 404);
+    assert.ok(!(await call('listTags', { expect: 200 })).json.items.some(item => item.key === 'ghost'), 'an unknown resource in the list changed nothing');
+    await refused({ resourceIds: [ctx.vm.id], set: Array.from({ length: 21 }, (_, i) => ({ key: `k${i}`, value: '' })) }, 'NUV_TAG_REQUEST_INVALID');
+    const sizes = [17, 16, 16];                                                                  // with "env" that is exactly the limit of 50
+    for (const [batch, size] of sizes.entries()) await operation({ resourceIds: [ctx.vm.id], set: Array.from({ length: size }, (_, i) => ({ key: `bulk${batch}-${i}`, value: '' })) });
+    await refused({ resourceIds: [ctx.vm.id], set: [{ key: 'one-too-many', value: '' }] }, 'NUV_TAG_LIMIT_EXCEEDED');
+    await operation({ resourceIds: [ctx.vm.id], remove: Array.from({ length: 17 }, (_, i) => `bulk0-${i}`) });
+    await operation({ resourceIds: [ctx.vm.id], remove: Array.from({ length: 16 }, (_, i) => `bulk1-${i}`) });
+    await operation({ resourceIds: [ctx.vm.id], remove: [...Array.from({ length: 16 }, (_, i) => `bulk2-${i}`), 'env'] });
+    await call('applyTagOperation', { as: 'auditor', body: { resourceIds: [ctx.vm.id], set: [{ key: 'x', value: '1' }] }, expect: 403 });
+    await call('applyTagOperation', { as: 'auditor', body: { resourceIds: [ctx.vm.id], set: [{ key: 'x', value: '1' }] }, expect: 403 });
+    await call('listTags', { as: 'auditor', expect: 200 });
+    assert.equal((await call('applyTagOperation', { body: { resourceIds: [ctx.vm.id], set: [{ key: 'x', value: '1' }] }, csrf: 'wrong', expect: 403, invalid: true })).json.code, 'NUV_CSRF_INVALID');
+    assert.deepEqual((await call('getResource', { params: { resourceId: ctx.vm.id }, expect: 200 })).json.tags.filter(tag => tag.source === 'nuvrion'), [], 'the VM is left without tags for the tests that follow');
+    // each change was audited, with the resource and what changed; a request that changed nothing was not
+    const audit = (await call('listAuditEvents', { query: { limit: '100' }, expect: 200 })).json.items.filter(event => event.action === 'resource.tags_updated' && event.targetId === ctx.vm.id);
+    assert.ok(audit.length >= 5, `${audit.length} tag changes audited`);
+    assert.ok(audit.some(event => event.detail.added?.some(tag => tag.key === 'env' && tag.value === 'prod')), 'the first change names the tag it added');
+    assert.ok(audit.some(event => event.detail.changed?.some(tag => tag.key === 'env' && tag.from === 'prod' && tag.value === 'staging')), 'a changed value shows before and after');
   });
 
   test('getResourceSettings, updateResourceSettings', async () => {

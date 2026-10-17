@@ -439,10 +439,40 @@ paths:
         - { in: query, name: resourceType, schema: { type: string } }
         - { in: query, name: lifecycleState, schema: { type: string } }
         - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: tag, style: form, explode: true, description: 'Keep only resources with this tag; repeat the parameter to require several. "env" matches any value of the key, "env=prod" matches that value. Keys are compared in lower case.', schema: { type: array, items: { type: string } } }
       responses:
         '200': { description: Normalized infrastructure resources, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceList' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /tags:
+    get:
+      tags: [Resources]
+      operationId: listTags
+      summary: Every tag key in use with its values and how many resources carry each
+      description: Nuvrion's own tags only (tags a provider reports are on each resource's tags list with source "provider").
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The tags in use, content: { application/json: { schema: { $ref: '#/components/schemas/TagCatalog' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /tag-operations:
+    post:
+      tags: [Resources]
+      operationId: applyTagOperation
+      summary: Set and remove Nuvrion tags on one or many resources, all or nothing
+      description: Keys are lower case and may not start with a reserved prefix (nuvrion:, aws:, azure:, vmware:, microsoft:). At most 200 resources, 20 tags set and 20 removed per request, and 50 tags on a resource. Nothing is changed if any resource is unknown or any tag is invalid. Each resource whose tags actually change gets a resource.tags_updated audit event.
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TagOperationRequest' } } }
+      responses:
+        '200': { description: The tags of each resource after the change, content: { application/json: { schema: { $ref: '#/components/schemas/TagOperationResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /performance/latest:
     get:
       tags: [Resources]
@@ -1352,6 +1382,7 @@ components:
         missingSince: { type: [string, 'null'], format: date-time }
         version: { type: integer, minimum: 1 }
         attributes: { type: object, properties: { powerState: { type: string, description: 'The power state as last observed, or unknown when the connection is not answering (see observation).' }, lastKnownPowerState: { type: string, description: 'Present only when powerState is unknown because the observation is stale: the state before the provider stopped answering.' }, guestOs: { type: [string, 'null'] }, vcpuCount: { type: [integer, 'null'] }, memoryBytes: { type: [integer, 'null'] }, storageBytes: { type: [integer, 'null'] }, privateIps: { type: array, items: { type: string } } } }
+        tags: { type: array, description: "The resource's tags: the ones Nuvrion holds first (source nuvrion, changeable), then the ones the provider reports (source provider, read-only).", items: { $ref: '#/components/schemas/ResourceTag' } }
         providerMetadata: { type: object }
         providerMetadataHash: { type: string }
         observation:
@@ -1362,6 +1393,31 @@ components:
             state: { type: string, enum: [live, stale] }
             reason: { type: [string, 'null'], description: 'The connection error code, connection_unhealthy, or no_recent_agent_update when stale' }
         capabilities: { type: array, items: { $ref: '#/components/schemas/Capability' } }
+    ResourceTag:
+      type: object
+      required: [key, value, source]
+      properties: { key: { type: string }, value: { type: string }, source: { type: string, enum: [nuvrion, provider] } }
+    TagCatalog:
+      type: object
+      required: [items, count]
+      properties:
+        count: { type: integer }
+        items: { type: array, items: { type: object, required: [key, resourceCount, values], properties: { key: { type: string }, resourceCount: { type: integer, minimum: 1 }, values: { type: array, items: { type: object, required: [value, count], properties: { value: { type: string }, count: { type: integer, minimum: 1 } } } } } } }
+    TagOperationRequest:
+      type: object
+      required: [resourceIds]
+      additionalProperties: false
+      properties:
+        resourceIds: { type: array, minItems: 1, maxItems: 200, items: { type: string, format: uuid } }
+        set: { type: array, maxItems: 20, items: { type: object, required: [key], properties: { key: { type: string, minLength: 1, maxLength: 64 }, value: { type: string, maxLength: 128 } } } }
+        remove: { type: array, maxItems: 20, items: { type: string, minLength: 1, maxLength: 64 } }
+    TagOperationResult:
+      type: object
+      required: [count, changedCount, items]
+      properties:
+        count: { type: integer }
+        changedCount: { type: integer }
+        items: { type: array, items: { type: object, required: [resourceId, changed, tags], properties: { resourceId: { type: string, format: uuid }, changed: { type: boolean }, tags: { type: array, items: { $ref: '#/components/schemas/ResourceTag' } } } } }
     ResourceList:
       type: object
       required: [items, nextCursor, count, meta]
