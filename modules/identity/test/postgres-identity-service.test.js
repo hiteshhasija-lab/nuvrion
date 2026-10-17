@@ -454,3 +454,43 @@ test('PostgreSQL: the secret is stored encrypted and bound to its user, and the 
   await assert.rejects(mfa.mfaVerify(other.id, login.id, { code: stepCode(secret) }), error => /Unsupported state|auth/i.test(error.message), 'a ciphertext moved to another user does not decrypt');
   await assert.rejects(db.pool.query("INSERT INTO identity.user_mfa(user_id,enabled) VALUES($1,true)", [(await mfaUser()).id]), error => error.code === '23514');
 });
+
+// ---- creating accounts and passwords -----------------------------------------------------------------------------------------------------------------------------------
+
+test('PostgreSQL: an account an administrator makes can start with a password to replace and two-step verification required', database, async () => {
+  const { user } = await identity.createUser({ username: `made.${randomUUID().slice(0, 8)}`, displayName: 'Made', password: PASSWORD, roles: ['auditor'], mustChangePassword: true, mfaRequired: true });
+  assert.deepEqual([user.status, user.roles, user.mustChangePassword, user.mfaRequired], ['active', ['auditor'], true, true]);
+  const login = await identity.authenticate(user.username, PASSWORD);
+  assert.equal(login.user.mustChangePassword, true); assert.equal(login.mfa.state, 'enrollment_required');
+  const plain = (await newUser()).user;
+  assert.deepEqual([plain.mustChangePassword, plain.mfaRequired], [false, false]);
+});
+
+test('PostgreSQL: changing your own password checks the current one, keeps this session and ends the others; setting a temporary one ends them all', database, async () => {
+  const { user } = await newUser({ mustChangePassword: true });
+  const first = await identity.authenticate(user.username, PASSWORD), second = await identity.authenticate(user.username, PASSWORD);
+  const firstId = (await identity.session(first.token)).session.idHash, NEXT = 'A-Brand-New-Password-7!';   // secret-scan:allow (fake test credential)
+  await assert.rejects(identity.changePassword(user.id, firstId, 'not the password', NEXT), error => error.message === 'PASSWORD_INCORRECT');
+  await assert.rejects(identity.changePassword(user.id, firstId, PASSWORD, 'short'), error => error.message === 'PASSWORD_TOO_SHORT');
+  await assert.rejects(identity.changePassword(user.id, firstId, PASSWORD, PASSWORD), error => error.message === 'PASSWORD_UNCHANGED');
+  assert.deepEqual(await identity.changePassword(user.id, firstId, PASSWORD, NEXT), { changed: true, otherSessionsEnded: 1 });
+  assert.equal((await identity.session(first.token)).user.mustChangePassword, false);
+  assert.equal(await identity.session(second.token), null);
+  assert.equal(await identity.authenticate(user.username, PASSWORD), null);
+  assert.notEqual(await identity.authenticate(user.username, NEXT), null);
+  const TEMPORARY = 'Temporary-Password-42!';   // secret-scan:allow (fake test credential)
+  await assert.rejects(identity.setPassword(user.id, 'short'), error => error.message === 'PASSWORD_TOO_SHORT');
+  const set = await identity.setPassword(user.id, TEMPORARY);
+  assert.equal(set.set, true); assert.ok(set.sessionsEnded >= 1);
+  assert.equal(await identity.session(first.token), null);
+  assert.equal((await identity.authenticate(user.username, TEMPORARY)).user.mustChangePassword, true);
+  assert.equal(await identity.setPassword(randomUUID(), TEMPORARY), null);
+});
+
+test('PostgreSQL: two changes of the same password at the same moment: one wins, the other is told the password it gave is no longer current', database, async () => {
+  const { user } = await newUser();
+  const login = await identity.authenticate(user.username, PASSWORD), id = (await identity.session(login.token)).session.idHash;
+  const results = await Promise.allSettled(['Password-Number-One-1!', 'Password-Number-Two-2!'].map(next => identity.changePassword(user.id, id, PASSWORD, next)));   // secret-scan:allow (fake test credentials)
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.ok(results.filter(result => result.status === 'rejected').every(result => result.reason.message === 'PASSWORD_INCORRECT'));
+});

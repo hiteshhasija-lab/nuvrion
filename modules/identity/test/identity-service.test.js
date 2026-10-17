@@ -357,3 +357,50 @@ test('a pending secret is not an enrolment, and the secret is not kept in the cl
   assert.throws(() => identity.mfaVerify(who.userId, who.sessionId, { code: '123456' }), code_('NUV_MFA_NOT_ENROLLED'));
   assert.ok(!JSON.stringify(identity.listUsers()).includes(started.secret));
 });
+
+// ---- creating accounts and passwords -----------------------------------------------------------------------------------------------------------------------------------
+
+test('an account made by an administrator can start with a password the person must replace, and require two-step verification', () => {
+  const identity = service();
+  const { user } = identity.createUser({ username: 'new.person', displayName: 'New Person', password: PASSWORD, roles: ['auditor'], mustChangePassword: true, mfaRequired: true });
+  assert.deepEqual([user.status, user.roles, user.mustChangePassword, user.mfaRequired], ['active', ['auditor'], true, true]);
+  const login = identity.authenticate('new.person', PASSWORD);
+  assert.equal(login.user.mustChangePassword, true);
+  assert.equal(login.mfa.state, 'enrollment_required');
+  const plain = identity.createUser({ username: 'plain.person', displayName: 'Plain', password: PASSWORD }).user;
+  assert.deepEqual([plain.mustChangePassword, plain.mfaRequired], [false, false], 'by default nothing is forced');
+});
+
+test('changing your own password needs the current one, a new one of 12 characters that differs, and ends your other sessions but not this one', () => {
+  const identity = service();
+  const { user } = identity.createUser({ username: 'changer', displayName: 'Changer', password: PASSWORD, mustChangePassword: true });
+  const first = identity.authenticate('changer', PASSWORD), second = identity.authenticate('changer', PASSWORD);
+  const firstId = identity.session(first.token).session.idHash;
+  const NEXT = 'A-Brand-New-Password-7!';   // secret-scan:allow (fake test credential)
+  assert.throws(() => identity.changePassword(user.id, firstId, 'not the password', NEXT), error => error.message === 'PASSWORD_INCORRECT');
+  assert.throws(() => identity.changePassword(user.id, firstId, PASSWORD, 'short'), error => error.message === 'PASSWORD_TOO_SHORT');
+  assert.throws(() => identity.changePassword(user.id, firstId, PASSWORD, PASSWORD), error => error.message === 'PASSWORD_UNCHANGED');
+  assert.throws(() => identity.changePassword(user.id, firstId, undefined, NEXT), error => error.message === 'PASSWORD_INCORRECT');
+  assert.equal(identity.session(first.token).user.mustChangePassword, true, 'refused attempts changed nothing');
+  assert.deepEqual(identity.changePassword(user.id, firstId, PASSWORD, NEXT), { changed: true, otherSessionsEnded: 1 });
+  assert.notEqual(identity.session(first.token), null, 'this session carries on');
+  assert.equal(identity.session(second.token), null, 'the other one ended');
+  assert.equal(identity.session(first.token).user.mustChangePassword, false);
+  assert.equal(identity.authenticate('changer', PASSWORD), null, 'the old password no longer works');
+  assert.notEqual(identity.authenticate('changer', NEXT), null);
+});
+
+test('an administrator sets a temporary password: the person must replace it, every session of theirs ends, and an unknown person is not found', () => {
+  const identity = service();
+  const { user } = identity.createUser({ username: 'forgetful', displayName: 'Forgetful', password: PASSWORD });
+  const login = identity.authenticate('forgetful', PASSWORD);
+  const TEMPORARY = 'Temporary-Password-42!';   // secret-scan:allow (fake test credential)
+  assert.throws(() => identity.setPassword(user.id, 'short'), error => error.message === 'PASSWORD_TOO_SHORT');
+  assert.deepEqual(identity.setPassword(user.id, TEMPORARY), { set: true, sessionsEnded: 1 });
+  assert.equal(identity.session(login.token), null);
+  assert.equal(identity.authenticate('forgetful', PASSWORD), null);
+  assert.equal(identity.authenticate('forgetful', TEMPORARY).user.mustChangePassword, true);
+  assert.equal(identity.setPassword('00000000-0000-4000-8000-000000000000', TEMPORARY), null);
+  assert.equal(identity.setPassword(user.id, TEMPORARY, { mustChange: false }).set, true);
+  assert.equal(identity.authenticate('forgetful', TEMPORARY).user.mustChangePassword, false);
+});

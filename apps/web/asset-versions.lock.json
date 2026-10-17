@@ -1,11 +1,15 @@
 {
+  "accounts.js": {
+    "version": "20261017-1",
+    "sha256": "615a48e8895820c5feea8e26fa72bca4b9a588d8a95701ae8a49e1226d0af0e7"
+  },
   "agent-fleet.js": {
     "version": "20261014-10",
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261017-145",
-    "sha256": "0a749e03b09869a3009665a30c940d8c7f3284c23965edefd4d7dda608193803"
+    "version": "20261017-148",
+    "sha256": "0a9c665133e03ca34fd40e0dfb48c4c71fd0e8572a0beb55ad685242b591e042"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -32,8 +36,8 @@
     "sha256": "3f0bb10efd3646041e2d6b0db096bb854d1a3d17c149808ae098961535280616"
   },
   "styles.css": {
-    "version": "20261017-131",
-    "sha256": "ec7876aa8f737d0cc9052a8fcb33143b162745a5f0929fb1e356abf68a6acd8e"
+    "version": "20261017-132",
+    "sha256": "211967d8cd3a39a5f4b7b7a57637723365e9dd77404062b9623b98d0fd95a3c8"
   },
   "tags.js": {
     "version": "20261017-1",

@@ -1147,3 +1147,11 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .mfa-facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:0}
 .mfa-facts dt{color:#4d5b60;font-size:12px}.mfa-facts dd{margin:0;font-weight:600}
 .mfa-actions{display:flex;gap:10px;margin:0}
+
+/* Accounts and passwords */
+.account-dialog{width:min(560px,calc(100% - 30px));max-height:calc(100vh - 40px)}
+.account-dialog h2{text-transform:none}
+.account-password-row{display:flex;gap:8px}.account-password-row input{flex:1;min-width:0}
+.account-check{display:flex;gap:10px;align-items:flex-start;font-size:13px}.account-check input{margin-top:3px;height:auto}
+.account-dialog select{height:38px}
+.account-dialog code{font-size:14px;font-weight:700;overflow-wrap:anywhere}

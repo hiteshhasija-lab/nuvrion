@@ -171,4 +171,34 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.waitFor(() => /Status\s*Off/.test(document.getElementById('mfa-form').innerText));
     await closeDialog('#mfa-close');
   });
+
+  test('the account dialogs: a new user, the credentials to pass on, a temporary password, changing your own password, and the one that holds a person at "choose a new password"', async () => {
+    await openView('users'); await page.waitFor(() => document.querySelectorAll('#user-table tr').length >= 1);
+    await page.click('[data-new-user]'); await shown('#account-form #account-username'); await settle(300);
+    await expectNoViolations('new user dialog');
+    await page.fill('#account-username', 'axe.person'); await page.fill('#account-display-name', 'Axe Person'); await page.click('#account-generate');
+    const first = await page.evaluate(() => document.getElementById('account-password').value);
+    await page.click('#account-submit'); await page.waitFor(() => document.getElementById('account-created-password')); await settle(300);
+    await expectNoViolations('new user: credentials to pass on');
+    await page.click('#account-done'); await page.waitFor(() => !document.getElementById('account-dialog').open);
+    await page.waitFor(() => [...document.querySelectorAll('[data-user-new-credentials]')].some(button => /Axe Person/.test(button.innerText)), undefined, { timeout: 20000 });
+    await page.evaluate(() => [...document.querySelectorAll('[data-user-new-credentials]')].find(button => /Axe Person/.test(button.innerText)).click());
+    await shown('#account-form #account-password'); await settle(300);
+    await expectNoViolations('set a temporary password');
+    await closeDialog('#account-close');
+    await page.click('details.account-menu summary'); await page.click('#my-password'); await shown('#account-form #account-current'); await settle(300);
+    await expectNoViolations('change password');
+    await closeDialog('#account-close');
+    // the dialog over the sign-in page that holds a person at "choose a new password"
+    await page.click('details.account-menu summary'); await page.click('#logout'); await page.waitFor(() => document.getElementById('login')?.getClientRects().length > 0);
+    await page.fill('#login-form [name=username]', 'axe.person'); await page.fill('#login-form [name=password]', first); await page.clickText('Sign in →', '#login-form');
+    await page.waitFor(() => document.getElementById('account-dialog').open && /Choose a new password/.test(document.getElementById('account-form').innerText)); await settle(300);
+    await expectNoViolations('choose a new password (at first sign-in)');
+    await page.fill('#account-current', first); await page.fill('#account-new', 'Axe-Person-Own-Password-4!'); await page.fill('#account-confirm', 'Axe-Person-Own-Password-4!'); await page.click('#account-submit');   // secret-scan:allow (fake test credential)
+    await page.waitFor(() => !document.getElementById('application').hidden && !document.getElementById('account-dialog').open);
+    // back to the administrator for the tests that follow
+    await page.click('details.account-menu summary'); await page.click('#logout'); await page.waitFor(() => document.getElementById('login')?.getClientRects().length > 0);
+    await page.fill('#login-form [name=username]', 'admin'); await page.fill('#login-form [name=password]', ADMIN_PASSWORD); await page.clickText('Sign in →', '#login-form');
+    await page.waitFor(() => !document.getElementById('application').hidden);
+  });
 });

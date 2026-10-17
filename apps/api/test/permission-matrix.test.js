@@ -28,6 +28,8 @@ const PROTECTED = [
   ['GET', '/api/v1/platform/metrics', 'platform.manage', '/api/v1/platform/metrics'],
   ['GET', '/api/v1/platform/metrics/prometheus', 'platform.manage', '/api/v1/platform/metrics/prometheus'],
   ['GET', '/api/v1/users', 'identity.manage', '/api/v1/users'],
+  ['POST', '/api/v1/users', 'identity.manage', '/api/v1/users'],
+  ['POST', `/api/v1/users/${ID}/password`, 'identity.manage', 'userPasswordMatch'],
   ['GET', '/api/v1/permissions', 'identity.manage', '/api/v1/permissions'],
   ['GET', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
   ['POST', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
@@ -105,6 +107,7 @@ const SESSION_ONLY = [
   ['POST', '/api/v1/auth/mfa/enrollment/confirm', '/api/v1/auth/mfa/enrollment/confirm'],
   ['POST', '/api/v1/auth/mfa/backup-codes', '/api/v1/auth/mfa/backup-codes'],
   ['POST', '/api/v1/auth/mfa/disable', '/api/v1/auth/mfa/disable'],
+  ['POST', '/api/v1/auth/password', '/api/v1/auth/password'],
   ['POST', '/api/v1/auth/logout', '/api/v1/auth/logout']
 ];
 // Authenticated by an agent secret, not by a user session.
@@ -324,5 +327,25 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
     } finally {
       // nothing to undo: only this one account was held
     }
+  });
+
+  test('a session that must choose a new password first can use nothing but the call that changes it (and finishing sign-in, and signing out), whatever its role allows', async () => {
+    const made = await call('admin', 'POST', '/api/v1/users', { csrf: 'valid', body: { username: 'mustchange1', displayName: 'Must Change', password: PASSWORD, roles: ['platform_admin'] } });
+    assert.equal(made.status, 201, made.text); assert.equal(made.json.mustChangePassword, true, 'the default for an account an administrator makes');
+    sessions.must = await login('mustchange1');
+    assert.equal(sessions.must.status, 200); assert.equal(sessions.must.json.passwordChangeRequired, true); assert.deepEqual(sessions.must.json.user.permissions, [], 'the sign-in response shows who the person is and nothing they may do');
+    for (const [method, path] of PROTECTED) {
+      const result = await call('must', method, path, { csrf: 'valid' });
+      assert.equal(result.status, 403, `${method} ${path}`); assert.equal(result.code, 'NUV_PASSWORD_CHANGE_REQUIRED', `${method} ${path} must be refused for want of a new password, not for anything else`);
+    }
+    const FINISHING = ['/api/v1/auth/me', '/api/v1/auth/logout', '/api/v1/auth/password', '/api/v1/auth/mfa', '/api/v1/auth/mfa/verify', '/api/v1/auth/mfa/enrollment', '/api/v1/auth/mfa/enrollment/confirm'];
+    for (const [method, path] of SESSION_ONLY.filter(([, path]) => !FINISHING.includes(path))) {
+      const result = await call('must', method, path, { csrf: 'valid' });
+      assert.equal(result.code, 'NUV_PASSWORD_CHANGE_REQUIRED', `${method} ${path}`);
+    }
+    const me = await call('must', 'GET', '/api/v1/auth/me');
+    assert.equal(me.status, 200); assert.equal(me.json.passwordChangeRequired, true); assert.deepEqual(me.json.user.permissions, []);
+    const wrongCsrf = await call('must', 'POST', '/api/v1/auth/password', { csrf: 'wrong' });
+    assert.equal(wrongCsrf.code, 'NUV_CSRF_INVALID', 'the password call is reachable: only the CSRF check stands in its way');
   });
 });

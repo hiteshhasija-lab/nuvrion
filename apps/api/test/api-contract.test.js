@@ -356,6 +356,28 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('resetUserMfa', { params: { userId: ABSENT }, expect: 404 });
   });
 
+  test('createUser, setUserPassword, changePassword', async () => {
+    const INITIAL = 'Contract-Initial-Password-1!', CHOSEN = 'Contract-Chosen-Password-2!', TEMPORARY = 'Contract-Temporary-Password-3!'; // secret-scan:allow (fake test credentials)
+    const made = await call('createUser', { body: { username: 'made1', displayName: 'Made By Admin', password: INITIAL, roles: ['operator'] }, expect: 201 });
+    assert.equal(made.json.mustChangePassword, true); assert.ok(made.headers.get('etag'));
+    await call('createUser', { body: { username: 'made1', displayName: 'Again', password: INITIAL, roles: ['operator'] }, expect: 409, invalid: true });
+    await call('createUser', { body: { username: 'made2', displayName: 'Short', password: 'short', roles: ['operator'] }, expect: 422, invalid: true });
+    await call('createUser', { body: { username: 'made3', displayName: 'Nobody', password: INITIAL, roles: ['no_such_role'] }, expect: 422, invalid: true });
+    await call('createUser', { as: 'operator', body: { username: 'made4', displayName: 'Refused', password: INITIAL, roles: ['operator'] }, expect: 403, invalid: true });
+    sessions.made1 = await login('made1', INITIAL);
+    assert.equal(sessions.made1.status, 200);
+    await call('getCurrentUser', { as: 'made1', expect: 200 });
+    await call('changePassword', { as: 'made1', body: { currentPassword: 'not the password 1', newPassword: CHOSEN }, expect: 422, invalid: true }); // secret-scan:allow (fake test value)
+    await call('changePassword', { as: 'made1', body: { currentPassword: INITIAL, newPassword: CHOSEN }, expect: 200 });
+    await call('listOwnSessions', { as: 'made1', expect: 200 });
+    await call('setUserPassword', { params: { userId: made.json.id }, body: { password: 'short' }, expect: 422, invalid: true });
+    await call('setUserPassword', { params: { userId: ABSENT }, body: { password: TEMPORARY }, expect: 404 });
+    const me = (await call('listUsers', { expect: 200 })).json.items.find(user => user.username === 'admin');
+    await call('setUserPassword', { params: { userId: me.id }, body: { password: TEMPORARY }, expect: 409, invalid: true });
+    assert.equal((await call('setUserPassword', { params: { userId: made.json.id }, body: { password: TEMPORARY }, expect: 200 })).json.set, true);
+    await call('setUserPassword', { as: 'operator', params: { userId: made.json.id }, body: { password: TEMPORARY }, expect: 403, invalid: true });
+  });
+
   test('an auditor account for the permission checks', async () => {
     const signup = await call('signup', { as: null, body: { username: 'auditor1', displayName: 'Auditor', password: PASSWORD }, expect: 201 });
     await call('updateUser', { params: { userId: signup.json.user.id }, body: { status: 'active', roles: ['auditor'] }, headers: { 'if-match': `"${signup.json.user.rowVersion}"` }, expect: 200 });

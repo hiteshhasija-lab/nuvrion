@@ -836,4 +836,101 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await person.waitFor(() => document.getElementById('mfa-dialog').open && /Set up two-step verification/.test(document.getElementById('mfa-form').innerText));
     await person.close(); await admin.close();
   });
+
+  // ---- creating accounts and passwords (apps/web/accounts.js) --------------------------------------------------------------------------------------------------------------
+  const openUsers = async page => { await openView(page, 'users'); await page.waitFor(() => document.querySelectorAll('#user-table tr').length >= 2); };
+  const accountDialog = (page, pattern) => page.waitFor(source => document.getElementById('account-dialog').open && new RegExp(source).test(document.getElementById('account-form').innerText), pattern);
+
+  test('an administrator creates a user in the console; the person signs in with the first password, must choose their own, and the first one stops working', async () => {
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openUsers(admin);
+    await admin.click('[data-new-user]');
+    await accountDialog(admin, 'New user');
+    await admin.fill('#account-username', 'zoe.created'); await admin.fill('#account-display-name', 'Zoe Created');
+    await admin.evaluate(() => { const select = document.getElementById('account-role'); select.value = 'auditor'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await admin.click('#account-generate');
+    const first = await admin.evaluate(() => document.getElementById('account-password').value);
+    assert.match(first, /^[A-HJ-NP-Za-km-z2-9]{4}(-[A-HJ-NP-Za-km-z2-9]{4}){3}$/);
+    await admin.click('#account-submit');
+    await accountDialog(admin, 'User created');
+    assert.equal(await admin.text('#account-created-username'), 'zoe.created');
+    assert.equal(await admin.text('#account-created-password'), first, 'the administrator is shown the password to pass on');
+    assert.match(await admin.text('#account-form'), /They choose their own password/);
+    await admin.click('#account-done'); await admin.waitFor(() => !document.getElementById('account-dialog').open);
+    await admin.waitFor(() => /zoe\.created/.test(document.getElementById('user-table').innerText), undefined, { timeout: 20000 });
+    // the person signs in: held at "choose a new password"
+    const zoe = await newPage();
+    await signIn(zoe, 'zoe.created', first);
+    await accountDialog(zoe, 'Choose a new password');
+    assert.equal(await zoe.evaluate(() => document.getElementById('application').hidden), true, 'nothing of the console is shown yet');
+    assert.equal(await zoe.evaluate(() => !document.getElementById('account-close')), true, 'and the dialog has no Close button');
+    await zoe.press('Escape');
+    assert.equal(await zoe.evaluate(() => document.getElementById('account-dialog').open), true, 'Escape does not dismiss it');
+    const NEW = 'Zoe-Chose-This-Password-8!';   // secret-scan:allow (fake test credential)
+    await zoe.fill('#account-current', first); await zoe.fill('#account-new', NEW); await zoe.fill('#account-confirm', 'something else entirely 1'); await zoe.click('#account-submit');
+    await zoe.waitFor(() => /not the same/.test(document.getElementById('account-error').innerText) && !document.getElementById('account-error').hidden);
+    await zoe.fill('#account-current', 'the wrong current password'); await zoe.fill('#account-new', NEW); await zoe.fill('#account-confirm', NEW); await zoe.click('#account-submit');
+    await zoe.waitFor(() => /current password is not right/.test(document.getElementById('account-error').innerText));
+    await zoe.fill('#account-current', first); await zoe.fill('#account-new', NEW); await zoe.fill('#account-confirm', NEW); await zoe.click('#account-submit');
+    await zoe.waitFor(() => !document.getElementById('application').hidden && !document.getElementById('account-dialog').open);
+    // she is an auditor: the console is hers now, and the Users page is not
+    assert.equal(await zoe.evaluate(() => document.querySelector('[data-view=users]').hidden), true);
+    await signOut(zoe);
+    await signIn(zoe, 'zoe.created', first);
+    await zoe.waitFor(() => /incorrect/.test(document.getElementById('login-error').innerText));
+    await signIn(zoe, 'zoe.created', NEW); await zoe.waitFor(() => !document.getElementById('application').hidden);
+    await zoe.close(); await admin.close();
+  });
+
+  test('the new-user dialog explains what is wrong with a username that is taken or a password that is short, and keeps what was typed', async () => {
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openUsers(admin);
+    await admin.click('[data-new-user]'); await accountDialog(admin, 'New user');
+    await admin.fill('#account-username', 'olivia.operator'); await admin.fill('#account-display-name', 'Duplicate'); await admin.fill('#account-password', 'long enough password 1');
+    await admin.click('#account-submit');
+    await admin.waitFor(() => /already taken/.test(document.getElementById('account-error').innerText) && !document.getElementById('account-error').hidden);
+    assert.equal(await admin.evaluate(() => document.getElementById('account-display-name').value), 'Duplicate', 'what was typed is kept');
+    assert.equal(await admin.evaluate(() => document.getElementById('account-dialog').open), true);
+    await admin.click('#account-close'); await admin.waitFor(() => !document.getElementById('account-dialog').open);
+    const refusals = unexpected(admin.problems()).filter(p => /status of 409.*\/api\/v1\/users/.test(p));
+    assert.equal(refusals.length, 1, 'the browser logged the one refusal this test provoked');
+    assert.deepEqual(unexpected(admin.problems()).filter(p => !refusals.includes(p)), []);
+    await admin.close();
+  });
+
+  test('an administrator sets a temporary password for a user who forgot theirs: they are signed out, must replace it, and a person changes their own password from the account menu', async () => {
+    const user = await lab.createUser({ username: 'finn.forgot', displayName: 'Finn Forgot', role: 'operator' });
+    const finn = await newPage();
+    await signIn(finn, user.username, user.password); await signedIn(finn);
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openUsers(admin);
+    await admin.evaluate(() => [...document.querySelectorAll('[data-user-new-credentials]')].find(button => /Finn Forgot/.test(button.innerText)).click());
+    await accountDialog(admin, 'Set a password for Finn Forgot');
+    assert.equal(await admin.evaluate(() => [...document.querySelectorAll('#user-table tr')].find(r => /admin/.test(r.innerText) && /You/.test(r.innerText)).querySelector('[data-user-new-credentials]')), null, 'an administrator is not offered this for themselves');
+    await admin.click('#account-generate');
+    const temporary = await admin.evaluate(() => document.getElementById('account-password').value);
+    await admin.click('#account-submit'); await accountDialog(admin, 'Password set');
+    assert.equal(await admin.text('#account-created-password'), temporary);
+    await admin.click('#account-done');
+    await finn.waitFor(() => document.getElementById('login')?.getClientRects().length > 0, undefined, { timeout: 20000 });
+    await signIn(finn, user.username, temporary);
+    await accountDialog(finn, 'Choose a new password');
+    const OWN = 'Finn-Chose-This-Password-5!';   // secret-scan:allow (fake test credential)
+    await finn.fill('#account-current', temporary); await finn.fill('#account-new', OWN); await finn.fill('#account-confirm', OWN); await finn.click('#account-submit');
+    await finn.waitFor(() => !document.getElementById('application').hidden && !document.getElementById('account-dialog').open);
+    // later, from the account menu
+    await finn.click('details.account-menu summary'); await finn.click('#my-password');
+    await accountDialog(finn, 'Change password');
+    assert.equal(await finn.evaluate(() => !!document.getElementById('account-close')), true, 'an ordinary dialog this time');
+    const LATER = 'Finn-Chose-Another-Password-6!';   // secret-scan:allow (fake test credential)
+    await finn.fill('#account-current', OWN); await finn.fill('#account-new', LATER); await finn.fill('#account-confirm', LATER); await finn.click('#account-submit');
+    await finn.waitFor(() => /Password changed/.test(document.getElementById('notice').innerText) && !document.getElementById('account-dialog').open);
+    await signOut(finn); await signIn(finn, user.username, OWN);
+    await finn.waitFor(() => /incorrect/.test(document.getElementById('login-error').innerText));
+    await signIn(finn, user.username, LATER); await finn.waitFor(() => !document.getElementById('application').hidden);
+    await finn.close(); await admin.close();
+  });
 });

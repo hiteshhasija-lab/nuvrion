@@ -12,13 +12,13 @@ export class IdentityService {
     this.#idleTimeoutMs=idleTimeoutMs;this.#absoluteTimeoutMs=absoluteTimeoutMs;this.#cipher=cipher??keyringFromEnvironment(process.env,{production:false});this.#clock=clock;
     this.createUser({ username:'admin', displayName:'Platform Administrator', password:bootstrapPassword, roles:['platform_admin'] });
   }
-  createUser({ username, displayName, password, roles=['operator'], status='active' }) {
+  createUser({ username, displayName, password, roles=['operator'], status='active', mustChangePassword=false, mfaRequired=false }) {
     const identity = cleanUserIdentity({ username, displayName });
     if(!['active','pending','locked','disabled'].includes(status)||!Array.isArray(roles)||roles.some(role=>!this.#roles.has(role)))throw new Error('USER_INVALID');
     if (!passwordAcceptable(password)) throw new Error('PASSWORD_TOO_SHORT');
     if (this.findUser(identity.normalized)) throw new Error('USERNAME_EXISTS');
     const recoveryCode=randomBytes(18).toString('base64url');
-    const user={ id:randomUUID(), username:identity.username, normalizedUsername:identity.normalized, displayName:identity.displayName, status, roles:[...new Set(roles)], rowVersion:1, passwordHash:hashPassword(password), recoveryCodeHash:createHash('sha256').update(recoveryCode).digest(), createdAt:new Date().toISOString() };
+    const user={ id:randomUUID(), username:identity.username, normalizedUsername:identity.normalized, displayName:identity.displayName, status, roles:[...new Set(roles)], mustChangePassword:Boolean(mustChangePassword), mfaRequired:Boolean(mfaRequired), rowVersion:1, passwordHash:hashPassword(password), recoveryCodeHash:createHash('sha256').update(recoveryCode).digest(), createdAt:new Date().toISOString() };
     this.#users.set(user.id,user); return {user:this.publicUser(user),recoveryCode};
   }
   findUser(username) { return [...this.#users.values()].find(u=>u.normalizedUsername===username.trim().toLowerCase()); }
@@ -41,7 +41,7 @@ export class IdentityService {
   revokeSession(userId,sessionId){const session=this.#sessions.get(sessionId);if(!session||session.userId!==userId)return {revoked:0};this.#sessions.delete(sessionId);return {revoked:1};}
   rotateRecoveryCode(userId){const user=this.#users.get(userId);if(!user)throw new Error('USER_NOT_FOUND');const recoveryCode=randomBytes(18).toString('base64url');user.recoveryCodeHash=createHash('sha256').update(recoveryCode).digest();return {recoveryCode};}
   resetPassword(username,recoveryCode,newPassword){const user=this.findUser(username),normalizedRecoveryCode=typeof recoveryCode==='string'?recoveryCode.trim():'';if(!user||!normalizedRecoveryCode||!user.recoveryCodeHash)return null;const supplied=createHash('sha256').update(normalizedRecoveryCode).digest();if(!timingSafeEqual(supplied,user.recoveryCodeHash))return null;if(!passwordAcceptable(newPassword))throw new Error('PASSWORD_TOO_SHORT');user.passwordHash=hashPassword(newPassword);for(const [key,session] of this.#sessions)if(session.userId===user.id)this.#sessions.delete(key);return this.rotateRecoveryCode(user.id);}
-  publicUser(user){const permissions=[...new Set(user.roles.flatMap(r=>this.#roles.get(r)?.permissions??[]))];return {id:user.id,username:user.username,displayName:user.displayName,status:user.status,roles:[...user.roles],permissions,mfaEnrolled:Boolean(user.mfa?.enabled),mfaRequired:Boolean(user.mfaRequired),rowVersion:user.rowVersion};}
+  publicUser(user){const permissions=[...new Set(user.roles.flatMap(r=>this.#roles.get(r)?.permissions??[]))];return {id:user.id,username:user.username,displayName:user.displayName,status:user.status,roles:[...user.roles],permissions,mfaEnrolled:Boolean(user.mfa?.enabled),mfaRequired:Boolean(user.mfaRequired),mustChangePassword:Boolean(user.mustChangePassword),rowVersion:user.rowVersion};}
 
   #publicRole(role){return {id:role.id,name:role.name,displayName:role.displayName,description:role.description,system:role.system,permissions:[...role.permissions],userCount:[...this.#users.values()].filter(user=>user.roles.includes(role.name)).length,rowVersion:role.rowVersion};}
   listRoles(){return [...this.#roles.values()].map(role=>this.#publicRole(role)).sort((a,b)=>Number(b.system)-Number(a.system)||a.name.localeCompare(b.name));}
@@ -63,6 +63,10 @@ export class IdentityService {
   mfaRegenerateBackupCodes(userId,code){const user=this.#proveFactor(userId,code),backupCodes=generateBackupCodes();user.mfa.backupHashes=backupCodes.map(item=>hashBackupCode(item.replace('-','')));return {backupCodes};}
   mfaDisable(userId,code){const user=this.#proveFactor(userId,code);if(user.mfaRequired)throw MFA_ERRORS.requiredForAccount();user.mfa=null;return {disabled:true};}
   mfaReset(userId){const user=this.#users.get(userId);if(!user)return null;const had=Boolean(user.mfa);user.mfa=null;this.revokeSessions(userId);return {reset:had};}
+
+  // ---- passwords: a person changes their own; an administrator sets a temporary one (docs/users.md) ----
+  changePassword(userId,sessionId,currentPassword,newPassword){const user=this.#users.get(userId);if(!user)throw new Error('USER_NOT_FOUND');if(typeof currentPassword!=='string'||!passwordMatches(currentPassword,user.passwordHash))throw new Error('PASSWORD_INCORRECT');if(!passwordAcceptable(newPassword))throw new Error('PASSWORD_TOO_SHORT');if(newPassword===currentPassword)throw new Error('PASSWORD_UNCHANGED');user.passwordHash=hashPassword(newPassword);user.mustChangePassword=false;user.rowVersion+=1;let revoked=0;for(const [key,session] of this.#sessions)if(session.userId===userId&&key!==sessionId){this.#sessions.delete(key);revoked+=1}return {changed:true,otherSessionsEnded:revoked};}
+  setPassword(userId,newPassword,{mustChange=true}={}){const user=this.#users.get(userId);if(!user)return null;if(!passwordAcceptable(newPassword))throw new Error('PASSWORD_TOO_SHORT');user.passwordHash=hashPassword(newPassword);user.mustChangePassword=Boolean(mustChange);user.rowVersion+=1;const ended=this.revokeSessions(userId).revoked;return {set:true,sessionsEnded:ended};}
   authorize(principal,permission){return Boolean(principal?.user.permissions.includes(permission));}
 }
 
