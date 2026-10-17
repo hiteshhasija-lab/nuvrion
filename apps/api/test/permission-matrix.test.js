@@ -33,8 +33,6 @@ const PROTECTED = [
   ['POST', '/api/v1/roles', 'identity.manage', '/api/v1/roles'],
   ['PATCH', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
   ['DELETE', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
-  ['GET', '/api/v1/mfa-policy', 'identity.manage', '/api/v1/mfa-policy'],
-  ['PUT', '/api/v1/mfa-policy', 'identity.manage', '/api/v1/mfa-policy'],
   ['DELETE', `/api/v1/users/${ID}/mfa`, 'identity.manage', 'userMfaMatch'],
   ['PATCH', `/api/v1/users/${ID}`, 'identity.manage', 'userMatch'],
   ['POST', `/api/v1/users/${ID}/revoke-sessions`, 'identity.manage', 'userSessionsMatch'],
@@ -297,15 +295,14 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
     assert.equal((await call('short', 'GET', '/api/v1/auth/me')).status, 401);
   });
 
-  test('a session that has not finished two-factor sign-in can use no protected route and no session-only route but the ones that finish it, whatever its role allows', async () => {
-    const role = await call('admin', 'POST', '/api/v1/roles', { csrf: 'valid', body: { name: 'everything_mfa', permissions: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'audit.view', 'identity.manage', 'platform.manage'] } });
-    assert.equal(role.status, 201, role.text);
+  test('a session that has not finished two-factor sign-in can use no protected route and no session-only route but the ones that finish it, whatever its role allows (here: an administrator)', async () => {
     try {
-      await addUser('pending1', 'everything_mfa');
+      await addUser('pending1', 'platform_admin');
       sessions.pending = await login('pending1');
-      assert.equal(sessions.pending.status, 200); assert.equal(sessions.pending.json.mfa.state, 'verified', 'no policy yet: nothing more is needed');
-      const policy = await call('admin', 'PUT', '/api/v1/mfa-policy', { csrf: 'valid', body: { requiredRoles: ['everything_mfa'] } });
-      assert.equal(policy.status, 200, policy.text);
+      assert.equal(sessions.pending.status, 200); assert.equal(sessions.pending.json.mfa.state, 'verified', 'not required yet: nothing more is needed');
+      const users = (await call('admin', 'GET', '/api/v1/users')).json.items, target = users.find(user => user.username === 'pending1');
+      const required = await call('admin', 'PATCH', `/api/v1/users/${target.id}`, { csrf: 'valid', body: { status: 'active', roles: ['platform_admin'], mfaRequired: true }, headers: { 'if-match': `"${target.rowVersion}"` } });
+      assert.equal(required.status, 200, required.text);
       const held = await login('pending1');
       assert.equal(held.json.mfa.state, 'enrollment_required'); assert.deepEqual(held.json.user.permissions, [], 'the sign-in response shows who the person is and nothing they may do');
       sessions.pending = held;
@@ -325,7 +322,7 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
       const terminal = await call('pending', 'POST', `/api/v1/connections/${ID}/terminal-sessions`, { csrf: 'valid' });
       assert.equal(terminal.code, 'NUV_MFA_REQUIRED');
     } finally {
-      await call('admin', 'PUT', '/api/v1/mfa-policy', { csrf: 'valid', body: { requiredRoles: [] } });
+      // nothing to undo: only this one account was held
     }
   });
 });

@@ -219,7 +219,7 @@ paths:
         - { $ref: '#/components/parameters/IfMatch' }
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [status, roles], properties: { status: { $ref: '#/components/schemas/UserStatus' }, roles: { type: array, minItems: 1, items: { $ref: '#/components/schemas/RoleName' } } } } } }
+        content: { application/json: { schema: { type: object, required: [status, roles], properties: { status: { $ref: '#/components/schemas/UserStatus' }, roles: { type: array, minItems: 1, items: { $ref: '#/components/schemas/RoleName' } }, mfaRequired: { type: boolean, description: Require (or stop requiring) two-step verification for this user; it applies at once, to sessions already open } } } } }
       responses:
         '200': { description: Updated user, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -303,7 +303,7 @@ paths:
     get:
       tags: [Authentication]
       operationId: getMfaStatus
-      summary: Whether two-factor sign-in is set up, whether the caller's role requires it, and the state of this session
+      summary: Whether two-factor sign-in is set up, whether an administrator requires it for the caller, and the state of this session
       description: Also available to a session that has not finished two-factor sign-in. Every other call from such a session is refused with 403 NUV_MFA_REQUIRED.
       responses:
         '200': { description: Two-factor status, content: { application/json: { schema: { $ref: '#/components/schemas/MfaStatus' } } } }
@@ -373,7 +373,7 @@ paths:
     post:
       tags: [Authentication]
       operationId: disableMfa
-      summary: Turn two-factor sign-in off for the caller; needs a current code, and is refused when the caller's role requires it
+      summary: Turn two-factor sign-in off for the caller; needs a current code, and is refused when an administrator requires it for the account
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
         required: true
@@ -382,40 +382,15 @@ paths:
         '200': { description: Turned off, content: { application/json: { schema: { type: object, required: [disabled], properties: { disabled: { type: boolean } } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Not set up (NUV_MFA_NOT_ENROLLED) or required by the role (NUV_MFA_REQUIRED_BY_POLICY), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '409': { description: Not set up (NUV_MFA_NOT_ENROLLED) or required for the account by an administrator (NUV_MFA_REQUIRED_FOR_ACCOUNT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '422': { description: The code is wrong or not a code, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '429': { $ref: '#/components/responses/Throttled' }
-  /mfa-policy:
-    get:
-      tags: [Users]
-      operationId: getMfaPolicy
-      summary: The roles whose holders must use two-factor sign-in
-      x-required-permission: identity.manage
-      responses:
-        '200': { description: The policy, content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } } }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-    put:
-      tags: [Users]
-      operationId: setMfaPolicy
-      summary: Choose the roles whose holders must use two-factor sign-in
-      description: Applies at once, to sessions already open, so a holder who has not set it up is held at setup until they do. Built-in roles can be named.
-      x-required-permission: identity.manage
-      security: [{ sessionCookie: [], csrfHeader: [] }]
-      requestBody:
-        required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } }
-      responses:
-        '200': { description: The policy now in force, content: { application/json: { schema: { $ref: '#/components/schemas/MfaPolicy' } } } }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '422': { $ref: '#/components/responses/Unprocessable' }
   /users/{userId}/mfa:
     delete:
       tags: [Users]
       operationId: resetUserMfa
       summary: Remove a user's two-factor enrolment (a lost device) and end their sessions
-      description: They sign in with their password and, if their role requires it, set two-factor sign-in up again.
+      description: They sign in with their password and, if an administrator requires it for the account, set two-factor sign-in up again. The requirement itself is not changed.
       x-required-permission: identity.manage
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters: [{ $ref: '#/components/parameters/UserId' }]
@@ -1460,6 +1435,7 @@ components:
         roles: { type: array, items: { $ref: '#/components/schemas/RoleName' } }
         permissions: { type: array, items: { type: string } }
         mfaEnrolled: { type: boolean, description: Whether the user has two-factor sign-in set up }
+        mfaRequired: { type: boolean, description: Whether an administrator requires two-step verification for this user }
         rowVersion: { type: integer, minimum: 1 }
     UserWithRecoveryCode:
       type: object
@@ -1492,12 +1468,12 @@ components:
       properties: { state: { $ref: '#/components/schemas/MfaState' } }
     MfaStatus:
       type: object
-      required: [enrolled, enrolledAt, backupCodesRemaining, requiredByPolicy, state]
+      required: [enrolled, enrolledAt, backupCodesRemaining, required, state]
       properties:
         enrolled: { type: boolean }
         enrolledAt: { type: [string, 'null'], format: date-time }
         backupCodesRemaining: { type: integer, minimum: 0 }
-        requiredByPolicy: { type: boolean }
+        required: { type: boolean, description: An administrator requires two-step verification for this account }
         state: { $ref: '#/components/schemas/MfaState' }
     MfaCode:
       type: object
@@ -1515,10 +1491,6 @@ components:
       type: object
       required: [state, backupCodes]
       properties: { state: { type: string, enum: [verified] }, backupCodes: { type: array, items: { type: string } } }
-    MfaPolicy:
-      type: object
-      required: [requiredRoles]
-      properties: { requiredRoles: { type: array, items: { $ref: '#/components/schemas/RoleName' } } }
     AuthSession:
       type: object
       required: [user, mfa, csrfToken, expiresAt, sessionPolicy]

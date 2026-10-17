@@ -345,13 +345,15 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('disableMfa', { as: 'mfa2', body: { code: '000000' }, expect: 422, invalid: true });
     await call('disableMfa', { as: 'mfa2', body: { code: at(started.json.secret, 1) }, expect: 200 });
     await call('disableMfa', { as: 'mfa2', body: { code: '000000' }, expect: 409, invalid: true });
-    assert.deepEqual((await call('getMfaPolicy', { expect: 200 })).json, { requiredRoles: [] });
-    await call('setMfaPolicy', { body: { requiredRoles: ['nobody'] }, expect: 422, invalid: true });
-    assert.deepEqual((await call('setMfaPolicy', { body: { requiredRoles: ['auditor'] }, expect: 200 })).json, { requiredRoles: ['auditor'] });
-    await call('setMfaPolicy', { body: { requiredRoles: [] }, expect: 200 });
+    const listed = (await call('listUsers', { expect: 200 })).json.items.find(user => user.id === signup.json.user.id);
+    assert.deepEqual([listed.mfaRequired, listed.mfaEnrolled], [false, false]);
+    await call('updateUser', { params: { userId: listed.id }, body: { status: 'active', roles: ['operator'], mfaRequired: 'yes' }, headers: { 'if-match': `"${listed.rowVersion}"` }, expect: 422, invalid: true });
+    const required = await call('updateUser', { params: { userId: listed.id }, body: { status: 'active', roles: ['operator'], mfaRequired: true }, headers: { 'if-match': `"${listed.rowVersion}"` }, expect: 200 });
+    assert.equal(required.json.mfaRequired, true);
+    assert.deepEqual([(await call('getMfaStatus', { as: 'mfa2', expect: 200 })).json.required, (await call('getMfaStatus', { as: 'mfa2', expect: 200 })).json.state], [true, 'enrollment_required']);
+    await call('updateUser', { params: { userId: listed.id }, body: { status: 'active', roles: ['operator'], mfaRequired: false }, headers: { 'if-match': `"${required.json.rowVersion}"` }, expect: 200 });
     await call('resetUserMfa', { params: { userId: signup.json.user.id }, expect: 200 });
     await call('resetUserMfa', { params: { userId: ABSENT }, expect: 404 });
-    await call('getMfaPolicy', { as: 'operator', expect: 403 });
   });
 
   test('an auditor account for the permission checks', async () => {

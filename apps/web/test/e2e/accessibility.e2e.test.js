@@ -76,7 +76,7 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await openView('users');
     const selects = await page.evaluate(() => [...document.querySelectorAll('#user-table select')].map(s => s.getAttribute('aria-label')));
     assert.ok(selects.length >= 2);
-    for (const label of selects) assert.match(label, /^(Status|Role) of .+/);
+    for (const label of selects) assert.match(label, /^(Status of|Role of|Two-step verification for) .+/);
   });
 
   test('the account menu, and the dialogs opened from it', async () => {

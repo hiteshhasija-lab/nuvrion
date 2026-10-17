@@ -4,8 +4,8 @@
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261017-144",
-    "sha256": "4c8b11c6a7e4730f4fe07323d3ea68df406e4d547fe986c91391c12b5dd3e0dc"
+    "version": "20261017-145",
+    "sha256": "0a749e03b09869a3009665a30c940d8c7f3284c23965edefd4d7dda608193803"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -24,16 +24,16 @@
     "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
   },
   "mfa.js": {
-    "version": "20261017-1",
-    "sha256": "a444006c415ca58a2bb33dc9df3fbb0a001eeae2a83f085ac38d5437b661072f"
+    "version": "20261017-2",
+    "sha256": "d759b93416eb32fa3be4a1cdcf16a6d8aa2966c6fcf0666e7525bb72a6c43549"
   },
   "roles.js": {
     "version": "20261017-2",
     "sha256": "3f0bb10efd3646041e2d6b0db096bb854d1a3d17c149808ae098961535280616"
   },
   "styles.css": {
-    "version": "20261017-130",
-    "sha256": "2573a821a2f4c8bb11842fa733a3dfc2f6bb0ae79e8b93b88d50e6b5ab641699"
+    "version": "20261017-131",
+    "sha256": "ec7876aa8f737d0cc9052a8fcb33143b162745a5f0929fb1e356abf68a6acd8e"
   },
   "tags.js": {
     "version": "20261017-1",

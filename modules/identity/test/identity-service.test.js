@@ -235,7 +235,7 @@ const code_ = expected => error => error.code === expected;
 test('without a policy or an authenticator a session is verified at once; enrolling needs a correct code and returns ten backup codes once', () => {
   const lab = clocked(), { identity } = lab, who = signedIn(identity);
   assert.equal(who.login.mfa.state, 'verified');
-  assert.deepEqual(identity.mfaStatus(who.userId), { enrolled: false, enrolledAt: null, backupCodesRemaining: 0, requiredByPolicy: false });
+  assert.deepEqual(identity.mfaStatus(who.userId), { enrolled: false, enrolledAt: null, backupCodesRemaining: 0, required: false });
   const started = identity.mfaStartEnrollment(who.userId, { account: 'ann@example.com' });
   assert.match(started.secret, /^[A-Z2-7]{32}$/);
   assert.match(started.uri, /^otpauth:\/\/totp\/Nuvrion:ann%40example\.com\?secret=/);
@@ -306,20 +306,29 @@ test('a request that is not one code is refused as invalid, not as a wrong code,
   assert.equal(identity.session(a.token).mfa.state, 'verification_required');
 });
 
-test('the policy makes a role need an authenticator: its holders must enrol, the change applies to sessions already open, and they cannot turn it off', () => {
-  const lab = clocked(), { identity } = lab, who = signedIn(identity, 'policy.user', ['operator']);
-  assert.deepEqual(identity.setMfaPolicy(['operator', 'platform_admin']), { requiredRoles: ['operator', 'platform_admin'] });
+test('requiring it for a person: they must enrol at once (a session already open too), cannot turn it off, and keep the requirement after a reset', () => {
+  const lab = clocked(), { identity } = lab, who = signedIn(identity, 'required.user', ['operator']), other = signedIn(identity, 'free.user', ['operator']);
+  const user = () => identity.listUsers().find(item => item.id === who.userId);
+  assert.equal(user().mfaRequired, false);
+  const updated = identity.updateUser(who.userId, { status: 'active', roles: ['operator'], mfaRequired: true }, user().rowVersion);
+  assert.equal(updated.mfaRequired, true);
   assert.equal(identity.session(who.token).mfa.state, 'enrollment_required', 'an open session is held at enrolment at once');
-  assert.equal(identity.authenticate('policy.user', PASSWORD).mfa.state, 'enrollment_required');
+  assert.equal(identity.session(other.token).mfa.state, 'verified', 'nobody else is affected: it is chosen per person');
+  assert.equal(identity.authenticate('required.user', PASSWORD).mfa.state, 'enrollment_required');
+  assert.deepEqual([identity.mfaStatus(who.userId).required, identity.mfaStatus(other.userId).required], [true, false]);
   const { secret } = enrolled(lab, who);
   assert.equal(identity.session(who.token).mfa.state, 'verified');
   lab.advance(30_000);
-  assert.throws(() => identity.mfaDisable(who.userId, lab.code(secret)), code_('NUV_MFA_REQUIRED_BY_POLICY'));
-  assert.equal(identity.mfaStatus(who.userId).requiredByPolicy, true);
-  assert.deepEqual(identity.setMfaPolicy([]), { requiredRoles: [] });
-  assert.throws(() => identity.setMfaPolicy(['nobody']), code_('NUV_MFA_REQUEST_INVALID'));
-  assert.throws(() => identity.setMfaPolicy('operator'), code_('NUV_MFA_REQUEST_INVALID'));
-  assert.deepEqual(identity.setMfaPolicy(['operator', 'operator']), { requiredRoles: ['operator'] });
+  assert.throws(() => identity.mfaDisable(who.userId, lab.code(secret)), code_('NUV_MFA_REQUIRED_FOR_ACCOUNT'));
+  assert.deepEqual(identity.mfaReset(who.userId), { reset: true });
+  assert.equal(identity.listUsers().find(item => item.id === who.userId).mfaRequired, true, 'a reset removes the enrolment, not the requirement');
+  assert.equal(identity.authenticate('required.user', PASSWORD).mfa.state, 'enrollment_required');
+  // an update that does not mention it leaves it alone; one that asks for nothing required turns it off; a non-boolean is refused
+  const version = () => identity.listUsers().find(item => item.id === who.userId).rowVersion;
+  assert.equal(identity.updateUser(who.userId, { status: 'active', roles: ['operator'] }, version()).mfaRequired, true);
+  assert.throws(() => identity.updateUser(who.userId, { status: 'active', roles: ['operator'], mfaRequired: 'yes' }, version()), error => error.message === 'USER_INVALID');
+  assert.equal(identity.updateUser(who.userId, { status: 'active', roles: ['operator'], mfaRequired: false }, version()).mfaRequired, false);
+  assert.equal(identity.authenticate('required.user', PASSWORD).mfa.state, 'verified');
 });
 
 test('turning it off, new backup codes and an administrator’s reset', () => {

@@ -801,18 +801,18 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.close();
   });
 
-  test('a policy makes a role set up two-step verification at once, even in a session that is already open; an administrator can reset it, and turning it off is refused meanwhile', async () => {
-    await lab.api('POST', '/api/v1/roles', { name: 'needs_two_step', permissions: ['resource.view', 'connection.view'] });
-    const user = await lab.createUser({ username: 'pat.policy', displayName: 'Pat Policy', role: 'needs_two_step' });
+  test('an administrator requires two-step verification for one person: their open session is held at setup at once, others are not, they cannot turn it off, and a reset ends their session', async () => {
+    const user = await lab.createUser({ username: 'pat.policy', displayName: 'Pat Policy', role: 'operator' });
     const person = await newPage();
     await signIn(person, user.username, user.password); await signedIn(person);
     const admin = await newPage();
     await signIn(admin); await signedIn(admin);
     await openView(admin, 'users');
-    await admin.waitFor(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]'));
-    await admin.evaluate(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]').click());
-    await admin.click('#mfa-policy-save');
-    await admin.waitFor(() => /now required for the chosen roles/.test(document.getElementById('notice').innerText));
+    await admin.waitFor(() => [...document.querySelectorAll('#user-table tr')].some(row => /pat\.policy/.test(row.innerText)));
+    const rowOf = () => admin.evaluate(() => { const row = [...document.querySelectorAll('#user-table tr')].find(r => /pat\.policy/.test(r.innerText)); return { select: row.querySelector('[data-user-mfa]').value, state: row.querySelector('[data-user-mfa]').closest('td').querySelector('small').innerText }; });
+    assert.deepEqual(await rowOf(), { select: 'false', state: 'Not set up' });
+    await admin.evaluate(() => { const row = [...document.querySelectorAll('#user-table tr')].find(r => /pat\.policy/.test(r.innerText)), select = row.querySelector('[data-user-mfa]'); select.value = 'true'; select.dispatchEvent(new Event('change', { bubbles: true })); row.querySelector('[data-user-save]').click(); });
+    await admin.waitFor(() => /pat\.policy updated/.test(document.getElementById('notice').innerText));
     // her open session is held: within a refresh or two the setup prompt appears over the sign-in page
     await person.waitFor(() => document.getElementById('mfa-dialog').open && /Set up two-step verification/.test(document.getElementById('mfa-form').innerText), undefined, { timeout: 20000 });
     assert.equal(await person.evaluate(() => document.getElementById('application').hidden), true);
@@ -820,22 +820,20 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await person.fill('#mfa-code', codeAt(secret, -1)); await person.click('#mfa-submit');
     await person.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10);
     await person.click('#mfa-done');
-    await signedIn(person).catch(() => {});                       // she has no Overview-only permissions; what matters is that the console is shown
     await person.waitFor(() => !document.getElementById('application').hidden);
     await openAccountMfa(person);
-    assert.match(await person.text('#mfa-form'), /Yes, by your role/);
-    assert.equal(await person.evaluate(() => document.querySelector('[data-mfa-action=disable]').disabled), true, 'turning it off is not offered while her role requires it');
+    assert.match(await person.text('#mfa-form'), /Yes, an administrator requires it/);
+    assert.equal(await person.evaluate(() => document.querySelector('[data-mfa-action=disable]').disabled), true, 'turning it off is not offered while it is required');
     await person.click('#mfa-close');
-    // the administrator sees she has it, and resets it: her session ends
+    // the administrator sees she has it set up, resets it, and her session ends; the requirement stays
     await admin.evaluate(() => document.querySelector('#navigation button[data-view=overview]').click()); await openView(admin, 'users');
     await admin.waitFor(() => /pat\.policy · 2-step on/.test(document.getElementById('user-table').innerText), undefined, { timeout: 20000 });
+    assert.deepEqual(await rowOf(), { select: 'true', state: 'Set up' });
     await admin.evaluate(() => [...document.querySelectorAll('[data-user-mfa-reset]')].find(button => /Pat Policy/.test(button.innerText)).click());
     await admin.waitFor(() => /Two-step verification reset for pat\.policy/.test(document.getElementById('notice').innerText));
     await person.waitFor(() => document.getElementById('login')?.getClientRects().length > 0, undefined, { timeout: 20000 });
-    // clean up: the policy applies to the whole lab
-    await admin.evaluate(() => document.querySelector('#mfa-policy-roles input[value=needs_two_step]').click());
-    await admin.click('#mfa-policy-save');
-    await admin.waitFor(() => /no longer required/.test(document.getElementById('notice').innerText));
+    await signIn(person, user.username, user.password);
+    await person.waitFor(() => document.getElementById('mfa-dialog').open && /Set up two-step verification/.test(document.getElementById('mfa-form').innerText));
     await person.close(); await admin.close();
   });
 });

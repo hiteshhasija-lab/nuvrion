@@ -44,19 +44,12 @@ export function statusHtml(status, { esc, when }) {
   const facts = status.enrolled
     ? `<dt>Status</dt><dd>On${status.enrolledAt ? ` since ${esc(when(status.enrolledAt))}` : ''}</dd><dt>Backup codes</dt><dd>${esc(plural(left, 'code'))} left${left <= 2 ? ' — make new ones soon' : ''}</dd>`
     : '<dt>Status</dt><dd>Off</dd>';
-  const required = `<dt>Required for you</dt><dd>${status.requiredByPolicy ? 'Yes, by your role' : 'No'}</dd>`;
+  const required = `<dt>Required for you</dt><dd>${status.required ? 'Yes, an administrator requires it' : 'No'}</dd>`;
   const actions = status.enrolled
-    ? `<button type="button" data-mfa-action="backup-codes">New backup codes</button><button type="button" data-mfa-action="disable"${status.requiredByPolicy ? ' disabled title="Your role requires two-step verification, so it cannot be turned off."' : ''}>Turn off</button>`
+    ? `<button type="button" data-mfa-action="backup-codes">New backup codes</button><button type="button" data-mfa-action="disable"${status.required ? ' disabled title="An administrator requires two-step verification for your account, so it cannot be turned off."' : ''}>Turn off</button>`
     : '<button type="button" class="primary" data-mfa-action="setup">Set up</button>';
   return `${header('Two-step verification', { esc, close: true, eyebrow: 'ACCOUNT SECURITY' })}<p class="tag-help">A code from an authenticator app, as well as your password, signs you in.</p><dl class="mfa-facts">${facts}${required}</dl><p class="mfa-actions">${actions}</p>`;
 }
-
-// ---- the policy panel (Users page) ---------------------------------------------------------------------------------------------------------------------------------
-export function policyHtml(roles, requiredRoles, { esc, roleLabel = role => role.displayName ?? role.name }) {
-  if (!roles.length) return '<p class="tag-help">No roles loaded.</p>';
-  return `<fieldset class="mfa-policy-roles"><legend class="sr-only">Roles that must use two-step verification</legend>${roles.map(role => `<label class="mfa-policy-role"><input type="checkbox" name="mfa-role" value="${esc(role.name)}"${requiredRoles.includes(role.name) ? ' checked' : ''}><span><strong>${esc(roleLabel(role))}</strong><small>${esc(plural(role.userCount, 'user'))}</small></span></label>`).join('')}</fieldset>`;
-}
-export const policyBody = checked => ({ requiredRoles: [...checked] });
 
 export function resetResultText(username, result) {
   return result.reset ? `Two-step verification reset for ${username}. They sign in with their password again.` : `${username} had no two-step verification to reset.`;

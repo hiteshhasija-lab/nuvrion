@@ -64,7 +64,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
     await addUser('ann');
     assert.equal((await login('ann')).json.mfa.state, 'verified');
     const status = await call('ann', 'GET', '/api/v1/auth/mfa');
-    assert.deepEqual(status.json, { enrolled: false, enrolledAt: null, backupCodesRemaining: 0, requiredByPolicy: false, state: 'verified' });
+    assert.deepEqual(status.json, { enrolled: false, enrolledAt: null, backupCodesRemaining: 0, required: false, state: 'verified' });
     const started = await call('ann', 'POST', '/api/v1/auth/mfa/enrollment');
     assert.equal(started.status, 200);
     assert.match(started.json.secret, /^[A-Z2-7]{32}$/); assert.equal(started.json.account, 'ann'); assert.equal(started.json.issuer, 'Nuvrion');
@@ -76,7 +76,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
     assert.deepEqual([bad.status, bad.code], [422, 'NUV_MFA_REQUEST_INVALID']);
     const confirmed = await call('ann', 'POST', '/api/v1/auth/mfa/enrollment/confirm', { body: { code: at(started.json.secret, -1) } });
     assert.equal(confirmed.status, 200); assert.equal(confirmed.json.state, 'verified'); assert.equal(confirmed.json.backupCodes.length, 10);
-    assert.deepEqual((await call('ann', 'GET', '/api/v1/auth/mfa')).json, { enrolled: true, enrolledAt: (await call('ann', 'GET', '/api/v1/auth/mfa')).json.enrolledAt, backupCodesRemaining: 10, requiredByPolicy: false, state: 'verified' });
+    assert.deepEqual((await call('ann', 'GET', '/api/v1/auth/mfa')).json, { enrolled: true, enrolledAt: (await call('ann', 'GET', '/api/v1/auth/mfa')).json.enrolledAt, backupCodesRemaining: 10, required: false, state: 'verified' });
     assert.equal((await call('ann', 'GET', '/api/v1/resources')).status, 200, 'the session that set it up carries on');
     assert.equal((await call('ann', 'POST', '/api/v1/auth/mfa/enrollment')).code, 'NUV_MFA_ALREADY_ENROLLED');
     const users = (await call('admin', 'GET', '/api/v1/users')).json.items;
@@ -143,57 +143,65 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
     assert.equal((await call('dave4', 'GET', '/api/v1/resources')).code, 'NUV_MFA_REQUIRED');
   });
 
-  test('the policy: a role named in it must set up an authenticator at once (open sessions too); it cannot be turned off; an administrator’s reset ends their sessions', async () => {
-    await addUser('erin');
-    assert.equal((await login('erin')).json.mfa.state, 'verified');
-    assert.equal((await call('admin', 'GET', '/api/v1/mfa-policy')).json.requiredRoles.length, 0);
-    const bad = await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: ['nobody'] } });
-    assert.deepEqual([bad.status, bad.code], [422, 'NUV_MFA_REQUEST_INVALID']);
-    assert.equal((await call('admin', 'PUT', '/api/v1/mfa-policy', { body: [] })).code, 'NUV_MFA_REQUEST_INVALID');
-    try {
-      const set = await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: ['operator'] } });
-      assert.deepEqual(set.json, { requiredRoles: ['operator'] });
-      assert.equal((await call('erin', 'GET', '/api/v1/resources')).code, 'NUV_MFA_REQUIRED', 'her open session is held at once');
-      assert.equal((await call('erin', 'GET', '/api/v1/auth/mfa')).json.state, 'enrollment_required');
-      assert.equal((await call('erin', 'GET', '/api/v1/auth/mfa')).json.requiredByPolicy, true);
-      const started = await call('erin', 'POST', '/api/v1/auth/mfa/enrollment');
-      assert.equal(started.status, 200);
-      const confirmed = await call('erin', 'POST', '/api/v1/auth/mfa/enrollment/confirm', { body: { code: at(started.json.secret, -1) } });
-      assert.equal(confirmed.status, 200); assert.equal(confirmed.json.state, 'verified');
-      assert.equal((await call('erin', 'GET', '/api/v1/resources')).status, 200);
-      const off = await call('erin', 'POST', '/api/v1/auth/mfa/disable', { body: { code: at(started.json.secret, 0) } });
-      assert.deepEqual([off.status, off.code], [409, 'NUV_MFA_REQUIRED_BY_POLICY']);
-      const user = (await call('admin', 'GET', '/api/v1/users')).json.items.find(item => item.username === 'erin');
-      const reset = await call('admin', 'DELETE', `/api/v1/users/${user.id}/mfa`);
-      assert.deepEqual([reset.status, reset.json], [200, { reset: true }]);
-      assert.equal((await call('erin', 'GET', '/api/v1/auth/me')).status, 401, 'the reset ended her sessions');
-      assert.equal((await login('erin2', 'erin')).json.mfa.state, 'enrollment_required', 'she signs in with her password and must set it up again');
-      assert.equal((await call('admin', 'DELETE', '/api/v1/users/00000000-0000-4000-8000-000000000000/mfa')).status, 404);
-    } finally { await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: [] } }); }
+  const userOf = async username => (await call('admin', 'GET', '/api/v1/users')).json.items.find(user => user.username === username);
+  const requireFor = async (username, required, roles = ['operator']) => {
+    const user = await userOf(username);
+    return call('admin', 'PATCH', `/api/v1/users/${user.id}`, { body: { status: 'active', roles, mfaRequired: required }, version: user.rowVersion });
+  };
+
+  test('requiring it for a person: they must set it up at once (their open session too), nobody else is affected, they cannot turn it off, and an administrator’s reset ends their sessions but keeps the requirement', async () => {
+    await addUser('erin'); await addUser('frank');
+    assert.equal((await login('erin')).json.mfa.state, 'verified'); await login('frank');
+    const bad = await call('admin', 'PATCH', `/api/v1/users/${(await userOf('erin')).id}`, { body: { status: 'active', roles: ['operator'], mfaRequired: 'yes' }, version: (await userOf('erin')).rowVersion });
+    assert.deepEqual([bad.status, bad.code], [422, 'NUV_USER_UPDATE_INVALID']);
+    const set = await requireFor('erin', true);
+    assert.equal(set.status, 200, set.text); assert.equal(set.json.mfaRequired, true);
+    assert.equal((await call('erin', 'GET', '/api/v1/resources')).code, 'NUV_MFA_REQUIRED', 'her open session is held at once');
+    assert.equal((await call('frank', 'GET', '/api/v1/resources')).status, 200, 'frank is not affected');
+    const state = (await call('erin', 'GET', '/api/v1/auth/mfa')).json;
+    assert.deepEqual([state.state, state.required], ['enrollment_required', true]);
+    const started = await call('erin', 'POST', '/api/v1/auth/mfa/enrollment');
+    assert.equal(started.status, 200);
+    const confirmed = await call('erin', 'POST', '/api/v1/auth/mfa/enrollment/confirm', { body: { code: at(started.json.secret, -1) } });
+    assert.equal(confirmed.status, 200); assert.equal(confirmed.json.state, 'verified');
+    assert.equal((await call('erin', 'GET', '/api/v1/resources')).status, 200);
+    const off = await call('erin', 'POST', '/api/v1/auth/mfa/disable', { body: { code: at(started.json.secret, 0) } });
+    assert.deepEqual([off.status, off.code], [409, 'NUV_MFA_REQUIRED_FOR_ACCOUNT']);
+    const user = await userOf('erin');
+    assert.deepEqual([user.mfaRequired, user.mfaEnrolled], [true, true]);
+    const reset = await call('admin', 'DELETE', `/api/v1/users/${user.id}/mfa`);
+    assert.deepEqual([reset.status, reset.json], [200, { reset: true }]);
+    assert.equal((await call('erin', 'GET', '/api/v1/auth/me')).status, 401, 'the reset ended her sessions');
+    assert.equal((await login('erin2', 'erin')).json.mfa.state, 'enrollment_required', 'she signs in with her password and must set it up again');
+    assert.equal((await call('admin', 'DELETE', '/api/v1/users/00000000-0000-4000-8000-000000000000/mfa')).status, 404);
+    const lifted = await requireFor('erin', false);
+    assert.equal(lifted.json.mfaRequired, false);
+    assert.equal((await call('erin2', 'GET', '/api/v1/resources')).status, 200, 'with the requirement lifted, her held session is free again');
   });
 
-  test('a policy that names the administrators does not lock them out: they set it up with the password they have', async () => {
+  test('requiring it for an administrator does not lock them out: they set it up with the password they have', async () => {
+    const admin = await userOf('admin');
     try {
-      await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: ['platform_admin'] } });
+      const set = await call('admin', 'PATCH', `/api/v1/users/${admin.id}`, { body: { status: 'active', roles: ['platform_admin'], mfaRequired: true }, version: admin.rowVersion });
+      assert.equal(set.status, 200, set.text);
       assert.equal((await call('admin', 'GET', '/api/v1/users')).code, 'NUV_MFA_REQUIRED');
       const started = await call('admin', 'POST', '/api/v1/auth/mfa/enrollment');
       assert.equal(started.status, 200);
       const confirmed = await call('admin', 'POST', '/api/v1/auth/mfa/enrollment/confirm', { body: { code: at(started.json.secret, -1) } });
       assert.equal(confirmed.status, 200);
       assert.equal((await call('admin', 'GET', '/api/v1/users')).status, 200);
-      const reset = await call('admin', 'GET', '/api/v1/mfa-policy');
-      assert.deepEqual(reset.json, { requiredRoles: ['platform_admin'] });
-      await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: [] } });
-      const users = (await call('admin', 'GET', '/api/v1/users')).json.items, me = users.find(user => user.username === 'admin');
-      await call('admin', 'DELETE', `/api/v1/users/${me.id}/mfa`);
+    } finally {
+      const now = await userOf('admin');
+      await call('admin', 'PATCH', `/api/v1/users/${now.id}`, { body: { status: 'active', roles: ['platform_admin'], mfaRequired: false }, version: now.rowVersion });
+      await call('admin', 'DELETE', `/api/v1/users/${now.id}/mfa`);
       assert.equal((await login('admin')).json.mfa.state, 'verified');
-    } finally { await call('admin', 'PUT', '/api/v1/mfa-policy', { body: { requiredRoles: [] } }).catch(() => {}); }
+    }
   });
 
   test('every step is in the audit history, and no secret or code is in it', async () => {
     const audit = await call('admin', 'GET', '/api/v1/audit-events?limit=500&search=identity.mfa');
     const events = audit.json.items ?? [], actions = new Set(events.map(event => event.action));
-    for (const action of ['identity.mfa_enrolled', 'identity.mfa_verified', 'identity.mfa_disabled', 'identity.mfa_backup_codes_regenerated', 'identity.mfa_policy_changed', 'identity.mfa_reset']) assert.ok(actions.has(action), action);
+    for (const action of ['identity.mfa_enrolled', 'identity.mfa_verified', 'identity.mfa_disabled', 'identity.mfa_backup_codes_regenerated', 'identity.mfa_requirement_changed', 'identity.mfa_reset']) assert.ok(actions.has(action), action);
     assert.ok(events.some(event => event.action === 'identity.mfa_verified' && event.outcome === 'failed'), 'wrong codes are recorded as failures');
     const text = JSON.stringify(events);
     assert.doesNotMatch(text, /[A-Z2-7]{32}/, 'no secret'); assert.doesNotMatch(text, /\b[a-z2-9]{5}-[a-z2-9]{5}\b/, 'no backup code');

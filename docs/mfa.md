@@ -18,15 +18,18 @@ A code works **once**: the next one is a new code (wait for the app to change, u
 
 ## For an administrator
 
-**Users** has a panel **Two-step verification**: tick the roles whose holders must use it and **Save**. The built-in roles can be named (for example `platform_admin`).
+Two-step verification is chosen **per person**. On **Users**, the **Two-step** column of each row says **Not required** or **Required**, and whether the person has it set up; change it and choose **Save**.
 
-- It applies **at once, to sessions already open**: a holder who has not set it up is held at the setup prompt until they do, and can do nothing else. No one is locked out by this: setting it
-  up needs only the password they already have.
-- Someone whose role requires it **cannot turn it off** (the button says why).
-- The user list shows who has it ("2-step on"). **Reset two-step** removes a person's enrolment (a lost phone with no backup codes left) and ends their sessions; they sign in with their
-  password and, if their role requires it, set it up again. The reset is in the audit history.
-- Changing the policy is audited (`identity.mfa_policy_changed`), as are enrolling, turning it off, new backup codes, every code check (`identity.mfa_verified`, with failures), and resets. Neither
-  a secret nor a code is ever written to the audit history or the log.
+- A person for whom it is **Required** and who has not set it up is held at the setup prompt at once, **in a session that is already open too**, and can do nothing else until they do. Nobody else is
+  affected. Nobody is locked out by this: setting it up needs only the password they already have.
+- Someone for whom it is required **cannot turn it off** (the button says why). Not required: they may use it or not, as they choose.
+- **Reset two-step** (in the person's row, shown when they have it set up) removes their enrolment (a lost phone with no backup codes left) and ends their sessions. They sign in with their password and,
+  if it is required for them, set it up again: the reset does not change the requirement.
+- Requiring it, resetting, and each person's own setup are in the audit history (`identity.mfa_requirement_changed`, `identity.mfa_reset`, `identity.mfa_enrolled`, `identity.mfa_disabled`,
+  `identity.mfa_backup_codes_regenerated`, and every code check as `identity.mfa_verified`, with failures). Neither a secret nor a code is ever written to the audit history or the log.
+
+Before 0.1.192 two-step verification was required per role. Anyone who held a role that was required then was carried over as "Required" when 0.1.192 was applied, once; changing a person's setting afterwards
+is not undone by later deploys.
 
 ### If every administrator is locked out
 
@@ -35,14 +38,14 @@ Another administrator can reset the others. If none can sign in (all lost their 
 
 ```
 DELETE FROM identity.user_mfa WHERE user_id = (SELECT user_id FROM identity.users WHERE normalized_username = 'admin');
-UPDATE identity.mfa_policy SET required_roles = '{}' WHERE policy_id = 1;   -- only if the policy itself must be lifted for now
+UPDATE identity.users SET mfa_required = false WHERE normalized_username = 'admin';   -- only if the requirement itself must be lifted for now
 ```
 
 ## What the platform guarantees
 
 - **Nothing is usable before the second step.** A session that has not finished two-step verification can do nothing but finish it (or sign out): every other call is refused with
   `403 NUV_MFA_REQUIRED`, whatever the person's role allows. The check is in the one place every call passes through, and the host terminal socket refuses such a session as well. The state is
-  worked out on every request, so a new policy or a reset takes effect on the next one.
+  worked out on every request, so a new requirement or a reset takes effect on the next one.
 - **A code is good once.** The last accepted time step is stored, and a code for that step or an earlier one is refused, so a code seen over a shoulder or in a log cannot be replayed. Several
   sessions presenting the same code at the same moment: exactly one succeeds (tested against PostgreSQL). The same holds for each backup code.
 - **Guessing is limited.** Five wrong codes end that sign-in (the password is needed again); ten in fifteen minutes lock the account's second step for fifteen minutes, even against a correct code
@@ -59,22 +62,20 @@ would need an administrator's reset, as lost provider credentials would need re-
 
 ```
 POST   /api/v1/auth/login                      returns "mfa": { "state": "verified" | "verification_required" | "enrollment_required" }; permissions are empty until verified
-GET    /api/v1/auth/mfa                        { enrolled, enrolledAt, backupCodesRemaining, requiredByPolicy, state }
+GET    /api/v1/auth/mfa                        { enrolled, enrolledAt, backupCodesRemaining, required, state }
 POST   /api/v1/auth/mfa/verify                 { "code": "123456" }  or  { "backupCode": "abcde-fghjk" }
 POST   /api/v1/auth/mfa/enrollment             start: { secret, uri, account, issuer }   (also for a session that must set it up)
 POST   /api/v1/auth/mfa/enrollment/confirm     { "code": "123456" } → { backupCodes: [10] }, shown once
 POST   /api/v1/auth/mfa/backup-codes           { "code": "123456" } → ten new backup codes
 POST   /api/v1/auth/mfa/disable                { "code": "123456" }        refused while a role requires it
-GET    /api/v1/mfa-policy                      { requiredRoles: [...] }                         identity.manage
-PUT    /api/v1/mfa-policy                      { "requiredRoles": ["platform_admin"] }          identity.manage
+PATCH  /api/v1/users/{id}                      { "status": "active", "roles": [...], "mfaRequired": true }   require it for one person   identity.manage
 DELETE /api/v1/users/{id}/mfa                  reset a user's enrolment, end their sessions     identity.manage
 ```
 
 Errors: `NUV_MFA_REQUIRED` (403: not verified yet), `NUV_MFA_CODE_INVALID` and `NUV_MFA_REQUEST_INVALID` (422), `NUV_MFA_SESSION_REVOKED` (401: too many wrong codes), `NUV_MFA_THROTTLED` (429),
-`NUV_MFA_ALREADY_ENROLLED`, `NUV_MFA_ENROLLMENT_NOT_STARTED`, `NUV_MFA_NOT_ENROLLED` and `NUV_MFA_REQUIRED_BY_POLICY` (409).
+`NUV_MFA_ALREADY_ENROLLED`, `NUV_MFA_ENROLLMENT_NOT_STARTED`, `NUV_MFA_NOT_ENROLLED` and `NUV_MFA_REQUIRED_FOR_ACCOUNT` (409).
 
 ## How it is kept
 
-`identity.user_mfa` (one row per person: the encrypted secret, a pending secret during setup, the last accepted step, the backup-code hashes, and the failure counters), `identity.mfa_policy` (a single
-row naming the roles) and two columns on `identity.sessions` (when the session was verified, and its wrong-code count) come with migration 0035. Roles themselves are not changed by the policy, so the
-built-in ones, which cannot be edited, can be named in it.
+`identity.user_mfa` (one row per person: the encrypted secret, a pending secret during setup, the last accepted step, the backup-code hashes, and the failure counters), a `mfa_required` flag on `identity.users` (migration 0036) and two columns on `identity.sessions` (when the session was verified, and its wrong-code count) come with migrations 0035 and 0036.
+The role-level policy table of 0035 is left in place, empty and unused.

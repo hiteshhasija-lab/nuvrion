@@ -339,7 +339,7 @@ test('PostgreSQL: enrolment needs a correct code; then a new sign-in needs a cod
   const { backupCodes } = await mfa.mfaConfirmEnrollment(user.id, first.id, stepCode(started.secret));
   assert.equal(backupCodes.length, 10);
   assert.equal((await mfa.session(first.token)).mfa.state, 'verified');
-  assert.deepEqual(await mfa.mfaStatus(user.id), { enrolled: true, enrolledAt: new Date(time.now).toISOString(), backupCodesRemaining: 10, requiredByPolicy: false });
+  assert.deepEqual(await mfa.mfaStatus(user.id), { enrolled: true, enrolledAt: new Date(time.now).toISOString(), backupCodesRemaining: 10, required: false });
   assert.equal((await mfa.listUsers()).find(item => item.id === user.id).mfaEnrolled, true);
   await assert.rejects(mfa.mfaStartEnrollment(user.id), mfaFail('NUV_MFA_ALREADY_ENROLLED'));
   const second = await mfaLogin(user);
@@ -385,21 +385,41 @@ test('PostgreSQL: wrong codes are counted although the request failed; five end 
   assert.deepEqual([row.failed_count, row.locked_until], [0, null], 'a success clears the count');
 });
 
-test('PostgreSQL: the policy holds roles to two-factor sign-in at once, and what it names must exist', database, async () => {
-  const user = await mfaUser(['auditor']), who = await mfaLogin(user);
-  try {
-    assert.deepEqual(await mfa.setMfaPolicy(['auditor', 'platform_admin']), { requiredRoles: ['auditor', 'platform_admin'] });
-    assert.equal((await mfa.session(who.token)).mfa.state, 'enrollment_required');
-    const started = await mfa.mfaStartEnrollment(user.id, {});
-    await mfa.mfaConfirmEnrollment(user.id, who.id, stepCode(started.secret));
-    assert.equal((await mfa.session(who.token)).mfa.state, 'verified');
-    time.now += 30_000;
-    await assert.rejects(mfa.mfaDisable(user.id, stepCode(started.secret)), mfaFail('NUV_MFA_REQUIRED_BY_POLICY'));
-    assert.equal((await mfa.mfaStatus(user.id)).requiredByPolicy, true);
-    await assert.rejects(mfa.setMfaPolicy(['nobody']), mfaFail('NUV_MFA_REQUEST_INVALID'));
-    await assert.rejects(mfa.setMfaPolicy('auditor'), mfaFail('NUV_MFA_REQUEST_INVALID'));
-    assert.deepEqual(await mfa.getMfaPolicy(), { requiredRoles: ['auditor', 'platform_admin'] }, 'a refused change changed nothing');
-  } finally { await mfa.setMfaPolicy([]); }
+test('PostgreSQL: requiring it for a person holds them to two-step verification at once, only them, and survives a reset', database, async () => {
+  const user = await mfaUser(['auditor']), bystander = await mfaUser(['auditor']), who = await mfaLogin(user), free = await mfaLogin(bystander);
+  const version = async id => (await mfa.listUsers()).find(item => item.id === id).rowVersion;
+  const updated = await mfa.updateUser(user.id, { status: 'active', roles: ['auditor'], mfaRequired: true }, await version(user.id));
+  assert.equal(updated.mfaRequired, true);
+  assert.equal((await mfa.session(who.token)).mfa.state, 'enrollment_required');
+  assert.equal((await mfa.session(free.token)).mfa.state, 'verified', 'nobody else is affected');
+  assert.equal((await mfa.authenticate(user.username, PASSWORD)).mfa.state, 'enrollment_required');
+  const started = await mfa.mfaStartEnrollment(user.id, {});
+  await mfa.mfaConfirmEnrollment(user.id, who.id, stepCode(started.secret));
+  assert.equal((await mfa.session(who.token)).mfa.state, 'verified');
+  time.now += 30_000;
+  await assert.rejects(mfa.mfaDisable(user.id, stepCode(started.secret)), mfaFail('NUV_MFA_REQUIRED_FOR_ACCOUNT'));
+  assert.deepEqual(await mfa.mfaStatus(user.id), { enrolled: true, enrolledAt: new Date(time.now - 30_000).toISOString(), backupCodesRemaining: 10, required: true });
+  assert.deepEqual(await mfa.mfaReset(user.id), { reset: true });
+  assert.equal((await mfa.listUsers()).find(item => item.id === user.id).mfaRequired, true, 'a reset removes the enrolment, not the requirement');
+  assert.equal((await mfa.updateUser(user.id, { status: 'active', roles: ['auditor'] }, await version(user.id))).mfaRequired, true, 'an update that does not mention it leaves it');
+  await assert.rejects(mfa.updateUser(user.id, { status: 'active', roles: ['auditor'], mfaRequired: 'yes' }, await version(user.id)), error => error.message === 'USER_INVALID');
+  assert.equal((await mfa.updateUser(user.id, { status: 'active', roles: ['auditor'], mfaRequired: false }, await version(user.id))).mfaRequired, false);
+});
+
+test('PostgreSQL: migration 0036 carries the earlier role policy over once, and running it again does not bring it back', database, async () => {
+  const user = await mfaUser(['operator']), other = await mfaUser(['auditor']);
+  // the test connection is the application role, which may not alter tables (the column is already there, from when the test database was migrated): run the migration's data statements
+  const migration = (await import('node:fs')).readFileSync(new URL('../../../database/migrations/0036_two_step_per_user.sql', import.meta.url), 'utf8').replace(/^ALTER TABLE .*$/m, '').replace(/^(BEGIN|COMMIT);$/gm, '').replace(/^INSERT INTO platform\.schema_migrations[\s\S]*?;$/m, '');
+  const withPolicy = roles => db.pool.query('UPDATE identity.mfa_policy SET required_roles=$1 WHERE policy_id=1', [roles]);
+  const required = async id => (await db.pool.query('SELECT mfa_required FROM identity.users WHERE user_id=$1', [id])).rows[0].mfa_required;
+  await db.pool.query('UPDATE identity.users SET mfa_required=false WHERE user_id = ANY($1)', [[user.id, other.id]]);
+  await withPolicy(['operator']);
+  await db.pool.query(migration);
+  assert.deepEqual([await required(user.id), await required(other.id)], [true, false], 'a holder of a named role becomes required, others do not');
+  assert.deepEqual((await db.pool.query('SELECT required_roles FROM identity.mfa_policy WHERE policy_id=1')).rows[0].required_roles, [], 'the policy is consumed');
+  await db.pool.query('UPDATE identity.users SET mfa_required=false WHERE user_id=$1', [user.id]);   // an administrator changes their mind
+  await db.pool.query(migration);
+  assert.equal(await required(user.id), false, 'applying the migration again at the next deploy does not undo that');
 });
 
 test('PostgreSQL: new backup codes replace the old, turning it off needs a code, and a reset removes the enrolment and ends every session', database, async () => {

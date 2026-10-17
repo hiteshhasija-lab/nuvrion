@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSecret, verifyHtml, setupHtml, codesHtml, statusHtml, policyHtml, policyBody, resetResultText } from '../mfa.js';
+import { groupSecret, verifyHtml, setupHtml, codesHtml, statusHtml, resetResultText } from '../mfa.js';
 
-// The two-step verification dialog and the policy panel: what each state offers, that nothing a server sent is put in the page unescaped, and that a person is never
+// The two-step verification dialog: what each state offers, that nothing a server sent is put in the page unescaped, and that a person is never
 // offered something the server will refuse (turning off what their role requires).
 const esc = value => String(value ?? '—').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 const when = value => `on ${value}`;
@@ -50,24 +50,14 @@ test('the backup codes are listed once, with a way to copy them and a clear way 
 });
 
 test('the status says what is on, how many backup codes are left, and offers only what the server will accept', () => {
-  const off = statusHtml({ enrolled: false, enrolledAt: null, backupCodesRemaining: 0, requiredByPolicy: false }, ctx);
+  const off = statusHtml({ enrolled: false, enrolledAt: null, backupCodesRemaining: 0, required: false }, ctx);
   assert.match(off, /Status<\/dt><dd>Off/); assert.match(off, /data-mfa-action="setup"/); assert.doesNotMatch(off, /data-mfa-action="disable"/);
-  const on = statusHtml({ enrolled: true, enrolledAt: '2026-10-17T10:00:00Z', backupCodesRemaining: 7, requiredByPolicy: false }, ctx);
+  const on = statusHtml({ enrolled: true, enrolledAt: '2026-10-17T10:00:00Z', backupCodesRemaining: 7, required: false }, ctx);
   assert.match(on, /On since on 2026-10-17/); assert.match(on, /7 codes left/); assert.doesNotMatch(on, /make new ones soon/);
   assert.match(on, /data-mfa-action="backup-codes"/); assert.match(on, /data-mfa-action="disable">Turn off/);
-  assert.match(statusHtml({ enrolled: true, enrolledAt: null, backupCodesRemaining: 1, requiredByPolicy: false }, ctx), /1 code left — make new ones soon/);
-  const required = statusHtml({ enrolled: true, enrolledAt: null, backupCodesRemaining: 10, requiredByPolicy: true }, ctx);
-  assert.match(required, /Yes, by your role/); assert.match(required, /data-mfa-action="disable" disabled title="Your role requires/, 'a role that requires it cannot turn it off, and the button says why');
-});
-
-test('the policy panel lists every role with its holders, ticks the ones named, and builds the request from the ticks', () => {
-  const roles = [{ name: 'platform_admin', displayName: 'platform admin', userCount: 1 }, { name: 'night_shift', displayName: 'night shift', userCount: 3 }];
-  const html = policyHtml(roles, ['platform_admin'], { esc });
-  assert.match(html, /value="platform_admin" checked/); assert.doesNotMatch(html, /value="night_shift" checked/);
-  assert.match(html, /night shift<\/strong><small>3 users/); assert.match(html, /platform admin<\/strong><small>1 user</);
-  assert.match(html, /<legend class="sr-only">Roles that must use two-step verification/);
-  assert.deepEqual(policyBody(['a', 'b']), { requiredRoles: ['a', 'b'] });
-  assert.match(policyHtml([], [], { esc }), /No roles loaded/);
+  assert.match(statusHtml({ enrolled: true, enrolledAt: null, backupCodesRemaining: 1, required: false }, ctx), /1 code left — make new ones soon/);
+  const required = statusHtml({ enrolled: true, enrolledAt: null, backupCodesRemaining: 10, required: true }, ctx);
+  assert.match(required, /Yes, an administrator requires it/); assert.match(required, /data-mfa-action="disable" disabled title="An administrator requires/, 'an account that must use it cannot turn it off, and the button says why');
 });
 
 test('reset results are worded for the person who pressed the button', () => {
@@ -79,6 +69,6 @@ test('whatever a server sends is escaped: account names, secrets, codes and role
   const evil = '<img src=x onerror=alert(1)>';
   for (const html of [
     setupHtml({ secret: evil, uri: evil, account: evil }, ctx), codesHtml([evil], ctx), verifyHtml({ error: evil, intro: evil }, ctx),
-    statusHtml({ enrolled: true, enrolledAt: evil, backupCodesRemaining: 3, requiredByPolicy: false }, ctx), policyHtml([{ name: evil, displayName: evil, userCount: 1 }], [evil], { esc })
+    statusHtml({ enrolled: true, enrolledAt: evil, backupCodesRemaining: 3, required: false }, ctx)
   ]) { assert.doesNotMatch(html, /<img/); assert.match(html, /&lt;img/); }
 });
