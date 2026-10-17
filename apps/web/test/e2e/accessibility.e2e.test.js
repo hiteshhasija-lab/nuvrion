@@ -104,6 +104,16 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await settle(600);
     await expectNoViolations('VM settings');
     await closeDialog('#vm-settings-close');
+    await page.click('#inventory-tag-button');                       // the tag dialog, empty and with a tag in it
+    await shown('#tag-form #tag-key');
+    await settle(300);
+    await expectNoViolations('tag dialog');
+    await page.fill('#tag-key', 'a11y'); await page.fill('#tag-value', 'check'); await page.click('#tag-set');
+    await page.waitFor(() => /a11y: check/.test(document.getElementById('tag-form').innerText));
+    await expectNoViolations('tag dialog with a tag');
+    await page.click('[data-tag-remove=a11y]');
+    await page.waitFor(() => /No tags set by Nuvrion yet/.test(document.getElementById('tag-form').innerText));
+    await closeDialog('#tag-close');
     await page.clickText('Monitor', '#vm-action-toolbar');          // opens the VM's own monitoring page
     await page.waitFor(() => /Virtual machines \/ nuvrion-app-01 \/ Monitor/.test(document.getElementById('breadcrumb').innerText));
     await settle(600);

@@ -1061,3 +1061,27 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .drill-chip,.drill-chips .text-button{white-space:nowrap}
 .vm-filter-toolbar .drill-chips .text-button{width:auto;display:inline-flex;align-items:center;min-height:0;padding:2px 6px}
 .vm-filter-toolbar .drill-chips .drill-chip{height:auto;min-height:0}
+
+/* Tags (apps/web/tags.js): chips in the list and the detail, the filter and Tag button in the list filter, and the dialog. */
+.vm-workspace-head .toolbar.vm-filter-toolbar{grid-template-columns:minmax(150px,220px) 130px minmax(110px,170px) auto}
+.vm-workspace-head .toolbar.vm-filter-toolbar #inventory-tag[hidden],.vm-workspace-head .toolbar.vm-filter-toolbar #inventory-tag-button[hidden]{display:none}
+#inventory-tag-button{white-space:nowrap}
+.tag-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.tag-chip{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid #b9d9d6;background:#e7f4f3;color:#0b4f4b;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:600;line-height:1.5}
+.tag-chip.is-provider{background:#fff;border-style:dashed;color:#4d5b60;border-color:#b9c7c8}
+.tag-chip.is-more{background:#eef2f2;border-color:#d4dcdc;color:#4d5b60}
+.vm-facts dd .tag-chips{margin-top:0}
+.tag-dialog{width:min(560px,calc(100% - 30px));border:0;border-radius:16px;padding:0}
+.tag-dialog form{padding:20px 22px;display:grid;gap:14px}
+.tag-dialog header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.tag-dialog h2{margin:0}.tag-dialog h3{margin:0 0 6px;font-size:13px}
+.tag-list{list-style:none;margin:0;padding:0}
+.tag-list li{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #edf0f1}
+.tag-list li small{flex:1;color:#647277;font-size:11px}
+.tag-list li .tag-chip{max-width:none}
+.tag-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tag-fields label{display:grid;gap:4px;font-size:12px;font-weight:600}
+.tag-help,.tag-empty{margin:4px 0;color:#4d5b60;font-size:12px}
+.tag-error{margin:4px 0;color:#a7342f;font-size:12px;font-weight:600}
+.tag-dialog .primary{justify-self:start}
+@media(max-width:600px){.tag-fields{grid-template-columns:1fr}.vm-workspace-head .toolbar.vm-filter-toolbar{grid-template-columns:1fr 1fr}}

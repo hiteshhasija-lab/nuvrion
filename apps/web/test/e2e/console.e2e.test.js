@@ -506,4 +506,110 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
       await page.close();
     } finally { await lab.api('DELETE', `/api/v1/connections/${created.json.id}`); }
   });
+  // ---- tags (apps/web/tags.js) --------------------------------------------------------------------------------------------------------------------------------------
+  const rowNames = page => page.evaluate(() => [...document.querySelectorAll('#view-inventory tbody tr .resource-name strong')].map(e => e.textContent));
+  const rowChips = (page, name) => page.evaluate(name => [...document.querySelectorAll('#view-inventory tbody tr')].find(r => r.querySelector('.resource-name strong')?.textContent === name)?.querySelector('.tag-chips')?.innerText.replace(/\s+/g, ' ').trim() ?? '', name);
+  const dialogOpen = page => page.evaluate(() => document.getElementById('tag-dialog').open);
+  const setTag = async (page, key, value = '') => {
+    await page.fill('#tag-key', key); if (value) await page.fill('#tag-value', value);
+    await page.click('#tag-set');
+  };
+
+  test('a VM is tagged from the dialog: the chip appears in the list and the detail, the tag filter finds it, and removing the tag takes it away', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length >= 2);
+    const names = await rowNames(page), total = names.length, target = names[0];
+    assert.equal(await page.evaluate(() => document.getElementById('inventory-tag-button').disabled), true, 'Tag is disabled until a VM is chosen');
+    await page.evaluate(name => [...document.querySelectorAll('#view-inventory tbody tr')].find(r => r.querySelector('.resource-name strong')?.textContent === name).querySelector('[data-select-bulk]').click(), target);
+    await page.waitFor(() => !document.getElementById('inventory-tag-button').disabled);
+    await page.click('#inventory-tag-button');
+    await page.waitFor(() => document.getElementById('tag-dialog').open && document.getElementById('tag-key'));
+    assert.match(await page.text('#tag-title'), new RegExp(target));
+    await setTag(page, 'Env', ' prod ');
+    await page.waitFor(() => /env: prod/.test(document.querySelector('#tag-form .tag-list')?.innerText ?? ''));
+    await page.click('#tag-close');
+    await page.waitFor(() => !document.getElementById('tag-dialog').open);
+    await page.waitFor(name => [...document.querySelectorAll('#view-inventory tbody tr')].some(r => r.querySelector('.resource-name strong')?.textContent === name && /env: prod/.test(r.innerText)), target);
+    assert.equal(await rowChips(page, target), 'env: prod', 'the key was stored in lower case and the value trimmed');
+    // the filter lists the tag with its count, and narrows the list to it
+    assert.match(await page.evaluate(() => [...document.querySelectorAll('#inventory-tag option')].map(o => o.textContent).join('|')), /env \(any value\) · 1/);
+    await page.evaluate(() => { const select = document.getElementById('inventory-tag'); select.value = 'env=prod'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length === 1);
+    assert.deepEqual(await rowNames(page), [target]);
+    assert.match(await page.text('#inventory-drill-chips'), /Tag: env = prod/);
+    await page.click('#inventory-drill-chips [data-clear-drill=tag]');
+    await page.waitFor(total => document.querySelectorAll('#view-inventory tbody tr').length === total, total);
+    // the detail shows the tag, too; removing it clears it everywhere
+    await page.click('#view-inventory tbody tr .resource-name');
+    await page.waitFor(() => /Tags/.test(document.querySelector('.vm-facts')?.innerText ?? ''));
+    assert.match(await page.text('.vm-facts'), /env: prod/);
+    await page.click('.vm-facts [data-open-tags]');
+    await page.waitFor(() => document.getElementById('tag-dialog').open && document.querySelector('[data-tag-remove=env]'));
+    await page.click('[data-tag-remove=env]');
+    await page.waitFor(() => /No tags set by Nuvrion yet/.test(document.getElementById('tag-form').innerText));
+    await page.click('#tag-close');
+    await page.waitFor(name => ![...document.querySelectorAll('#view-inventory tbody tr')].find(r => r.querySelector('.resource-name strong')?.textContent === name)?.querySelector('.tag-chips'), target);
+    assert.equal(await rowChips(page, target), '', 'the chip is gone from the list');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the whole selection is tagged at once, the dialog says how many carry each tag, and a refused key is explained without closing the dialog', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr [data-select-bulk]').length >= 2);
+    await page.evaluate(() => document.querySelectorAll('#view-inventory tbody tr [data-select-bulk]')[0].click());
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr [data-select-bulk]:checked').length === 1);
+    await page.evaluate(() => document.querySelectorAll('#view-inventory tbody tr [data-select-bulk]:not(:checked)')[0].click());   // the list was redrawn by the first click
+    await page.waitFor(() => /^Tag 2/.test(document.getElementById('inventory-tag-button').textContent));
+    await page.click('#inventory-tag-button');
+    await page.waitFor(() => document.getElementById('tag-dialog').open && document.getElementById('tag-key'));
+    assert.match(await page.text('#tag-title'), /2 virtual machines/);
+    await setTag(page, 'Bad Key', 'x');
+    await page.waitFor(() => !document.getElementById('tag-error').hidden);
+    assert.match(await page.text('#tag-error'), /may use only letters, digits/);
+    assert.equal(await dialogOpen(page), true, 'the dialog stays open so the key can be fixed');
+    await setTag(page, 'aws:name', 'x');
+    await page.waitFor(() => /reserved/.test(document.getElementById('tag-error').innerText));
+    await page.fill('#tag-key', 'batch'); await page.fill('#tag-value', 'one');
+    await page.click('#tag-set');
+    await page.waitFor(() => /on all 2/.test(document.querySelector('#tag-form .tag-list')?.innerText ?? ''));
+    assert.match(await page.text('#tag-form .tag-list'), /batch: one/);
+    await page.fill('#tag-key', 'team'); await page.click('#tag-set');
+    await page.waitFor(() => document.querySelectorAll('#tag-form .tag-list li').length === 2);
+    await page.click('#tag-close');
+    for (const name of await rowNames(page)) if ((await page.evaluate(name => [...document.querySelectorAll('#view-inventory tbody tr')].find(r => r.querySelector('.resource-name strong')?.textContent === name)?.querySelector('[data-select-bulk]')?.checked, name))) {
+      assert.match(await rowChips(page, name), /batch: one/);
+    }
+    // leave the lab as the other tests expect it
+    await page.click('#inventory-tag-button');
+    await page.waitFor(() => document.getElementById('tag-dialog').open && document.querySelector('[data-tag-remove=batch]'));
+    await page.click('[data-tag-remove=batch]'); await page.waitFor(() => document.querySelectorAll('#tag-form .tag-list li').length === 1);
+    await page.click('[data-tag-remove=team]'); await page.waitFor(() => /No tags set by Nuvrion yet/.test(document.getElementById('tag-form').innerText));
+    await page.click('#tag-close');
+    const refusals = unexpected(page.problems()).filter(p => /status of 422.*\/api\/v1\/tag-operations/.test(p));
+    assert.equal(refusals.length, 2, 'the browser logged the two refusals this test provoked, and nothing else');
+    assert.deepEqual(unexpected(page.problems()).filter(p => !refusals.includes(p)), []);
+    await page.close();
+  });
+
+  test('an auditor sees the tags but is not offered the Tag button, and the server refuses the call anyway', async () => {
+    const auditor = await lab.createUser({ username: 'ada.auditor', displayName: 'Ada Auditor', role: 'auditor' });
+    const tagged = await lab.api('GET', '/api/v1/resources');
+    const id = tagged.json.items[0].id;
+    assert.equal((await lab.api('POST', '/api/v1/tag-operations', { resourceIds: [id], set: [{ key: 'seen', value: 'by-auditor' }] })).status, 200);
+    try {
+      const page = await newPage();
+      await signIn(page, auditor.username, auditor.password); await signedIn(page);
+      await openView(page, 'inventory');
+      await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr .tag-chip').length > 0);
+      assert.match(await page.text('#view-inventory tbody'), /seen: by-auditor/);
+      assert.equal(await page.evaluate(() => document.getElementById('inventory-tag-button').hidden), true);
+      assert.deepEqual(unexpected(page.problems()), []);
+      await page.close();
+    } finally { await lab.api('POST', '/api/v1/tag-operations', { resourceIds: [id], remove: ['seen'] }); }
+  });
 });

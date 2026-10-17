@@ -111,5 +111,7 @@ test('the filter chips say what is applied, each can be removed, and nothing is 
   assert.match(html, /Power: Running/); assert.match(html, /Health: Needs attention/);
   assert.match(html, /aria-label="Remove filter Power: Running"><span aria-hidden="true">✕<\/span>/);
   assert.match(html, /data-clear-drill="power"/); assert.match(html, /data-clear-drill="health"/); assert.match(html, /data-clear-drill="all"/);
+  const tagged = drillChipsHtml({ tag: 'env=prod' }, { esc });
+  assert.match(tagged, /Tag: env = prod/); assert.match(tagged, /data-clear-drill="tag"/); assert.equal(drillIsEmpty({ tag: 'env' }), false, 'a tag alone is a filter');
   assert.equal(drillChipsHtml(null, { esc }), ''); assert.equal(drillChipsHtml({}, { esc }), '');
 });

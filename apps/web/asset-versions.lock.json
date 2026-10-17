@@ -4,24 +4,28 @@
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261017-132",
-    "sha256": "3f1178dae8d0e008db0bc17f04c8ba369815d2b91f9027090631f201bdf9d52d"
+    "version": "20261017-135",
+    "sha256": "a8f86263de73cd7f28ded97d5fb9ba4489c4b045e926e4165e77c974dec66062"
   },
   "connection-issue.js": {
     "version": "20261006-115",
     "sha256": "b9639b942e84abacbc33f6a8227dfa31892e97cccc75e938b5a86e7a9053767d"
   },
   "dashboard.js": {
-    "version": "20261017-3",
-    "sha256": "4edc9bb21e5326d7cdf2c6716dbc79d11670a9e4760e035929956e2608440fc3"
+    "version": "20261017-4",
+    "sha256": "834fa3313f4a54d863b245b81c2b4307806bc0ffb403cf88b4bf1c3904f2abcd"
   },
   "login-polish.js": {
     "version": "20260913-112",
     "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
   },
   "styles.css": {
-    "version": "20261017-124",
-    "sha256": "9002f80b0c99646325782ee21a29e948a5f443cf2f25bde60000e3c2f2ae751f"
+    "version": "20261017-125",
+    "sha256": "0893cef3ec7c0ecb79300e4e51a93dd88d9301f806777e0981466cc9392f24e7"
+  },
+  "tags.js": {
+    "version": "20261017-1",
+    "sha256": "5af9f9857ea1ac99edc5bf153f3c8951b568cb454bd40cdb07252b694ec21c4c"
   },
   "upgrade-center.js": {
     "version": "20260911",

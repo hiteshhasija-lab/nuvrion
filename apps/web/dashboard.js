@@ -79,7 +79,7 @@ export function matchesDrill(resource, drill, { displayPower, isUnreachable }) {
   return true;
 }
 
-export const drillIsEmpty = drill => !drill || (!drill.power && !drill.health);
+export const drillIsEmpty = drill => !drill || (!drill.power && !drill.health && !drill.tag);
 export const powerLabel = key => POWER_GROUPS.find(group => group.key === key)?.label ?? key;
 export const healthLabel = key => HEALTH_GROUPS.find(group => group.key === key)?.label ?? key;
 
@@ -134,6 +134,7 @@ export function drillChipsHtml(drill, { esc }) {
   const chips = [];
   if (drill?.power) chips.push(['power', `Power: ${powerLabel(drill.power)}`]);
   if (drill?.health) chips.push(['health', `Health: ${healthLabel(drill.health)}`]);
+  if (drill?.tag) chips.push(['tag', `Tag: ${drill.tag.replace('=', ' = ')}`]);
   if (!chips.length) return '';
   return chips.map(([kind, text]) => `<span class="drill-chip">${esc(text)}<button type="button" data-clear-drill="${kind}" aria-label="Remove filter ${esc(text)}"><span aria-hidden="true">✕</span></button></span>`).join('')
     + '<button type="button" class="text-button" data-clear-drill="all">Clear filters</button>';
