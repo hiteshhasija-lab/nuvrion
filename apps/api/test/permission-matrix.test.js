@@ -69,6 +69,7 @@ const PROTECTED = [
   ['POST', `/api/v1/agents/${ID}/commands`, 'resource.operate', 'agentCommandMatch'],
   ['GET', '/api/v1/resources', 'resource.view', '/api/v1/resources'],
   ['GET', '/api/v1/tags', 'resource.view', '/api/v1/tags'],
+  ['GET', '/api/v1/infrastructure', 'resource.view', '/api/v1/infrastructure'],
   ['POST', '/api/v1/tag-operations', 'resource.operate', '/api/v1/tag-operations'],
   ['GET', '/api/v1/performance/latest', 'resource.view', '/api/v1/performance/latest'],
   ['GET', `/api/v1/resources/${ID}`, 'resource.view', 'resourceMatch'],
@@ -136,7 +137,7 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-matrix-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();

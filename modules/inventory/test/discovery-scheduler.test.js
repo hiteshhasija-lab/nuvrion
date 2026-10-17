@@ -101,3 +101,40 @@ test('a running VM with no measurements, and a provider that sends none, record 
   const { scheduler } = build({ connections: [connection], discover: async () => observations, performance: new PerformanceService(), inventory: { synchronize: async () => ({ discovered: 2 }), list: async () => [{ id: 'ra', nativeId: 'a' }, { id: 'rb', nativeId: 'b' }] } });
   assert.equal((await scheduler.discover(connection)).metricsRecorded, 0);
 });
+
+// ---- infrastructure (hosts, datastores, networks) discovered after the VMs -------------------------------------------------------------------------------------------
+const lab = { id: 'c1', name: 'Lab', providerType: 'vmware_vsphere' };
+const infrastructureStore = () => { const log = { synced: [] }; return { log, store: { synchronize: async (connection, report) => { log.synced.push({ connection: connection.id, report }); return { discovered: report.length, created: report.length, updated: 0, missing: 0 }; } } }; };
+
+test('after the VMs, the provider’s infrastructure is synchronized and reported in the summary', async () => {
+  const { store, log } = infrastructureStore(), report = [{ kind: 'host', nativeId: 'h1' }];
+  const { scheduler } = build({ connections: [lab], discover: async () => [], infrastructure: store, provider: { discover: async () => [], infrastructure: async () => report } });
+  const summary = await scheduler.discover(lab);
+  assert.deepEqual(summary.infrastructure, { discovered: 1, created: 1, updated: 0, missing: 0 });
+  assert.deepEqual(log.synced, [{ connection: 'c1', report }]);
+});
+
+test('a provider that cannot report infrastructure (no method, or it answers nothing) leaves what is stored alone and adds nothing to the summary', async () => {
+  for (const provider of [{ discover: async () => [] }, { discover: async () => [], infrastructure: async () => null }]) {
+    const { store, log } = infrastructureStore();
+    const { scheduler } = build({ connections: [lab], infrastructure: store, provider });
+    assert.equal('infrastructure' in await scheduler.discover(lab), false);
+    assert.deepEqual(log.synced, [], 'nothing was synchronized, so nothing is marked missing');
+  }
+  const { scheduler } = build({ connections: [lab], provider: { discover: async () => [], infrastructure: async () => [{ kind: 'host', nativeId: 'h' }] } });
+  assert.equal('infrastructure' in await scheduler.discover(lab), false, 'without an infrastructure store the hook is off');
+});
+
+test('a failure reading or storing infrastructure is reported in the summary and to the error handler, and never fails the discovery of the VMs', async () => {
+  const errors = [];
+  for (const failure of [{ provider: { discover: async () => [], infrastructure: async () => { throw Object.assign(new Error('SOAP fault'), { code: 'NUV_ESXI_PROTOCOL_ERROR' }); } }, store: infrastructureStore().store, code: 'NUV_ESXI_PROTOCOL_ERROR' },
+    { provider: { discover: async () => [], infrastructure: async () => [{ kind: 'host', nativeId: 'h' }] }, store: { synchronize: async () => { throw Object.assign(new Error('bad report'), { code: 'NUV_INFRASTRUCTURE_INVALID' }); } }, code: 'NUV_INFRASTRUCTURE_INVALID' },
+    { provider: { discover: async () => [], infrastructure: async () => { throw new Error('boom'); } }, store: infrastructureStore().store, code: 'NUV_INFRASTRUCTURE_FAILED' }]) {
+    const { scheduler, calls } = build({ connections: [lab], infrastructure: failure.store, provider: failure.provider, onError: (error, connection) => errors.push([error.message, connection.name]) });
+    const summary = await scheduler.discover(lab);
+    assert.deepEqual(summary.infrastructure, { error: failure.code });
+    assert.equal(summary.discovered, 0, 'the VM synchronization result is intact');
+    assert.deepEqual(calls.failures, [], 'the connection is not marked failed');
+  }
+  assert.equal(errors.length, 3); assert.ok(errors.every(([, name]) => name === 'Lab (infrastructure)'));
+});

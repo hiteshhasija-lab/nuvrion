@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -343,6 +343,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
   test('discoverConnectionResources, testProviderConnection, getConnectionDiagnostics', async () => {
     const discovered = await call('discoverConnectionResources', { params: { connectionId: ctx.connection.id }, expect: 200 });
     assert.ok(discovered.json.discovered > 0);
+    assert.deepEqual([discovered.json.infrastructure.discovered, discovered.json.infrastructure.error], [8, undefined], 'the mock provider reports a datacenter, a cluster, 2 hosts, 2 datastores and 2 networks');
     await call('discoverConnectionResources', { params: { connectionId: ABSENT }, expect: 404 });
     await call('testProviderConnection', { params: { connectionId: ctx.connection.id }, expect: 200 });
     await call('testProviderConnection', { params: { connectionId: ABSENT }, expect: 404 });
@@ -453,6 +454,31 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     assert.ok(audit.length >= 5, `${audit.length} tag changes audited`);
     assert.ok(audit.some(event => event.detail.added?.some(tag => tag.key === 'env' && tag.value === 'prod')), 'the first change names the tag it added');
     assert.ok(audit.some(event => event.detail.changed?.some(tag => tag.key === 'env' && tag.from === 'prod' && tag.value === 'staging')), 'a changed value shows before and after');
+  });
+
+  test('listInfrastructure: the datacenter, cluster, hosts, datastores and networks a provider reports, kept apart from the virtual machines', async () => {
+    const all = (await call('listInfrastructure', { query: { connectionId: ctx.connection.id }, expect: 200 })).json;
+    const kinds = Object.fromEntries(['datacenter', 'cluster', 'host', 'datastore', 'network'].map(kind => [kind, all.items.filter(item => item.kind === kind).length]));
+    assert.deepEqual(kinds, { datacenter: 1, cluster: 1, host: 2, datastore: 2, network: 2 });
+    assert.equal(all.count, 8);
+    const host = all.items.find(item => item.nativeId === 'host-mock-01');
+    assert.deepEqual([host.name, host.parentNativeId, host.lifecycleState, host.providerType, host.attributes.cpuCores, host.attributes.product], ['esx-mock-01.lab.example', 'cluster-mock', 'active', 'vmware_vsphere', 24, 'VMware ESXi 8.0.3']);
+    assert.equal(all.items.find(item => item.kind === 'datastore' && item.nativeId === 'datastore-mock-02').attributes.capacityBytes, 1099511627776);
+    // filters
+    assert.equal((await call('listInfrastructure', { query: { kind: 'host' }, expect: 200 })).json.count >= 2, true);
+    assert.deepEqual((await call('listInfrastructure', { query: { connectionId: ctx.connection.id, kind: 'datastore' }, expect: 200 })).json.items.map(item => item.nativeId).sort(), ['datastore-mock-01', 'datastore-mock-02']);
+    assert.equal((await call('listInfrastructure', { query: { connectionId: ctx.connection.id, lifecycleState: 'missing' }, expect: 200 })).json.count, 0);
+    assert.equal((await call('listInfrastructure', { query: { connectionId: ABSENT }, expect: 200 })).json.count, 0, 'an unknown connection has no infrastructure');
+    // apart from the VMs: no infrastructure object is a resource, and a VM's placement names objects that exist
+    const resources = (await call('listResources', { query: { connectionId: ctx.connection.id }, expect: 200 })).json.items;
+    assert.ok(resources.length > 0 && resources.every(resource => resource.resourceType === 'virtual_machine'));
+    const hostIds = new Set(all.items.filter(item => item.kind === 'host').map(item => item.nativeId)), datastoreIds = new Set(all.items.filter(item => item.kind === 'datastore').map(item => item.nativeId)), networkIds = new Set(all.items.filter(item => item.kind === 'network').map(item => item.nativeId));
+    for (const vm of resources) {
+      const placement = vm.providerMetadata.placement;
+      assert.ok(hostIds.has(placement.hostNativeId), `${vm.name}: its host is a discovered host`);
+      assert.ok(placement.datastoreNativeIds.every(id => datastoreIds.has(id)) && placement.networkNativeIds.every(id => networkIds.has(id)), `${vm.name}: its datastores and networks are discovered`);
+    }
+    await call('listInfrastructure', { as: 'auditor', expect: 200 });
   });
 
   test('getResourceSettings, updateResourceSettings', async () => {

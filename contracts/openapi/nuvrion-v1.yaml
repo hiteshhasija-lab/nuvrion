@@ -445,6 +445,21 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+  /infrastructure:
+    get:
+      tags: [Resources]
+      operationId: listInfrastructure
+      summary: The datacenters, clusters, hosts, datastores and networks providers report besides virtual machines
+      description: Kept apart from /resources, so nothing that lists or counts virtual machines sees them. Objects whose connection was deleted are left out unless lifecycleState=deleted is asked for. A virtual machine's placement is in its providerMetadata.placement (hostNativeId, datastoreNativeIds, networkNativeIds) and refers to these objects by nativeId within the same connection.
+      x-required-permission: resource.view
+      parameters:
+        - { in: query, name: connectionId, schema: { type: string, format: uuid } }
+        - { in: query, name: kind, schema: { type: string, enum: [datacenter, cluster, host, datastore, network] } }
+        - { in: query, name: lifecycleState, schema: { type: string, enum: [active, missing, deleted] } }
+      responses:
+        '200': { description: The infrastructure objects, content: { application/json: { schema: { $ref: '#/components/schemas/InfrastructureList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /tags:
     get:
       tags: [Resources]
@@ -1317,6 +1332,7 @@ components:
         missing: { type: integer }
         metricsRecorded: { type: integer }
         reconciliation: { type: array }
+        infrastructure: { type: object, description: 'What the provider reported besides virtual machines (hosts, datastores, networks). Absent when the provider cannot report them; {error} when reading them failed, which does not fail the discovery.', properties: { discovered: { type: integer }, created: { type: integer }, updated: { type: integer }, missing: { type: integer }, error: { type: string } } }
     ConnectionTestResult:
       type: object
       required: [status]
@@ -1393,6 +1409,30 @@ components:
             state: { type: string, enum: [live, stale] }
             reason: { type: [string, 'null'], description: 'The connection error code, connection_unhealthy, or no_recent_agent_update when stale' }
         capabilities: { type: array, items: { $ref: '#/components/schemas/Capability' } }
+    InfrastructureObject:
+      type: object
+      required: [id, connectionId, providerType, kind, nativeId, name, parentNativeId, attributes, lifecycleState, observedAt, firstSeenAt, lastSeenAt]
+      properties:
+        id: { type: string, format: uuid }
+        connectionId: { type: string, format: uuid }
+        providerType: { $ref: '#/components/schemas/ProviderType' }
+        kind: { type: string, enum: [datacenter, cluster, host, datastore, network] }
+        nativeId: { type: string }
+        name: { type: string }
+        parentNativeId: { type: [string, 'null'], description: 'The nativeId of the object this one sits under (a host under its cluster or datacenter), within the same connection.' }
+        attributes: { type: object, description: 'Only the attributes docs/infrastructure.md lists for the kind; anything else the provider says is dropped.', properties: { powerState: { type: string }, connectionState: { type: string }, product: { type: string }, version: { type: string }, build: { type: string }, cpuModel: { type: string }, cpuCores: { type: integer }, cpuMhz: { type: integer }, memoryBytes: { type: integer }, cpuUsageMhz: { type: integer }, memoryUsageBytes: { type: integer }, uptimeSeconds: { type: integer }, type: { type: string }, capacityBytes: { type: integer }, freeBytes: { type: integer }, accessible: { type: boolean }, url: { type: string }, hostCount: { type: integer }, drsEnabled: { type: boolean }, haEnabled: { type: boolean } } }
+        lifecycleState: { type: string, enum: [active, missing, deleted] }
+        observedAt: { type: string, format: date-time }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        missingSince: { type: [string, 'null'], format: date-time }
+    InfrastructureList:
+      type: object
+      required: [items, count, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/InfrastructureObject' } }
+        count: { type: integer }
+        meta: { $ref: '#/components/schemas/ListMeta' }
     ResourceTag:
       type: object
       required: [key, value, source]
