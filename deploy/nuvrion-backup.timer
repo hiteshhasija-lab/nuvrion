@@ -1,0 +1,10 @@
+[Unit]
+Description=Nuvrion scheduled backup, every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

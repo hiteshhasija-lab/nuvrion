@@ -1,0 +1,9 @@
+[Unit]
+Description=Nuvrion scheduled backup (database, configuration, restore check; docs/backups.md)
+
+[Service]
+Type=oneshot
+ExecStart=%h/nuvrion-upgrades/backup-nuvrion.sh
+TimeoutStartSec=20min
+Nice=10
+IOSchedulingClass=idle

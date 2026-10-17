@@ -1,10 +1,16 @@
 # Restoring Nuvrion from a backup
 
-This guide describes how to bring the platform back from the backups the upgrade script takes, what you must check
-before you call a restore good, and what is **not** yet automated. It was written from the code and from the one
-rehearsal that has been run (12 October 2026, on a separate host); steps that have not been rehearsed are marked.
+This guide describes how to bring the platform back from a backup, what you must check before you call a restore good,
+and what is **not** yet automated. It was written from the code and from the one rehearsal that has been run (12 October
+2026, on a separate host); steps that have not been rehearsed are marked.
 
-## What a backup is
+Since 17 October 2026 there are two kinds of backup. **Scheduled backups** are taken every hour, restored into a scratch
+database to prove they work, encrypted, signed and copied to the owner's computer; they are described in
+[backups.md](backups.md), and `node tools/backup.js decrypt latest <folder>` turns one into the `nuvrion.dump` and the
+`config/` folder that the steps below use. **Pre-upgrade backups** (this page's next section) are taken by the upgrade
+script just before each release and stay on the host.
+
+## What a pre-upgrade backup is
 
 Every deploy (`deploy/upgrade-nuvrion.sh`) writes a directory `~/nuvrion-upgrades/backups/<UTC timestamp>/` on the
 production host, before it changes anything:
@@ -15,19 +21,20 @@ production host, before it changes anything:
 | `nuvrion-api.env` | The API's environment file (mode 600). It holds the configuration **and the encryption keys** |
 | `nuvrion-lab-root-ca.pem` | The root certificate the platform trusts for the lab |
 
-The last five backups are kept. Three facts follow from this, and they are the reason backups are still listed as an
-open item:
+The last five backups are kept. Three facts about these backups were the findings of the first rehearsal; the scheduled
+backups ([backups.md](backups.md)) close them, these do not:
 
-1. **A backup exists only when a release is deployed.** The recovery point is the time of the last deploy, not
-   "minutes ago". There is no scheduled backup yet.
-2. **The backup is on the same host as the database.** Losing the host loses both.
+1. **A pre-upgrade backup exists only when a release is deployed.** The recovery point is the time of the last deploy.
+   (Scheduled backups are hourly.)
+2. **It is on the same host as the database.** (Scheduled backups are copied to the owner's computer.)
 3. **The encryption keys are beside the dump.** Connection credentials and agent secrets in the database are encrypted;
    without the keys in `nuvrion-api.env` (`NUVRION_ENCRYPTION_KEYS` and `NUVRION_MASTER_KEY`, with
-   `NUVRION_ACTIVE_ENCRYPTION_KEY_ID` naming the active key) a restored database cannot decrypt them. Keep an
-   independent copy of those keys somewhere that is not the backup directory.
+   `NUVRION_ACTIVE_ENCRYPTION_KEY_ID` naming the active key) a restored database cannot decrypt them. The agent signing
+   key pair (`agent-signing-private.pem`) is **not** in this backup at all. (Scheduled backups carry both, encrypted to a key
+   that never touches the host.)
 
-The deploy script does **not** yet produce a backup manifest or a stored checksum. `tools/backup-manifest.js` exists
-(see "Checking a backup" below) and is tested, but nothing calls it at deploy time.
+The deploy script does **not** produce a manifest or a stored checksum for these. The scheduled backups carry a signed
+manifest; `tools/backup-manifest.js` (see "Checking a backup" below) is the older, single-file form.
 
 ## Restoring
 
@@ -102,9 +109,21 @@ no older than seven days.
   was not run, and the recovery point was about 19 hours old against the 15-minute threshold.
 - Everything created for the drill was removed afterwards and the host matched its recorded baseline.
 
+## Closed on 17 October 2026
+
+- Scheduled backups (hourly) and a copy that does not live on the production host (the owner's computer), each with a signed
+  manifest and a stored checksum for every file; the keys (env file and agent signing keys) are in the backup, encrypted to a
+  key the host does not hold.
+- A restore that runs automatically: every scheduled backup is restored into a scratch database on the host and its
+  migrations, tables and row counts are recorded in the signed manifest before the set counts as a backup.
+- Release evidence is kept off the host without an expiry ([backups.md](backups.md)).
+
 ## Still open
 
-- Scheduled backups (not only at deploy time) and a copy that does not live on the production host.
-- Calling `tools/backup-manifest.js` from the deploy script, and storing the checksum with the backup.
-- A restore that runs as an automated test instead of by hand.
+- **The recovery point.** Backups are hourly, so the gate's 900 s RPO is not met (an hour at best, more while the owner's
+  computer is off). Meeting it needs continuous WAL archiving.
+- **A full rehearsal with a scheduled-backup set**: restore it into a separate PostgreSQL, start the application on it and
+  run discovery. The host-side restore check and the byte-for-byte check on the owner's computer are done; this end-to-end
+  rehearsal is not, and the gate needs it.
+- **A second copy of the recovery private key** that is not on the owner's computer, made by the owner.
 - An approved RPO and RTO. The gate's 900 s and 3,600 s are defaults, not commitments.
