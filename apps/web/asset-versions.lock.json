@@ -4,8 +4,8 @@
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "app.js": {
-    "version": "20261017-135",
-    "sha256": "a8f86263de73cd7f28ded97d5fb9ba4489c4b045e926e4165e77c974dec66062"
+    "version": "20261017-138",
+    "sha256": "8fb20322edee5ae1059c3bfa17bae7fd442bce411aa63974389bf0f21fb0c8d3"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -15,13 +15,17 @@
     "version": "20261017-4",
     "sha256": "834fa3313f4a54d863b245b81c2b4307806bc0ffb403cf88b4bf1c3904f2abcd"
   },
+  "infrastructure.js": {
+    "version": "20261017-3",
+    "sha256": "f5705e43d7bef95791a5d2e4991af22962c4dee91b50936c749e9839edc2ea59"
+  },
   "login-polish.js": {
     "version": "20260913-112",
     "sha256": "b750cb9c1769a10735c33483447063590173e2ecc5ba622c0848ff636cf0794d"
   },
   "styles.css": {
-    "version": "20261017-125",
-    "sha256": "0893cef3ec7c0ecb79300e4e51a93dd88d9301f806777e0981466cc9392f24e7"
+    "version": "20261017-126",
+    "sha256": "891239073f888874d6b82ddd14422c3f1f9a61e7675fe3c258b40df40baf2350"
   },
   "tags.js": {
     "version": "20261017-1",

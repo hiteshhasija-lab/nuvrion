@@ -42,7 +42,13 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.clickText('Sign in →', '#login-form');
     await page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
     await expectNoViolations('overview');
-    for (const view of ['inventory', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
+    for (const view of ['inventory', 'infrastructure', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
+    // a host selected: the tree with the selection marked and the detail with usage bars and the list of VMs
+    await openView('infrastructure');
+    await page.waitFor(() => document.querySelectorAll('#infrastructure-tree [data-infra-select]').length >= 9);
+    await page.evaluate(() => [...document.querySelectorAll('#infrastructure-tree [data-infra-select]')].find(b => b.textContent.includes('esx-mock-01')).click());
+    await page.waitFor(() => /esx-mock-01/.test(document.querySelector('#infrastructure-detail h2')?.textContent ?? ''));
+    await expectNoViolations('infrastructure: a host');
     for (const tab of ['alerts', 'tasks', 'audit']) {
       await openView('monitor');
       await page.click(`#view-monitor [data-monitor-tab=${tab}]`);

@@ -612,4 +612,57 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
       await page.close();
     } finally { await lab.api('POST', '/api/v1/tag-operations', { resourceIds: [id], remove: ['seen'] }); }
   });
+
+  // ---- the Infrastructure page and where a VM runs (apps/web/infrastructure.js) ----------------------------------------------------------------------------------------
+  const chooseInfrastructure = (page, text) => page.evaluate(text => [...document.querySelectorAll('#infrastructure-tree [data-infra-select]')].find(b => b.textContent.includes(text)).click(), text);
+
+  test('the Infrastructure page shows the hierarchy a connection reports; a host lists its VMs, and a VM opens from there with its host named in the detail', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'infrastructure');
+    await page.waitFor(() => document.querySelectorAll('#infrastructure-tree [data-infra-select]').length >= 9);
+    const tree = await page.text('#infrastructure-tree');
+    for (const name of ['Mock datacenter', 'Mock cluster', 'esx-mock-01.lab.example', 'esx-mock-02.lab.example', 'datastore1', 'datastore2', 'VLAN 10 Production', 'VLAN 20 Databases']) assert.ok(tree.includes(name), name);
+    await chooseInfrastructure(page, 'esx-mock-01');
+    await page.waitFor(() => /esx-mock-01/.test(document.querySelector('#infrastructure-detail h2')?.textContent ?? ''));
+    const detail = await page.text('#infrastructure-detail');
+    assert.match(detail, /nuvrion-app-01/); assert.doesNotMatch(detail, /nuvrion-db-01/, 'the other host’s VM is not listed');
+    assert.match(detail, /VLAN 10 Production/); assert.match(detail, /datastore1/);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#infrastructure-tree [aria-current=true]').length), 1);
+    // a datastore shows its space
+    await chooseInfrastructure(page, 'datastore2');
+    await page.waitFor(() => /datastore2/.test(document.querySelector('#infrastructure-detail h2')?.textContent ?? ''));
+    assert.match(await page.text('#infrastructure-detail'), /Space used[\s\S]*90%/);
+    // the VM opens in the inventory and names where it runs; the host there leads back
+    await chooseInfrastructure(page, 'esx-mock-01');
+    await page.waitFor(() => document.querySelector('#infrastructure-detail [data-select-resource]'));
+    await page.click('#infrastructure-detail [data-select-resource]');
+    await page.waitFor(() => document.getElementById('view-inventory')?.getClientRects().length > 0 && document.querySelector('.vm-facts [data-infra-open]'));
+    assert.match(await page.text('.vm-facts'), /Runs on\s*esx-mock-01\.lab\.example/);
+    // opened from the sidebar the detail also has General Information, which names the host, datastores and networks
+    await page.evaluate(() => [...document.querySelectorAll('#vm-sidebar-list [data-select-resource]')].find(b => b.textContent.includes('nuvrion-app-01')).click());
+    await page.waitFor(() => /Datastores/.test([...document.querySelectorAll('.vm-info-panel')].map(p => p.innerText).join(' ')));
+    const general = await page.evaluate(() => [...document.querySelectorAll('.vm-info-panel')].map(p => p.innerText).join(' '));
+    assert.match(general, /Host\s*esx-mock-01\.lab\.example/); assert.match(general, /Datastores\s*datastore1/); assert.match(general, /Networks\s*VLAN 10 Production/);
+    await page.click('.vm-info-panel [data-infra-open]');
+    await page.waitFor(() => document.getElementById('view-infrastructure')?.getClientRects().length > 0 && /esx-mock-01/.test(document.querySelector('#infrastructure-detail h2')?.textContent ?? ''));
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the inventory search finds a VM by the host, datastore or network it runs on', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length >= 2);
+    await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length >= 2);
+    for (const [word, expected] of [['esx-mock-02', 'nuvrion-db-01'], ['datastore1', 'nuvrion-app-01'], ['vlan 20', 'nuvrion-db-01']]) {
+      await page.fill('#inventory-search', word);
+      await page.waitFor(() => document.querySelectorAll('#view-inventory tbody tr').length === 1);
+      assert.deepEqual(await rowNames(page), [expected], word);
+    }
+    await page.fill('#inventory-search', '');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
 });

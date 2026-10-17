@@ -1085,3 +1085,30 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .tag-error{margin:4px 0;color:#a7342f;font-size:12px;font-weight:600}
 .tag-dialog .primary{justify-self:start}
 @media(max-width:600px){.tag-fields{grid-template-columns:1fr}.vm-workspace-head .toolbar.vm-filter-toolbar{grid-template-columns:1fr 1fr}}
+/* Infrastructure page */
+.infra-layout{display:grid;grid-template-columns:minmax(260px,380px) 1fr;gap:16px;align-items:start}
+.infra-tree ul,.infra-tree-card ul{list-style:none;margin:0;padding:0}
+.infra-tree-card li>ul{margin-left:14px;padding-left:10px;border-left:1px solid var(--line)}
+.infra-node{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline;width:100%;text-align:left;border:1px solid transparent;background:transparent;padding:6px 8px;border-radius:7px;color:#1f2d33}
+.infra-node:hover{background:#eef4f4}
+.infra-node.is-selected{background:#e3f1ef;border-color:#9fcfc9}
+.infra-kind{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#4d5b60;font-weight:700}
+.infra-name{font-weight:650;overflow-wrap:anywhere}
+.infra-node small{color:#4d5b60;font-size:11px;white-space:nowrap}
+.infra-connection .infra-name{font-size:14px}
+.infra-dot{display:inline-block;width:8px;height:8px;border-radius:50%;align-self:center}
+.infra-group{margin:8px 0 2px 8px;font-size:11px;font-weight:700;color:#4d5b60;text-transform:uppercase;letter-spacing:.06em}
+.infra-silent{margin:12px 0 0;color:#4d5b60;font-size:12px}
+.infra-detail-card h3{margin:18px 0 6px;font-size:13px}
+.infra-facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:14px 0}
+.infra-facts dt{color:#4d5b60;font-size:12px}.infra-facts dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.infra-warning{margin:12px 0;padding:8px 10px;border-radius:7px;background:#fff0d7;color:#6e4200;font-size:12px}
+.infra-empty{margin:4px 0;color:#4d5b60;font-size:12px}
+.infra-vms,.infra-links{display:grid;gap:4px}
+.infra-vms li{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #edf0f1;padding:4px 0}
+.infra-vms small{color:#4d5b60;text-transform:capitalize}
+.infra-detail-card .usage{margin:12px 0}
+.usage-head{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.usage-bar{height:8px;border-radius:999px;background:#e7eded;overflow:hidden}
+.usage-bar span{display:block;height:100%}
+@media(max-width:900px){.infra-layout{grid-template-columns:1fr}}

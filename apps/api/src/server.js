@@ -350,6 +350,10 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'tags.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/infrastructure.js') {
+      const js = await readFile(resolve(webRoot, 'infrastructure.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
     if (req.method === 'GET' && url.pathname === '/dashboard.js') {
       const js = await readFile(resolve(webRoot, 'dashboard.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
