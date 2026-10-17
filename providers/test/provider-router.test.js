@@ -117,3 +117,14 @@ test('Workstation discovery adds the real host name of a nested ESXi VM, and sti
   assert.equal(survived.length, 2);
   assert.equal(survived.find(o => o.nativeId === 'C:/VMs/esx/esx.vmx').providerMetadata.hostName, null);
 });
+
+test('infrastructure is asked of the adapter that has it, and a provider without it answers null so discovery leaves what is stored alone', async () => {
+  const lab = workstationLab(), router = new ProviderRouter({ connections: connections(), agents: lab.registry, fetchImpl: async () => { throw new Error('no network in tests'); } });
+  const report = await router.infrastructure(mockConnection);
+  assert.deepEqual(report.map(item => item.kind).sort(), ['cluster', 'datacenter', 'datastore', 'datastore', 'host', 'host', 'network', 'network']);
+  const workstation = { id: 'c-ws', providerType: 'vmware_workstation', connectionType: 'workstation_agent', configuration: {}, agentId: 'a1' };
+  const withoutIt = new ProviderRouter({ connections: connections([workstation]), agents: lab.registry, mock: { discover: async () => [] }, fetchImpl: async () => { throw new Error('no network in tests'); } });
+  const adapter = await withoutIt.forConnection({ ...mockConnection, configuration: { adapter: 'mock' } });
+  assert.equal(adapter.discoverInfrastructure, undefined);
+  assert.equal(await withoutIt.infrastructure(mockConnection), null);
+});

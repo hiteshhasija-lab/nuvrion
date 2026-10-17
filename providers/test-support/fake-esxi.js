@@ -26,18 +26,26 @@ export function sampleEsxiVm(id = 'vm-1', over = {}) {
   };
 }
 
-export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password = 'correct-password', hostName = 'esxi01.lab.example', isos = { datastore1: ['images/', 'images/server.iso'] }, pageSize = 100 } = {}) { // secret-scan:allow (fake test credential)
+export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password = 'correct-password', hostName = 'esxi01.lab.example', isos = { datastore1: ['images/', 'images/server.iso'] }, pageSize = 100, host = {}, datastoreInfo = {}, networks = null } = {}) { // secret-scan:allow (fake test credential)
   const state = {
     vms: new Map(vms.map(vm => [vm.id, structuredClone(vm)])), isos, tasks: new Map(), sessions: new Set(), hostName,
+    // what the host reports about itself (summary.*), the datastores' capacity and the networks; each can be overridden
+    host: { cpuModel: 'Intel(R) Xeon(R) Silver 4310 CPU @ 2.10GHz', numCpuCores: 24, cpuMhz: 2100, memorySize: 274877906944, connectionState: 'connected', powerState: 'poweredOn',
+      fullName: 'VMware ESXi 8.0.3 build-24022510', version: '8.0.3', build: '24022510', overallCpuUsage: 9800, overallMemoryUsage: 98304, uptime: 1209600, ...host },
+    datastoreInfo, networks: networks ?? [{ id: 'network-1', name: 'VM Network' }, { id: 'network-2', name: 'Storage Network' }],
     taskPolls: 1,             // how many property reads a task stays "running" for
     shutdownPolls: 2, rebootPolls: 2, guestIgnoresRequests: false,
     sessionsOpened: 0, sessionsClosed: 0, taskSeq: 0, snapshotSeq: 0, configSeq: 0
   };
   const calls = [];
-  const faults = { unreachable: false, emptyServiceContent: false, http: new Map() };   // faults.http: SOAP method name -> { status, message, type } (status 401/403/404/503 use a non-SOAP error)
+  const faults = { unreachable: false, emptyServiceContent: false, http: new Map(), types: new Set(), endlessPages: false };   // faults.types: object types whose property queries fail; endlessPages: HostSystem queries never stop paging   // faults.http: SOAP method name -> { status, message, type } (status 401/403/404/503 use a non-SOAP error)
   const guestPending = new Map();
 
   const objectXml = (type, id, props) => `<objects><obj type="${type}">${esc(id)}</obj>${Object.entries(props).filter(([, v]) => v != null).map(([name, val]) => `<propSet><name>${name}</name><val xsi:type="xsd:string">${val}</val></propSet>`).join('')}</objects>`;
+  const mors = (type, ids) => ids.map(id => `<ManagedObjectReference type="${type}" xsi:type="ManagedObjectReference">${esc(id)}</ManagedObjectReference>`).join('');
+  const datastoreNames = () => Object.keys(state.isos);
+  const vmDatastoreIds = vm => vm.datastores ?? [...new Set((vm.disks ?? []).map(disk => disk.fileName?.match(/^\[([^\]]+)\]/)?.[1]).filter(Boolean))].map(name => `datastore-${datastoreNames().indexOf(name) + 1}`).filter(id => id !== 'datastore-0');
+  const vmNetworkIds = vm => vm.networks ?? [...new Set((vm.nics ?? []).map(nic => state.networks.find(network => network.name === nic.deviceName)?.id).filter(Boolean))];
   const vmProps = vm => ({
     name: esc(vm.name), 'runtime.powerState': vm.power, overallStatus: vm.overall, 'guest.ipAddress': vm.ip, 'guest.hostName': vm.hostName, 'guest.toolsRunningStatus': vm.tools,
     'guest.toolsVersionStatus2': vm.toolsVersionStatus, 'guest.toolsVersion': vm.toolsVersion, 'guest.guestState': vm.guestState, 'config.guestFullName': esc(vm.guestFullName),
@@ -46,6 +54,7 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
     'summary.quickStats.overallCpuUsage': vm.quickStats?.cpu, 'summary.quickStats.hostMemoryUsage': vm.quickStats?.hostMem, 'summary.quickStats.guestMemoryUsage': vm.quickStats?.guestMem,
     'summary.quickStats.uptimeSeconds': vm.uptime, 'summary.storage.committed': vm.quickStats?.committed, 'summary.storage.uncommitted': vm.quickStats?.uncommitted,
     ...configProps(vm),
+    'runtime.host': vm.host ?? 'ha-host', datastore: mors('Datastore', vmDatastoreIds(vm)), network: mors('Network', vmNetworkIds(vm)),
     snapshot: snapshotXml(vm), 'capability.snapshotOperationsSupported': vm.snapshotsSupported === false ? 'false' : 'true', 'runtime.consolidationNeeded': String(Boolean(vm.consolidationNeeded))
   });
   // Settings the VM carries besides its devices; `vm.config` overrides any of them.
@@ -127,11 +136,20 @@ export function fakeEsxi({ vms = [sampleEsxiVm()], username = 'root', password =
           const list = [...state.vms.values()], page = list.slice(0, pageSize);
           return soap(`<RetrievePropertiesExResponse><returnval>${list.length > pageSize ? `<token>vm-page-1</token>` : ''}${page.map(vm => objectXml('VirtualMachine', vm.id, vmProps(vm))).join('')}</returnval></RetrievePropertiesExResponse>`);
         }
-        if (propType === 'Datastore') return soap(`<RetrievePropertiesExResponse><returnval>${Object.keys(state.isos).map((name, i) => objectXml('Datastore', `datastore-${i + 1}`, { name })).join('')}</returnval></RetrievePropertiesExResponse>`);
-        if (propType === 'HostSystem') return soap(`<RetrievePropertiesExResponse><returnval>${state.hostName ? objectXml('HostSystem', 'ha-host', { name: state.hostName }) : ''}</returnval></RetrievePropertiesExResponse>`);
+        if (faults.types.has(propType)) return fault(`The ${propType} query failed.`, 'RuntimeFault');
+        const wanted = [...bodyText.matchAll(/<vim25:pathSet>([^<]+)<\/vim25:pathSet>/g)].map(m => m[1]), pick = all => Object.fromEntries(wanted.map(name => [name, all[name]]));
+        if (propType === 'Datastore') return soap(`<RetrievePropertiesExResponse><returnval>${datastoreNames().map((name, i) => { const info = { type: 'VMFS', capacity: 536870912000, freeSpace: 214748364800, accessible: 'true', url: `ds:///vmfs/volumes/${name}/`, ...state.datastoreInfo[name] }; return objectXml('Datastore', `datastore-${i + 1}`, pick({ name: esc(name), 'summary.type': info.type, 'summary.capacity': info.capacity, 'summary.freeSpace': info.freeSpace, 'summary.accessible': String(info.accessible), 'summary.url': esc(info.url) })); }).join('')}</returnval></RetrievePropertiesExResponse>`);
+        if (propType === 'HostSystem') {
+          if (faults.endlessPages) return soap(`<RetrievePropertiesExResponse><returnval><token>again</token>${objectXml('HostSystem', 'ha-host', { name: 'x' })}</returnval></RetrievePropertiesExResponse>`);
+          const h = state.host;
+          return soap(`<RetrievePropertiesExResponse><returnval>${state.hostName ? objectXml('HostSystem', 'ha-host', pick({ name: esc(state.hostName), 'summary.hardware.cpuModel': esc(h.cpuModel), 'summary.hardware.numCpuCores': h.numCpuCores, 'summary.hardware.cpuMhz': h.cpuMhz, 'summary.hardware.memorySize': h.memorySize, 'summary.runtime.connectionState': h.connectionState, 'summary.runtime.powerState': h.powerState, 'summary.config.product.fullName': esc(h.fullName), 'summary.config.product.version': h.version, 'summary.config.product.build': h.build, 'summary.quickStats.overallCpuUsage': h.overallCpuUsage, 'summary.quickStats.overallMemoryUsage': h.overallMemoryUsage, 'summary.quickStats.uptime': h.uptime })) : ''}</returnval></RetrievePropertiesExResponse>`);
+        }
+        if (propType === 'Network') return soap(`<RetrievePropertiesExResponse><returnval>${state.networks.map(network => objectXml('Network', network.id, pick({ name: esc(network.name), 'summary.accessible': String(network.accessible ?? true) }))).join('')}</returnval></RetrievePropertiesExResponse>`);
+        if (propType === 'Datacenter') return soap(`<RetrievePropertiesExResponse><returnval>${objectXml('Datacenter', 'ha-datacenter', pick({ name: 'ha-datacenter' }))}</returnval></RetrievePropertiesExResponse>`);
         return fault(`Unsupported property query for ${propType}.`);
       }
       case 'ContinueRetrievePropertiesEx': {
+        if (faults.endlessPages) return soap(`<ContinueRetrievePropertiesExResponse><returnval><token>again</token>${objectXml('HostSystem', 'ha-host', { name: 'x' })}</returnval></ContinueRetrievePropertiesExResponse>`);
         const token = bodyText.match(/<vim25:token>([^<]+)<\/vim25:token>/)?.[1], list = [...state.vms.values()], pageNo = Number(token.split('-').pop());
         const page = list.slice(pageNo * pageSize, (pageNo + 1) * pageSize);
         return soap(`<ContinueRetrievePropertiesExResponse><returnval>${list.length > (pageNo + 1) * pageSize ? `<token>vm-page-${pageNo + 1}</token>` : ''}${page.map(vm => objectXml('VirtualMachine', vm.id, vmProps(vm))).join('')}</returnval></ContinueRetrievePropertiesExResponse>`);

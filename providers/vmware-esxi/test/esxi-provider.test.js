@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EsxiProvider, EsxiProviderError } from '../src/esxi-provider.js';
 import { defineProviderContract } from '../../test-support/provider-contract.js';
 import { fakeEsxi, sampleEsxiVm } from '../../test-support/fake-esxi.js';
+import { normaliseReport } from '../../../modules/inventory/src/infrastructure-rules.js';
 
 // The standalone ESXi provider against a simulated ESXi host (its SOAP Web Services API and datastore file browser). Nothing here touches a
 // network or a lab, so these tests check our mapping, state handling and error handling, not the behaviour of a real ESXi.
@@ -252,4 +253,57 @@ test('a media change that ESXi rejects, or never finishes, is reported with ESXi
   const slow = fakeEsxi(); slow.state.taskPolls = 100000;
   await rejectsWith(() => settle(t, make(slow).mountMedia('vm-1', { driveId: '3002', isoPath: '[datastore1] images/server.iso' })), 'NUV_MEDIA_VERIFICATION_TIMEOUT', e => e.retryable === true);
   assert.equal(slow.openSessions(), 0);
+});
+
+
+// ---- infrastructure: the host, datastores and networks, and where each VM runs ------------------------------------------------------------------------------------
+test('the datacenter, host, datastores and networks are reported in the platform’s neutral shape, and the platform accepts the report as it is', async () => {
+  const fake = fakeEsxi({ isos: { datastore1: ['images/'], datastore2: ['images/'] }, datastoreInfo: { datastore2: { type: 'NFS', capacity: 1099511627776, freeSpace: 109951162777, accessible: false } }, networks: [{ id: 'network-1', name: 'VM Network' }, { id: 'network-9', name: 'Isolated', accessible: false }] });
+  const report = await make(fake).discoverInfrastructure();
+  assert.deepEqual(normaliseReport(report), report, 'nothing in the report is something the platform would clean or drop');
+  const by = (kind, id) => report.find(item => item.kind === kind && item.nativeId === id);
+  assert.deepEqual(by('datacenter', 'ha-datacenter'), { kind: 'datacenter', nativeId: 'ha-datacenter', name: 'ha-datacenter', parentNativeId: null, attributes: {} });
+  const host = by('host', 'ha-host');
+  assert.deepEqual([host.name, host.parentNativeId], ['esxi01.lab.example', 'ha-datacenter']);
+  assert.deepEqual(host.attributes, { powerState: 'poweredOn', connectionState: 'connected', product: 'VMware ESXi 8.0.3 build-24022510', version: '8.0.3', build: '24022510', cpuModel: 'Intel(R) Xeon(R) Silver 4310 CPU @ 2.10GHz',
+    cpuCores: 24, cpuMhz: 24 * 2100, memoryBytes: 274877906944, cpuUsageMhz: 9800, memoryUsageBytes: 98304 * 1048576, uptimeSeconds: 1209600 });
+  assert.deepEqual(by('datastore', 'datastore-1').attributes, { type: 'VMFS', capacityBytes: 536870912000, freeBytes: 214748364800, accessible: true, url: 'ds:///vmfs/volumes/datastore1/' });
+  assert.deepEqual([by('datastore', 'datastore-2').attributes.type, by('datastore', 'datastore-2').attributes.accessible, by('datastore', 'datastore-2').parentNativeId], ['NFS', false, 'ha-datacenter']);
+  assert.deepEqual([by('network', 'network-1').name, by('network', 'network-1').attributes, by('network', 'network-9').attributes], ['VM Network', { accessible: true }, { accessible: false }]);
+  assert.equal(report.length, 1 + 1 + 2 + 2);
+  assert.equal(fake.openSessions(), 0, 'the session is closed afterwards');
+});
+
+test('a VM reports where it runs: its host and the datastores and networks it uses, by the identifiers the infrastructure objects have', async () => {
+  const fake = fakeEsxi({ isos: { datastore1: ['images/'], datastore2: ['images/'] }, vms: [sampleEsxiVm('vm-1'), sampleEsxiVm('vm-2', { disks: [{ key: 2000, label: 'Hard disk 1', capacityInBytes: 1 << 30, fileName: '[datastore1] a/a.vmdk' }, { key: 2001, label: 'Hard disk 2', capacityInBytes: 1 << 30, fileName: '[datastore2] a/b.vmdk' }],
+    nics: [{ key: 4000, label: 'Network adapter 1', macAddress: '00:0c:29:11:22:44', deviceName: 'VM Network', connected: true, startConnected: true }, { key: 4001, label: 'Network adapter 2', macAddress: '00:0c:29:11:22:55', deviceName: 'Storage Network', connected: true, startConnected: true }] }), sampleEsxiVm('vm-3', { disks: [], nics: [], host: 'host-9' })] });
+  const provider = make(fake), vms = await provider.discover(), infrastructure = await provider.discoverInfrastructure();
+  const placement = id => vms.find(vm => vm.nativeId === id).providerMetadata.placement;
+  assert.deepEqual(placement('vm-1'), { hostNativeId: 'ha-host', datastoreNativeIds: ['datastore-1'], networkNativeIds: ['network-1'] });
+  assert.deepEqual(placement('vm-2'), { hostNativeId: 'ha-host', datastoreNativeIds: ['datastore-1', 'datastore-2'], networkNativeIds: ['network-1', 'network-2'] });
+  assert.deepEqual(placement('vm-3'), { hostNativeId: 'host-9', datastoreNativeIds: [], networkNativeIds: [] }, 'a VM with no disks or adapters still says where it runs');
+  const known = kind => new Set(infrastructure.filter(item => item.kind === kind).map(item => item.nativeId));
+  for (const id of ['vm-1', 'vm-2']) {
+    assert.ok(known('host').has(placement(id).hostNativeId), `${id}: the host exists`);
+    assert.ok(placement(id).datastoreNativeIds.every(ds => known('datastore').has(ds)) && placement(id).networkNativeIds.every(net => known('network').has(net)), `${id}: its datastores and networks exist`);
+  }
+});
+
+test('infrastructure that cannot be read fails the call with a provider error and still closes the session; an endpoint that never stops paging is cut off', async () => {
+  const failing = fakeEsxi(); failing.faults.types.add('Datastore');
+  await assert.rejects(() => make(failing).discoverInfrastructure(), error => error instanceof EsxiProviderError && /^NUV_ESXI_/.test(error.code));
+  assert.equal(failing.openSessions(), 0, 'the session is closed after a failure');
+  const endless = fakeEsxi(); endless.faults.endlessPages = true;
+  await rejectsWith(() => make(endless).discoverInfrastructure(), 'NUV_ESXI_PROTOCOL_ERROR', error => /kept sending pages of HostSystem/.test(error.message));
+  assert.equal(endless.openSessions(), 0);
+  const down = fakeEsxi(); down.faults.unreachable = true;
+  await rejectsWith(() => make(down).discoverInfrastructure(), 'NUV_ESXI_UNREACHABLE', error => error.retryable === true);
+});
+
+test('a host that reports nothing usable still gives a valid, if sparse, report', async () => {
+  const fake = fakeEsxi({ host: { cpuModel: undefined, numCpuCores: undefined, memorySize: undefined, fullName: undefined, overallCpuUsage: undefined } });
+  const host = (await make(fake).discoverInfrastructure()).find(item => item.kind === 'host');
+  const kept = normaliseReport([host])[0].attributes;
+  for (const missing of ['cpuCores', 'cpuMhz', 'cpuModel', 'memoryBytes', 'product', 'cpuUsageMhz']) assert.ok(!(missing in kept), `${missing} is simply absent, not guessed`);
+  assert.equal(kept.powerState, 'poweredOn', 'what the host did report is kept');
 });

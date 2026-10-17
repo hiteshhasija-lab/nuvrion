@@ -12,19 +12,23 @@ export function sampleVm(id = 'vm-1', over = {}) {
     id, name: `VM ${id}`, power: 'POWERED_ON', cpu: 2, memoryMiB: 4096, guestOs: 'UBUNTU_64', host: 'host-10', datacenter: 'datacenter-2', folder: 'group-v3', cluster: 'domain-c8',
     identity: { ip_address: '10.0.0.50', dns_name: `${id}.lab.example` },
     tools: { run_state: 'RUNNING', version_status: 'CURRENT', version: '12352', reboot: { requested: false, timestamp: null } },
-    disks: { '2000': { label: 'Hard disk 1', capacity: 40 * 1024 ** 3, type: 'SCSI' }, '2001': { label: 'Hard disk 2', capacity: 10 * 1024 ** 3, type: 'SCSI' } },
-    nics: { '4000': { label: 'Network adapter 1', type: 'VMXNET3', mac_address: '00:50:56:aa:bb:cc', state: 'CONNECTED', backing: { network_name: 'VM Network' } } },
+    disks: { '2000': { label: 'Hard disk 1', capacity: 40 * 1024 ** 3, type: 'SCSI', backing: { type: 'VMDK_FILE', vmdk_file: `[datastore1] ${id}/${id}.vmdk` } }, '2001': { label: 'Hard disk 2', capacity: 10 * 1024 ** 3, type: 'SCSI', backing: { type: 'VMDK_FILE', vmdk_file: `[datastore1] ${id}/${id}_1.vmdk` } } },
+    nics: { '4000': { label: 'Network adapter 1', type: 'VMXNET3', mac_address: '00:50:56:aa:bb:cc', state: 'CONNECTED', backing: { type: 'STANDARD_PORTGROUP', network: 'network-1', network_name: 'VM Network' } } },
     cdroms: { '16000': { label: 'CD/DVD drive 1', backing: { type: 'CLIENT_DEVICE' }, state: 'NOT_CONNECTED', start_connected: false, allow_guest_control: true } },
     quickStats: { cpu: 1500, hostMem: 2048, guestMem: 1024, uptime: 7200, committed: 30 * 1024 ** 3, uncommitted: 20 * 1024 ** 3 },
     ...over
   };
 }
 
-export function fakeVcenter({ vms = [sampleVm()], username = 'administrator@vsphere.local', password = 'correct-password', isos = { datastore1: ['images/', 'images/server.iso', 'images/tools/', 'images/tools/drivers.iso', 'readme.txt'] } } = {}) { // secret-scan:allow (fake test credential)
+export function fakeVcenter({ vms = [sampleVm()], hosts = null, clusters = null, networks = null, datastoreInfo = {}, username = 'administrator@vsphere.local', password = 'correct-password', isos = { datastore1: ['images/', 'images/server.iso', 'images/tools/', 'images/tools/drivers.iso', 'readme.txt'] } } = {}) { // secret-scan:allow (fake test credential)
   const state = {
     vms: new Map(vms.map(vm => [vm.id, structuredClone(vm)])),
     tokens: new Set(), sdkSessions: new Set(),
-    datastores: Object.keys(isos).map((name, index) => ({ datastore: `datastore-${index + 1}`, name })),
+    datastores: Object.keys(isos).map((name, index) => ({ datastore: `datastore-${index + 1}`, name, type: 'VMFS', capacity: 536870912000, free_space: 214748364800, ...datastoreInfo[name] })),
+    datacenters: [{ datacenter: 'datacenter-2', name: 'Lab DC' }],
+    clusters: clusters ?? [{ cluster: 'domain-c8', name: 'Lab Cluster', ha_enabled: true, drs_enabled: false }],
+    hosts: hosts ?? [{ host: 'host-10', name: 'esx01.lab.example', connection_state: 'CONNECTED', power_state: 'POWERED_ON', cluster: 'domain-c8' }, { host: 'host-11', name: 'esx02.lab.example', connection_state: 'DISCONNECTED', power_state: 'POWERED_OFF', cluster: null }],
+    networks: networks ?? [{ network: 'network-1', name: 'VM Network', type: 'STANDARD_PORTGROUP' }, { network: 'network-2', name: 'dvPortGroup-Prod', type: 'DISTRIBUTED_PORTGROUP' }],
     isos,
     shutdownPolls: 2,            // how many power polls a guest shutdown takes to finish
     rebootPolls: 2,              // and a guest reboot
@@ -61,7 +65,10 @@ export function fakeVcenter({ vms = [sampleVm()], username = 'administrator@vsph
     if (path === '/api/session' && method === 'DELETE') { state.tokens.delete(headers['vmware-api-session-id']); state.sessionsClosed++; return json(204); }
     if (path === '/api/vcenter/vm' && method === 'GET') return json(200, [...state.vms.values()].map(v => ({ vm: v.id, name: v.name, power_state: v.power, cpu_count: v.cpu, memory_size_MiB: v.memoryMiB })));
     if (path === '/api/vcenter/datastore') return json(200, state.datastores);
-    if (path === '/api/vcenter/datacenter') return json(200, [{ datacenter: 'datacenter-2', name: 'Lab DC' }]);
+    if (path === '/api/vcenter/datacenter') return json(200, state.datacenters);
+    if (path === '/api/vcenter/cluster') return json(200, state.clusters);
+    if (path === '/api/vcenter/network') return json(200, state.networks);
+    if (path === '/api/vcenter/host') { const wanted = url.searchParams.get('clusters'); return json(200, state.hosts.filter(h => !wanted || h.cluster === wanted).map(({ cluster, ...host }) => host)); }
     const match = path.match(/^\/api\/vcenter\/vm\/([^/]+)(?:\/(.*))?$/);
     if (!match) return json(404, { messages: [{ default_message: 'No such API.' }] });
     const target = vm(match[1]), sub = match[2] ?? '';

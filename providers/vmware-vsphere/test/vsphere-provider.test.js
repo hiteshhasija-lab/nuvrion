@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { VsphereProvider, VsphereProviderError } from '../src/vsphere-provider.js';
+import { VsphereProvider, VsphereProviderError, vspherePlacement } from '../src/vsphere-provider.js';
+import { normaliseReport } from '../../../modules/inventory/src/infrastructure-rules.js';
 import { collectVsphereQuickStats } from '../src/vsphere-quickstats.js';
 import { defineProviderContract } from '../../test-support/provider-contract.js';
 import { fakeVcenter, sampleVm } from '../../test-support/fake-vcenter.js';
@@ -265,3 +266,62 @@ test('the settings client waits for a configuration task at the provider\'s poll
   assert.equal(lab.host.openSessions(), 0);
 });
 
+
+
+// ---- infrastructure: datacenter, clusters, hosts, datastores, networks, and where each VM runs -----------------------------------------------------------------------
+test('the datacenter, cluster, hosts, datastores and networks are reported in the platform’s neutral shape, hosts under their cluster, and the platform accepts the report as it is', async () => {
+  const fake = fakeVcenter({ isos: { datastore1: ['images/'], datastore2: ['images/'] }, datastoreInfo: { datastore2: { type: 'NFS', capacity: 1099511627776, free_space: 109951162777 } } });
+  const report = await make(fake).discoverInfrastructure();
+  assert.deepEqual(normaliseReport(report), report);
+  const by = (kind, id) => report.find(item => item.kind === kind && item.nativeId === id);
+  assert.deepEqual(by('datacenter', 'datacenter-2'), { kind: 'datacenter', nativeId: 'datacenter-2', name: 'Lab DC', parentNativeId: null, attributes: {} });
+  assert.deepEqual(by('cluster', 'domain-c8'), { kind: 'cluster', nativeId: 'domain-c8', name: 'Lab Cluster', parentNativeId: 'datacenter-2', attributes: { hostCount: 1, drsEnabled: false, haEnabled: true } });
+  assert.deepEqual(by('host', 'host-10'), { kind: 'host', nativeId: 'host-10', name: 'esx01.lab.example', parentNativeId: 'domain-c8', attributes: { powerState: 'poweredOn', connectionState: 'connected' } });
+  assert.deepEqual([by('host', 'host-11').parentNativeId, by('host', 'host-11').attributes], ['datacenter-2', { powerState: 'poweredOff', connectionState: 'disconnected' }], 'a host in no cluster sits under the datacenter');
+  assert.deepEqual(by('datastore', 'datastore-1').attributes, { type: 'VMFS', capacityBytes: 536870912000, freeBytes: 214748364800 });
+  assert.deepEqual([by('datastore', 'datastore-2').attributes.type, by('datastore', 'datastore-2').attributes.capacityBytes], ['NFS', 1099511627776]);
+  assert.deepEqual([by('network', 'network-1').attributes.type, by('network', 'network-2').attributes.type, by('network', 'network-2').name], ['standard', 'distributed', 'dvPortGroup-Prod']);
+  assert.equal(report.length, 1 + 1 + 2 + 2 + 2);
+  assert.equal(fake.openSessions(), 0, 'the session is closed afterwards');
+});
+
+test('with several datacenters nothing is guessed to be the parent; a vCenter with no hosts, clusters or networks gives a short, valid report', async () => {
+  const fake = fakeVcenter({ hosts: [], clusters: [], networks: [] });
+  fake.state.datacenters.push({ datacenter: 'datacenter-9', name: 'DR' });
+  const report = await make(fake).discoverInfrastructure();
+  assert.deepEqual(normaliseReport(report), report);
+  assert.deepEqual(report.filter(item => item.kind === 'datastore').map(item => item.parentNativeId), [null]);
+  assert.deepEqual(report.map(item => item.kind).sort(), ['datacenter', 'datacenter', 'datastore']);
+});
+
+test('a VM reports where it runs: its host, the datastores its disks are in and the networks of its adapters, by the identifiers the infrastructure objects have', async () => {
+  const fake = fakeVcenter({ isos: { datastore1: ['images/'], datastore2: ['images/'] }, vms: [sampleVm('vm-1'),
+    sampleVm('vm-2', { host: 'host-11', disks: { 2000: { label: 'd1', capacity: 1 << 30, backing: { type: 'VMDK_FILE', vmdk_file: '[datastore1] a/a.vmdk' } }, 2001: { label: 'd2', capacity: 1 << 30, backing: { type: 'VMDK_FILE', vmdk_file: '[datastore2] a/b.vmdk' } } },
+      nics: { 4000: { label: 'n1', backing: { network: 'network-1' } }, 4001: { label: 'n2', backing: { network: 'network-2' } } } }),
+    sampleVm('vm-3', { disks: {}, nics: {} })] });
+  const provider = make(fake), vms = await provider.discover(), infrastructure = await provider.discoverInfrastructure();
+  const placement = id => vms.find(vm => vm.nativeId === id).providerMetadata.placement;
+  assert.deepEqual(placement('vm-1'), { hostNativeId: 'host-10', datastoreNativeIds: ['datastore-1'], networkNativeIds: ['network-1'] });
+  assert.deepEqual(placement('vm-2'), { hostNativeId: 'host-11', datastoreNativeIds: ['datastore-1', 'datastore-2'], networkNativeIds: ['network-1', 'network-2'] });
+  assert.deepEqual(placement('vm-3'), { hostNativeId: 'host-10', datastoreNativeIds: [], networkNativeIds: [] });
+  const known = kind => new Set(infrastructure.filter(item => item.kind === kind).map(item => item.nativeId));
+  for (const id of ['vm-1', 'vm-2', 'vm-3']) assert.ok(known('host').has(placement(id).hostNativeId), `${id}: the host exists`);
+  for (const id of ['vm-1', 'vm-2']) assert.ok(placement(id).datastoreNativeIds.every(ds => known('datastore').has(ds)) && placement(id).networkNativeIds.every(net => known('network').has(net)));
+});
+
+test('placement tolerates a detail that says nothing, and never invents a datastore it cannot identify', () => {
+  assert.equal(vspherePlacement({}, {}, new Map()), undefined);
+  assert.equal(vspherePlacement(null, undefined, new Map()), undefined);
+  assert.deepEqual(vspherePlacement({ disks: { 1: { backing: { vmdk_file: '[unknown store] x.vmdk' } }, 2: { backing: { vmdk_file: 'no brackets.vmdk' } }, 3: {} }, nics: { 1: { backing: {} }, 2: null } }, { host: 'host-1' }, new Map([['ds', 'datastore-1']])),
+    { hostNativeId: 'host-1', datastoreNativeIds: [], networkNativeIds: [] });
+});
+
+test('if any list cannot be read the whole call fails (so a partial picture never replaces what is stored), and the session is still closed', async () => {
+  for (const [path, status] of [['GET /api/vcenter/network', 503], ['GET /api/vcenter/host', 403], ['GET /api/vcenter/cluster', 500]]) {
+    const fake = fakeVcenter(); fake.faults.status.set(path, status);
+    await assert.rejects(() => make(fake).discoverInfrastructure(), error => error instanceof VsphereProviderError && /^NUV_VMWARE_/.test(error.code), path);
+    assert.equal(fake.openSessions(), 0, `${path}: the session is closed`);
+  }
+  const down = fakeVcenter(); down.faults.unreachable = true;
+  await rejectsWith(() => make(down).discoverInfrastructure(), 'NUV_VMWARE_UNREACHABLE', error => error.retryable === true);
+});
