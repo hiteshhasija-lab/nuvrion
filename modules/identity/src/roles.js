@@ -6,7 +6,7 @@
 
 // A permission that is no use without another one: a role with it must have the other too, so no role can be created that the console shows half-working.
 export const IMPLIES = Object.freeze({
-  'resource.operate': ['resource.view'], 'resource.tag': ['resource.view'], 'connection.manage': ['connection.view'], 'identity.manage': ['resource.view']
+  'resource.operate': ['resource.view'], 'resource.tag': ['resource.view'], 'connection.manage': ['connection.view'], 'identity.manage': ['resource.view'], 'alert.manage': ['resource.view']
 });
 
 const CATALOGUE = [
@@ -17,6 +17,7 @@ const CATALOGUE = [
   { key: 'connection.manage', group: 'Connections', description: 'Add, edit, test, discover and delete provider connections; acknowledge alerts.' },
   { key: 'audit.view', group: 'Platform', description: 'Read the audit history.' },
   { key: 'identity.manage', group: 'Platform', description: 'Manage users and roles: approve accounts, assign roles, revoke sessions.' },
+  { key: 'alert.manage', group: 'Platform', description: 'Create, change, delete and evaluate alert rules (thresholds on CPU, memory and datastore space).' },
   { key: 'platform.manage', group: 'Platform', description: 'Upgrade the platform, manage agents and their builds, and read platform metrics.' }
 ];
 export const PERMISSIONS = Object.freeze(CATALOGUE.map(permission => Object.freeze({ ...permission, requires: Object.freeze([...(IMPLIES[permission.key] ?? [])]) })));

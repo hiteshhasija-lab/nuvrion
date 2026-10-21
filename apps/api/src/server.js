@@ -42,6 +42,9 @@ import { ReadinessService } from '../../../modules/platform/src/readiness-servic
 import { latestMigrationVersion } from '../../../modules/platform/src/migrations.js';
 import { RetentionService, retentionPoliciesFromEnv } from '../../../modules/platform/src/retention-service.js';
 import { VerificationReconciler } from '../../../modules/tasks/src/verification-reconciler.js';
+import { AlertService } from '../../../modules/monitoring/src/alert-service.js';
+import { PostgresAlertService } from '../../../modules/monitoring/src/postgres-alert-service.js';
+import { AlertError, METRICS, collectTargets, describeRule, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
 import { MfaError } from '../../../modules/identity/src/mfa.js';
 import { PERMISSIONS, PERMISSION_KEYS, RoleError, permissionsBeyond } from '../../../modules/identity/src/roles.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
@@ -98,6 +101,7 @@ const mockProvider = new MockProvider();
 const identity = production?await PostgresIdentityService.create(store.pool,{idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs}):new IdentityService({idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs});
 const connectionAlertAudit=event=>safeAudit({actorType:'system',actorId:null,actorName:'Nuvrion',action:`connection.alert_${event.type}`,targetType:'provider_connection',targetId:event.connection?.id??event.alert.connectionId,correlationId:randomUUID(),outcome:event.type==='recovered'?'succeeded':event.alert.severity==='critical'?'failed':'warning',detail:{alertId:event.alert.id,severity:event.alert.severity,errorCode:event.alert.errorCode,occurrenceCount:event.alert.occurrenceCount}});
 const connections = production?new PostgresConnectionService(store.pool,{onAlert:connectionAlertAudit}):new ConnectionService({onAlert:connectionAlertAudit});
+const alerts = production?new PostgresAlertService(store.pool):new AlertService({file:process.env.NUVRION_ALERTS_FILE ?? '.nuvrion/alerts.json'});
 const inventory = production?new PostgresInventoryService(store.pool):new InventoryService({file:process.env.NUVRION_INVENTORY_FILE ?? '.nuvrion/inventory.json',connectionHealth:id=>connections.get(id)});
 const infrastructure = production?new PostgresInfrastructureService(store.pool):new InfrastructureService({file:process.env.NUVRION_INFRASTRUCTURE_FILE ?? '.nuvrion/infrastructure.json'});
 const tags = production?new PostgresTagService(store.pool):new TagService({file:process.env.NUVRION_TAGS_FILE ?? '.nuvrion/tags.json'});
@@ -157,6 +161,14 @@ async function autoUpgradeCycle(){try{return await runAutoUpgradeCycle({agents,u
   catch(error){console.error(JSON.stringify({level:'error',event:'agent.auto_upgrade.failed',error:String(error.message).slice(0,200)}));return null;}}
 const autoUpgradeTimer=setInterval(autoUpgradeCycle,Number(process.env.NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS??60000));autoUpgradeTimer.unref?.();
 const taskRecoveryTimer=setInterval(taskRecovery,Number(process.env.NUVRION_TASK_RECOVERY_INTERVAL_MS??30000));taskRecoveryTimer.unref?.();
+// Threshold alerts: every minute (NUVRION_ALERT_INTERVAL_MS) the latest measurements are compared with the rules (docs/alerts.md). A failed evaluation is logged and tried again; it never stops discovery.
+let alertEvaluation=null;
+async function evaluateAlerts(){
+  if(alertEvaluation)return alertEvaluation;   // one at a time: a second caller gets the evaluation already running
+  alertEvaluation=(async()=>{try{const [resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id));return await alerts.evaluate(collectTargets({resources,metrics,infrastructure:objects,connections:connectionList}));}finally{alertEvaluation=null;}})();
+  return alertEvaluation;
+}
+const alertTimer=setInterval(()=>evaluateAlerts().catch(error=>console.error(JSON.stringify({level:'error',event:'alerts.evaluation_failed',error:error.message}))),Number(process.env.NUVRION_ALERT_INTERVAL_MS??60000));alertTimer.unref?.();
 discoveryScheduler.start();
 // History tables prune themselves by age (discovery runs 30d, health events 90d by default; see retention-service.js).
 const retention=production?new RetentionService({pool:store.pool,policies:retentionPoliciesFromEnv(process.env),intervalMs:Number(process.env.NUVRION_RETENTION_INTERVAL_MS??6*60*60_000),onPruned:(table,rows)=>console.log(JSON.stringify({level:'info',event:'retention.pruned',table,rows})),onError:(error,policy)=>console.error(JSON.stringify({level:'error',event:'retention.failed',table:policy.name,error:error.message}))}):null;retention?.start();
@@ -263,6 +275,92 @@ export async function handler(req, res) {
         if(error.message==='PASSWORD_INCORRECT'){loginLimiter.recordFailure(`password:${client}`,p.user.username);await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.password_changed',targetType:'user',targetId:p.user.id,correlationId,outcome:'failed',detail:{reason:'current_password_incorrect'}});}
         return passwordRefused(error);
       }
+    }
+    // ---- threshold alerts and the notification centre (docs/alerts.md) ----
+    const ALERT_STATUS={NUV_ALERT_RULE_EXISTS:409,NUV_ALERT_RULE_LIMIT:409,NUV_ALERT_RESOLVED:409};
+    const alertRefused=error=>{
+      if(error instanceof AlertError)return problem(res,ALERT_STATUS[error.code]??422,error.code,error.message,correlationId);
+      if(error.message==='VERSION_CONFLICT')return problem(res,412,'NUV_VERSION_CONFLICT','The rule changed. Refresh and retry.',correlationId);
+      throw error;
+    };
+    const withSummary=rule=>({...rule,summary:describeRule(rule)});
+    // a rule may name a connection: it must be one that exists (the database also refuses one that does not)
+    const unknownConnection=async input=>{const id=input&&typeof input==='object'?input.connectionId:null;if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return false;let found=null;try{found=await connections.get(id);}catch{found=null;}return !found||found.status==='deleted';};
+    if(req.method==='GET'&&url.pathname==='/api/v1/alert-metrics'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const items=Object.entries(METRICS).map(([key,metric])=>({key,...metric}));return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='GET'&&url.pathname==='/api/v1/alert-rules'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const items=(await alerts.listRules()).map(withSummary);return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/alert-rules'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const input=await body(req);if(await unknownConnection(input))return problem(res,422,'NUV_ALERT_RULE_INVALID','That connection does not exist.',correlationId);
+        const rule=await alerts.createRule(input,p.user.id);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'alert.rule_created',targetType:'alert_rule',targetId:rule.id,correlationId,outcome:'succeeded',detail:{name:rule.name,summary:describeRule(rule),severity:rule.severity}});
+        res.setHeader('etag',`"${rule.rowVersion}"`);return json(res,201,withSummary(rule),correlationId);
+      }catch(error){return alertRefused(error);}
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/alert-rules/preview'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const rule=parseRule(await body(req)),[resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id));
+        return json(res,200,{summary:describeRule(rule),...previewRule(rule,collectTargets({resources,metrics,infrastructure:objects,connections:connectionList}),Date.now())},correlationId);
+      }catch(error){return alertRefused(error);}
+    }
+    const alertRuleMatch=url.pathname.match(/^\/api\/v1\/alert-rules\/([0-9a-f-]{36})$/i);
+    if(req.method==='PATCH'&&alertRuleMatch){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);
+      try{
+        const input=await body(req);if(await unknownConnection(input))return problem(res,422,'NUV_ALERT_RULE_INVALID','That connection does not exist.',correlationId);
+        const rule=await alerts.updateRule(alertRuleMatch[1],input,version);
+        if(!rule)return problem(res,404,'NUV_ALERT_RULE_NOT_FOUND','The alert rule was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'alert.rule_updated',targetType:'alert_rule',targetId:rule.id,correlationId,outcome:'succeeded',detail:{name:rule.name,summary:describeRule(rule),enabled:rule.enabled}});
+        res.setHeader('etag',`"${rule.rowVersion}"`);return json(res,200,withSummary(rule),correlationId);
+      }catch(error){return alertRefused(error);}
+    }
+    if(req.method==='DELETE'&&alertRuleMatch){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const result=await alerts.deleteRule(alertRuleMatch[1]);
+      if(!result)return problem(res,404,'NUV_ALERT_RULE_NOT_FOUND','The alert rule was not found.',correlationId);
+      await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'alert.rule_deleted',targetType:'alert_rule',targetId:alertRuleMatch[1],correlationId,outcome:'succeeded',detail:{alertsResolved:result.alertsResolved}});
+      return json(res,200,result,correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/alerts/evaluate'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      return json(res,200,await evaluateAlerts(),correlationId);
+    }
+    if(req.method==='GET'&&url.pathname==='/api/v1/alerts'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const status=url.searchParams.get('status')??'open';
+      if(!['open','active','acknowledged','resolved','all'].includes(status))return problem(res,422,'NUV_ALERT_QUERY_INVALID','status must be open, active, acknowledged, resolved or all.',correlationId);
+      const items=await alerts.listAlerts({status,limit:Number(url.searchParams.get('limit')??100)});
+      return json(res,200,{items,count:items.length,openCount:items.filter(item=>item.status!=='resolved').length,criticalCount:items.filter(item=>item.status!=='resolved'&&item.severity==='critical').length,meta:{correlationId}},correlationId);
+    }
+    const acknowledgeThresholdMatch=url.pathname.match(/^\/api\/v1\/alerts\/([0-9a-f-]{36})\/acknowledge$/i);
+    if(req.method==='POST'&&acknowledgeThresholdMatch){
+      const p=await requireAuth(req,res,correlationId,'resource.operate');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const alert=await alerts.acknowledge(acknowledgeThresholdMatch[1],p.user.id);
+        if(!alert)return problem(res,404,'NUV_ALERT_NOT_FOUND','The alert was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'alert.acknowledged',targetType:alert.targetKind,targetId:alert.targetId,correlationId,outcome:'succeeded',detail:{alertId:alert.id,rule:alert.ruleName,severity:alert.severity}});
+        return json(res,200,alert,correlationId);
+      }catch(error){return alertRefused(error);}
+    }
+    // the bell: threshold alerts and, for those who may see connections, connection problems, as one feed read by the person once
+    const connectionEvents=list=>list.flatMap(alert=>{const severity=alert.severity==='critical'?'critical':'warning',title=alert.connectionName,detail=`Connection ${severity==='critical'?'is unreachable':'is having problems'}`;return [{id:`connection:${alert.id}:fired`,kind:'fired',at:alert.openedAt,source:'connection',alertId:alert.id,severity,title,detail},...(alert.recoveredAt?[{id:`connection:${alert.id}:resolved`,kind:'resolved',at:alert.recoveredAt,source:'connection',alertId:alert.id,severity,title,detail:'Connection recovered'}]:[])];});
+    if(req.method==='GET'&&url.pathname==='/api/v1/notifications'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const feed=await alerts.notifications(p.user.id,{limit:100}),own=identity.authorize(p,'connection.view')?connectionEvents(await connections.alerts({limit:200})):[];
+      const since=feed.lastReadAt??new Date(Date.now()-24*60*60_000).toISOString(),items=[...feed.items,...own].sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,50);
+      return json(res,200,{items,count:items.length,unreadCount:feed.unreadCount+own.filter(event=>event.at>since).length,lastReadAt:feed.lastReadAt,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/notifications/read'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      return json(res,200,await alerts.markRead(p.user.id),correlationId);
     }
     // ---- two-factor sign-in (docs/mfa.md) ----
     const mfaRefused=(res,error,correlationId)=>{if(!(error instanceof MfaError))throw error;if(error.retryAfterSeconds)res.setHeader('retry-after',String(error.retryAfterSeconds));return problem(res,MFA_STATUS[error.code]??422,error.code,error.message,correlationId);};
@@ -501,6 +599,10 @@ export async function handler(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/tags.js') {
       const js = await readFile(resolve(webRoot, 'tags.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/alerts.js') {
+      const js = await readFile(resolve(webRoot, 'alerts.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
     if (req.method === 'GET' && url.pathname === '/accounts.js') {

@@ -933,4 +933,93 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await signIn(finn, user.username, LATER); await finn.waitFor(() => !document.getElementById('application').hidden);
     await finn.close(); await admin.close();
   });
+
+  // ---- threshold alerts, the bell and the Alert rules page (apps/web/alerts.js) ------------------------------------------------------------------------------------------
+  const bellCount = page => page.evaluate(() => { const count = document.getElementById('notify-count'); return count.hidden ? 0 : Number(count.textContent); });
+
+  test('an administrator creates an alert rule; it fires for the VM over the limit, shows in the bell until read, can be acknowledged, and clears when the limit is raised', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'alert-rules');
+    await page.waitFor(() => /No alert rules yet/.test(document.getElementById('alert-rule-table').innerText));
+    assert.match(await page.text('#alert-open-table'), /No open alerts/);
+    const before = await bellCount(page);   // earlier tests in this lab leave connection problems in the feed; what matters is what this alert adds
+    await page.click('[data-alert-rule-new]');
+    await page.waitFor(() => document.getElementById('alert-rule-dialog').open && document.getElementById('alert-rule-name'));
+    await page.fill('#alert-rule-name', 'CPU above 10'); await page.fill('#alert-rule-threshold', '10'); await page.fill('#alert-rule-duration', '0');
+    await page.click('#alert-rule-check');
+    await page.waitFor(() => /1 match right now/.test(document.getElementById('alert-rule-preview').innerText));
+    assert.match(await page.text('#alert-rule-preview'), /nuvrion-app-01: 18\.5%/, 'the preview says what the rule would catch before it is saved');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#alert-open-table [data-alert-row]').length), 0, 'and raised nothing');
+    await page.click('#alert-rule-save');
+    await page.waitFor(() => !document.getElementById('alert-rule-dialog').open && /Virtual machine CPU use above 10%/.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('[data-alert-evaluate]');
+    await page.waitFor(() => /1 raised/.test(document.getElementById('notice').innerText));
+    await page.waitFor(() => document.querySelector('#alert-open-table [data-alert-row]'));
+    assert.match(await page.text('#alert-open-table'), /nuvrion-app-01[\s\S]*CPU above 10[\s\S]*18\.5%/);
+    await page.waitFor(expected => Number(document.getElementById('notify-count').textContent) === expected && !document.getElementById('notify-count').hidden, before + 1);
+    assert.match(await page.text('#alert-rules-summary'), /1 open/i);
+    // the bell
+    await page.click('#notify-menu summary');
+    await page.waitFor(() => /nuvrion-app-01/.test(document.getElementById('notify-panel').innerText));
+    assert.match(await page.text('#notify-panel'), /CPU above 10: 18\.5%/);
+    await page.click('[data-notifications-read]');
+    await page.waitFor(() => document.getElementById('notify-count').hidden);
+    assert.equal(await page.evaluate(() => document.getElementById('notify-label').textContent), 'Notifications, none new');
+    await page.click('#notify-menu summary');
+    // acknowledge
+    await page.click('[data-alert-acknowledge]');
+    await page.waitFor(() => /Acknowledged/.test(document.getElementById('alert-open-table').innerText) && !document.querySelector('[data-alert-acknowledge]'));
+    // raise the limit: the next evaluation clears it, the history keeps it, and the recovery is news
+    await page.click('[data-alert-rule-edit]');
+    await page.waitFor(() => document.getElementById('alert-rule-dialog').open && document.getElementById('alert-rule-threshold').value === '10');
+    await page.fill('#alert-rule-threshold', '50'); await page.click('#alert-rule-save');
+    await page.waitFor(() => !document.getElementById('alert-rule-dialog').open && /above 50%/.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('[data-alert-evaluate]');
+    await page.waitFor(() => /1 resolved/.test(document.getElementById('notice').innerText));
+    await page.waitFor(() => /No open alerts/.test(document.getElementById('alert-open-table').innerText));
+    assert.match(await page.text('#alert-resolved-table'), /nuvrion-app-01[\s\S]*Back within the limit/);
+    await page.waitFor(() => Number(document.getElementById('notify-count').textContent) === 1 && !document.getElementById('notify-count').hidden);
+    // a rule that is turned off, then deleted
+    await page.click('[data-alert-rule-toggle]');
+    await page.waitFor(() => /turned off/i.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('[data-alert-rule-delete]');
+    await page.waitFor(() => /No alert rules yet/.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('[data-notifications-read]').catch(() => {});
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('a rule the dialog refuses is explained without closing it; people without alert.manage see the rules but not the buttons; an operator can acknowledge and an auditor cannot', async () => {
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openView(admin, 'alert-rules');
+    await admin.click('[data-alert-rule-new]'); await admin.waitFor(() => document.getElementById('alert-rule-dialog').open && document.getElementById('alert-rule-name'));
+    await admin.fill('#alert-rule-name', 'Too high'); await admin.fill('#alert-rule-threshold', '500'); await admin.click('#alert-rule-save');
+    await admin.waitFor(() => /0 to 100/.test(document.getElementById('alert-rule-error').innerText) && !document.getElementById('alert-rule-error').hidden);
+    await admin.fill('#alert-rule-threshold', '10'); await admin.fill('#alert-rule-duration', '0'); await admin.fill('#alert-rule-name', 'Watched by others'); await admin.click('#alert-rule-save');
+    await admin.waitFor(() => !document.getElementById('alert-rule-dialog').open);
+    await admin.click('[data-alert-evaluate]'); await admin.waitFor(() => /1 raised/.test(document.getElementById('notice').innerText));
+    await lab.createUser({ username: 'ada.alerts', displayName: 'Ada Alerts', role: 'auditor' });
+    const operator = await newPage();
+    await signIn(operator, 'olivia.operator', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(operator);
+    await openView(operator, 'alert-rules');
+    await operator.waitFor(() => /Watched by others/.test(document.getElementById('alert-rule-table').innerText));
+    assert.equal(await operator.evaluate(() => document.getElementById('alert-rules-actions').hidden), true, 'no New rule or Evaluate now without alert.manage');
+    assert.equal(await operator.evaluate(() => document.querySelectorAll('[data-alert-rule-edit],[data-alert-rule-delete],[data-alert-rule-toggle]').length), 0);
+    assert.ok(await bellCount(operator) >= 1, 'the bell shows it, as news, to people who may view resources (and, having never read, the last day’s earlier events too)');
+    await operator.click('[data-alert-acknowledge]');
+    await operator.waitFor(() => /Acknowledged/.test(document.getElementById('alert-open-table').innerText));
+    const auditor = await newPage();
+    await signIn(auditor, 'ada.alerts', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(auditor);
+    await openView(auditor, 'alert-rules');
+    await auditor.waitFor(() => document.querySelector('#alert-open-table [data-alert-row]'));
+    assert.equal(await auditor.evaluate(() => document.querySelectorAll('[data-alert-acknowledge]').length), 0, 'an auditor can look, not acknowledge');
+    const [rule] = (await lab.api('GET', '/api/v1/alert-rules')).json.items;
+    assert.equal((await lab.api('DELETE', `/api/v1/alert-rules/${rule.id}`)).status, 200);
+    assert.deepEqual(unexpected(admin.problems()), [], 'the dialog explained the limit itself: no request was sent, so nothing was refused');
+    await auditor.close(); await operator.close(); await admin.close();
+  });
 });

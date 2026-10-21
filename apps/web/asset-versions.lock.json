@@ -7,9 +7,13 @@
     "version": "20261014-10",
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
+  "alerts.js": {
+    "version": "20261017-2",
+    "sha256": "4d673957fa2e68d6349f4ae77f799e63fcb23999a205baa55185060c8eb1b19b"
+  },
   "app.js": {
-    "version": "20261017-149",
-    "sha256": "7f8ac82d40c7366c19cfe919f430af2f3949a0359fea5e820107b4d914754805"
+    "version": "20261017-152",
+    "sha256": "d80ef342206b48362a1c7d33d4bf6ed75a56253cc8aac9179398dc35f5073886"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -36,8 +40,8 @@
     "sha256": "3f0bb10efd3646041e2d6b0db096bb854d1a3d17c149808ae098961535280616"
   },
   "styles.css": {
-    "version": "20261017-133",
-    "sha256": "392a9556de0a7560d6bbb6fa33fb25024db70332c29450113c28e88fc98933e6"
+    "version": "20261017-135",
+    "sha256": "d4ee82a8a31128d7f6d55c72d306bec85f445d27063d348147ffbd94f9e14b4a"
   },
   "tags.js": {
     "version": "20261017-1",

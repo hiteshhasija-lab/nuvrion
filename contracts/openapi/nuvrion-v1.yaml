@@ -27,6 +27,7 @@ tags:
   - { name: Resources, description: Discovered virtual machines and what can be done to them }
   - { name: Tasks, description: Lifecycle operations and their outcomes }
   - { name: Audit, description: The audit log }
+  - { name: Alerts, description: Threshold alert rules, the alerts they raise and the notification feed }
   - { name: Agents, description: Workstation agents, enrollment and signed commands }
   - { name: Mock, description: The built-in mock provider }
 
@@ -624,6 +625,151 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+  /alert-metrics:
+    get:
+      tags: [Alerts]
+      operationId: listAlertMetrics
+      summary: What an alert rule can measure, and in what unit
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The metrics, content: { application/json: { schema: { $ref: '#/components/schemas/AlertMetricList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /alert-rules:
+    get:
+      tags: [Alerts]
+      operationId: listAlertRules
+      summary: Alert rules, with how many alerts each has open
+      x-required-permission: resource.view
+      responses:
+        '200': { description: All rules, content: { application/json: { schema: { $ref: '#/components/schemas/AlertRuleList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Alerts]
+      operationId: createAlertRule
+      summary: Create an alert rule
+      description: A rule says that a measurement of a kind of thing, above or below a value, for a number of minutes, is a warning or critical. The name is unique whatever the case. At most 100 rules. A connection, if named, must exist.
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AlertRuleCreate' } } }
+      responses:
+        '201': { description: Rule created, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/AlertRule' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: The name is taken (NUV_ALERT_RULE_EXISTS) or the limit is reached (NUV_ALERT_RULE_LIMIT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /alert-rules/preview:
+    post:
+      tags: [Alerts]
+      operationId: previewAlertRule
+      summary: What a rule would match right now, without saving it or raising anything
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AlertRuleCreate' } } }
+      responses:
+        '200': { description: The things that match now, strongest first, and how many could not be measured, content: { application/json: { schema: { $ref: '#/components/schemas/AlertRulePreview' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /alert-rules/{ruleId}:
+    parameters: [{ name: ruleId, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      tags: [Alerts]
+      operationId: updateAlertRule
+      summary: Change some fields of a rule (optimistic concurrency with If-Match)
+      description: Disabling a rule, or changing it so that it no longer covers a target, resolves the alerts it had open there on the next evaluation.
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/IfMatch' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AlertRuleChange' } } }
+      responses:
+        '200': { description: Updated rule, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/AlertRule' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The name is taken by another rule (NUV_ALERT_RULE_EXISTS), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [Alerts]
+      operationId: deleteAlertRule
+      summary: Delete a rule; the alerts it raised are resolved and kept as history
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, required: [deleted, alertsResolved], properties: { deleted: { type: integer }, alertsResolved: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: Threshold alerts (open ones first)
+      description: status is open (active and acknowledged, the default), active, acknowledged, resolved or all.
+      x-required-permission: resource.view
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, active, acknowledged, resolved, all] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        '200': { description: The alerts, content: { application/json: { schema: { $ref: '#/components/schemas/AlertList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /alerts/evaluate:
+    post:
+      tags: [Alerts]
+      operationId: evaluateAlerts
+      summary: Compare the latest measurements with the rules now (this also happens every minute)
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: What the evaluation did, content: { application/json: { schema: { $ref: '#/components/schemas/AlertEvaluation' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /alerts/{alertId}/acknowledge:
+    post:
+      tags: [Alerts]
+      operationId: acknowledgeAlert
+      summary: Say that someone is looking at an alert; it stays open until it clears
+      x-required-permission: resource.operate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ name: alertId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: The alert, content: { application/json: { schema: { $ref: '#/components/schemas/Alert' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A resolved alert cannot be acknowledged (NUV_ALERT_RESOLVED), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /notifications:
+    get:
+      tags: [Alerts]
+      operationId: listNotifications
+      summary: The notification feed - alerts firing and resolving, and connection problems for those who may see connections - with how many are new to the caller
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The feed, newest first, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /notifications/read:
+    post:
+      tags: [Alerts]
+      operationId: markNotificationsRead
+      summary: Mark everything in the feed as read, for the caller
+      x-required-permission: resource.view
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: When, content: { application/json: { schema: { type: object, required: [lastReadAt], properties: { lastReadAt: { type: string, format: date-time } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /connection-alerts:
     get:
       tags: [Connections]
@@ -1437,7 +1583,7 @@ components:
 
     UserStatus: { type: string, enum: [active, pending, locked, disabled] }
     RoleName: { type: string, description: 'A built-in role (platform_admin, operator, auditor) or a custom one.' }
-    PermissionKey: { type: string, enum: [resource.view, resource.operate, resource.tag, connection.view, connection.manage, audit.view, identity.manage, platform.manage] }
+    PermissionKey: { type: string, enum: [resource.view, resource.operate, resource.tag, connection.view, connection.manage, audit.view, identity.manage, platform.manage, alert.manage] }
     Permission:
       type: object
       required: [key, group, description, requires]
@@ -1561,6 +1707,119 @@ components:
       type: object
       required: [currentPassword, newPassword]
       properties: { currentPassword: { type: string }, newPassword: { type: string, minLength: 12 } }
+    AlertMetric:
+      type: object
+      required: [key, kind, label, unit, max]
+      properties: { key: { type: string }, kind: { type: string, enum: [vm, host, datastore] }, label: { type: string }, unit: { type: string }, max: { type: number } }
+    AlertMetricList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/AlertMetric' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    AlertRuleCreate:
+      type: object
+      required: [name, metric, comparison, threshold, severity]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 300 }
+        metric: { type: string }
+        comparison: { type: string, enum: [above, below] }
+        threshold: { type: number, minimum: 0 }
+        durationMinutes: { type: integer, minimum: 0, maximum: 1440, description: How long the condition must hold before the alert fires (default 0) }
+        severity: { type: string, enum: [warning, critical] }
+        connectionId: { type: [string, 'null'], format: uuid, description: Only targets of this connection (default all) }
+        enabled: { type: boolean }
+    AlertRuleChange:
+      type: object
+      description: Any of the fields of a rule; the rest are kept.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        metric: { type: string }
+        comparison: { type: string, enum: [above, below] }
+        threshold: { type: number }
+        durationMinutes: { type: integer }
+        severity: { type: string, enum: [warning, critical] }
+        connectionId: { type: [string, 'null'] }
+        enabled: { type: boolean }
+    AlertRule:
+      type: object
+      required: [id, name, description, metric, comparison, threshold, durationMinutes, severity, connectionId, enabled, rowVersion, createdAt, updatedAt, openAlertCount, summary]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        metric: { type: string }
+        comparison: { type: string, enum: [above, below] }
+        threshold: { type: number }
+        durationMinutes: { type: integer }
+        severity: { type: string, enum: [warning, critical] }
+        connectionId: { type: [string, 'null'] }
+        enabled: { type: boolean }
+        rowVersion: { type: integer, minimum: 1 }
+        createdBy: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        openAlertCount: { type: integer, minimum: 0 }
+        summary: { type: string, description: 'The rule in words, e.g. Virtual machine CPU use above 90% for 10 minutes' }
+    AlertRuleList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/AlertRule' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    AlertRulePreview:
+      type: object
+      required: [summary, evaluated, unmeasured, matches]
+      properties:
+        summary: { type: string }
+        evaluated: { type: integer, description: Targets with a fresh measurement }
+        unmeasured: { type: integer, description: Targets with no fresh measurement (not counted as matching) }
+        matches: { type: array, items: { type: object, required: [id, name, value], properties: { id: { type: string }, name: { type: string }, value: { type: number } } } }
+    Alert:
+      type: object
+      required: [id, ruleId, ruleName, metric, comparison, threshold, severity, targetKind, targetId, targetName, connectionId, value, status, firstSeenAt, lastSeenAt, acknowledgedAt, acknowledgedBy, resolvedAt, resolvedReason]
+      properties:
+        id: { type: string, format: uuid }
+        ruleId: { type: [string, 'null'], description: Null once the rule has been deleted }
+        ruleName: { type: string }
+        metric: { type: string }
+        comparison: { type: string }
+        threshold: { type: number }
+        severity: { type: string, enum: [warning, critical] }
+        targetKind: { type: string, enum: [vm, host, datastore] }
+        targetId: { type: string }
+        targetName: { type: string }
+        connectionId: { type: [string, 'null'] }
+        value: { type: number, description: The latest value that held the alert open }
+        status: { type: string, enum: [active, acknowledged, resolved] }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        acknowledgedAt: { type: [string, 'null'] }
+        acknowledgedBy: { type: [string, 'null'] }
+        resolvedAt: { type: [string, 'null'] }
+        resolvedReason: { type: [string, 'null'], description: 'cleared, rule_disabled, rule_deleted, scope_changed or target_gone' }
+    AlertList:
+      type: object
+      required: [items, count, openCount, criticalCount, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/Alert' } }, count: { type: integer }, openCount: { type: integer }, criticalCount: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    AlertEvaluation:
+      type: object
+      required: [fired, refreshed, resolved, stale, rules, evaluatedAt]
+      properties: { fired: { type: integer }, refreshed: { type: integer }, resolved: { type: integer }, stale: { type: integer, description: Targets skipped because their measurements are older than ten minutes }, rules: { type: integer, description: Enabled rules }, evaluatedAt: { type: string, format: date-time } }
+    NotificationEvent:
+      type: object
+      required: [id, kind, at, source, alertId, severity, title, detail]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [fired, resolved] }
+        at: { type: string, format: date-time }
+        source: { type: string, enum: [threshold, connection] }
+        alertId: { type: string }
+        severity: { type: string, enum: [warning, critical] }
+        title: { type: string }
+        detail: { type: string }
+    NotificationList:
+      type: object
+      required: [items, count, unreadCount, lastReadAt, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/NotificationEvent' } }, count: { type: integer }, unreadCount: { type: integer, description: Events newer than the caller last read (the last day's, for someone who never has) }, lastReadAt: { type: [string, 'null'] }, meta: { $ref: '#/components/schemas/ListMeta' } }
     AuthSession:
       type: object
       required: [user, mfa, passwordChangeRequired, csrfToken, expiresAt, sessionPolicy]

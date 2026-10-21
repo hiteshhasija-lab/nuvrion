@@ -43,7 +43,7 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.clickText('Sign in →', '#login-form');
     await page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
     await expectNoViolations('overview');
-    for (const view of ['inventory', 'infrastructure', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
+    for (const view of ['inventory', 'infrastructure', 'alert-rules', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
     // a host selected: the tree with the selection marked and the detail with usage bars and the list of VMs
     await openView('infrastructure');
     await page.waitFor(() => document.querySelectorAll('#infrastructure-tree [data-infra-select]').length >= 9);
@@ -200,5 +200,22 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('details.account-menu summary'); await page.click('#logout'); await page.waitFor(() => document.getElementById('login')?.getClientRects().length > 0);
     await page.fill('#login-form [name=username]', 'admin'); await page.fill('#login-form [name=password]', ADMIN_PASSWORD); await page.clickText('Sign in →', '#login-form');
     await page.waitFor(() => !document.getElementById('application').hidden);
+  });
+
+  test('the alert rule dialog with a preview, the page with an open alert, and the notification bell open', async () => {
+    await openView('alert-rules');
+    await page.click('[data-alert-rule-new]'); await shown('#alert-rule-form #alert-rule-name'); await settle(300);
+    await expectNoViolations('alert rule dialog');
+    await page.fill('#alert-rule-name', 'Axe rule'); await page.fill('#alert-rule-threshold', '10'); await page.fill('#alert-rule-duration', '0');
+    await page.click('#alert-rule-check'); await page.waitFor(() => /match/.test(document.getElementById('alert-rule-preview').innerText)); await settle(300);
+    await expectNoViolations('alert rule dialog with a preview');
+    await page.click('#alert-rule-save'); await page.waitFor(() => !document.getElementById('alert-rule-dialog').open && /Axe rule/.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('[data-alert-evaluate]'); await page.waitFor(() => document.querySelector('#alert-open-table [data-alert-row]')); await settle(400);
+    await expectNoViolations('alert rules page with an open alert');
+    await page.click('#notify-menu summary'); await page.waitFor(() => /Axe rule/.test(document.getElementById('notify-panel').innerText)); await settle(300);
+    await expectNoViolations('notification bell, open');
+    await page.click('#notify-menu summary');
+    await page.click('[data-alert-rule-delete]'); await page.waitFor(() => /No alert rules yet/.test(document.getElementById('alert-rule-table').innerText));
+    await page.click('#notify-menu summary'); await page.click('[data-notifications-read]'); await page.waitFor(() => document.getElementById('notify-count').hidden); await page.click('#notify-menu summary');
   });
 });

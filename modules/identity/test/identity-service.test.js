@@ -20,7 +20,7 @@ test('the three roles carry exactly the documented permissions', () => {
   const grant = roles => identity.createUser({ username: `u-${roles.join('-')}`, displayName: 'Test', password: PASSWORD, roles }).user.permissions.sort();
   assert.deepEqual(grant(['operator']), ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
   assert.deepEqual(grant(['auditor']), ['audit.view', 'connection.view', 'resource.view']);
-  assert.deepEqual(grant(['platform_admin']), ['audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view']);
+  assert.deepEqual(grant(['platform_admin']), ['alert.manage', 'audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view']);
 });
 
 test('authorize reflects the role, and nothing is allowed without a principal', () => {

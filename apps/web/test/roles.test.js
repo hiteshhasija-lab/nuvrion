@@ -28,7 +28,7 @@ test('every selection the checkboxes can produce is one the server accepts', asy
 test('the table marks built-in roles, shows the first permissions and the rest as a count, and offers View for built-in and Edit and Delete for custom roles', () => {
   const html = roleTableHtml([role('platform_admin', catalogue.map(item => item.key), { system: true, userCount: 1 }), role('tag_keeper', ['resource.view', 'resource.tag'], { userCount: 2 }), role('empty_one', ['resource.view'])], { esc });
   assert.match(html, /platform admin<\/strong> <span class="badge">Built-in/);
-  assert.match(html, /\+5/);
+  assert.ok(html.includes(`+${catalogue.length - 3}`), 'the administrator role shows three permissions and the rest as a count');
   assert.match(html, /data-role-open="platform_admin">View/);
   assert.doesNotMatch(html, /data-role-delete="platform_admin"/);
   assert.match(html, /data-role-open="tag_keeper">Edit/);

@@ -142,7 +142,7 @@ describe('the OpenAPI description', { skip: SKIP }, () => {
   });
 
   test('required permissions are named permissions', () => {
-    const known = new Set(['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage']);
+    const known = new Set(['alert.manage', 'resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage']);
     for (const { id, op } of operations.values()) if (op['x-required-permission']) assert.ok(known.has(op['x-required-permission']), `${id}: ${op['x-required-permission']}`);
   });
 });
@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -481,6 +481,43 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     const metrics = await call('getResourceMetrics', { params: { resourceId: ctx.vm.id }, query: { hours: '6', limit: '10' }, expect: 200 });
     assert.equal(metrics.json.hours, 6);
     await call('getResourceMetrics', { params: { resourceId: ABSENT }, expect: 404 });
+  });
+
+  test('threshold alerts: listAlertMetrics, create, preview, update and delete a rule, evaluateAlerts, listAlerts, acknowledgeAlert, listNotifications, markNotificationsRead', async () => {
+    assert.ok((await call('listAlertMetrics', { expect: 200 })).json.items.some(item => item.key === 'vm.cpu_percent'));
+    const body = { name: 'Contract rule', metric: 'vm.cpu_percent', comparison: 'above', threshold: 10, severity: 'warning' };
+    const created = await call('createAlertRule', { body, expect: 201 });
+    assert.ok(created.headers.get('etag')); assert.equal(created.json.summary, 'Virtual machine CPU use above 10%');
+    await call('createAlertRule', { body, expect: 409, invalid: true });
+    await call('createAlertRule', { body: { ...body, name: 'Bad', threshold: 500 }, expect: 422, invalid: true });
+    await call('createAlertRule', { as: 'operator', body: { ...body, name: 'Refused' }, expect: 403, invalid: true });
+    assert.equal((await call('previewAlertRule', { body: { ...body, name: 'Preview' }, expect: 200 })).json.matches.length >= 1, true);
+    await call('previewAlertRule', { body: { ...body, metric: 'nope' }, expect: 422, invalid: true });
+    assert.equal((await call('listAlertRules', { expect: 200 })).json.items.some(item => item.id === created.json.id), true);
+    const evaluation = await call('evaluateAlerts', { expect: 200 });
+    assert.equal(evaluation.json.fired >= 1, true);
+    await call('evaluateAlerts', { as: 'operator', expect: 403, invalid: true });
+    const alerts = await call('listAlerts', { expect: 200 });
+    assert.equal(alerts.json.openCount >= 1, true);
+    await call('listAlerts', { query: { status: 'all', limit: '5' }, expect: 200 });
+    await call('listAlerts', { query: { status: 'sleeping' }, expect: 422, invalid: true });
+    const acknowledged = await call('acknowledgeAlert', { params: { alertId: alerts.json.items[0].id }, expect: 200 });
+    assert.equal(acknowledged.json.status, 'acknowledged');
+    await call('acknowledgeAlert', { params: { alertId: ABSENT }, expect: 404 });
+    await call('acknowledgeAlert', { as: 'auditor', params: { alertId: alerts.json.items[0].id }, expect: 403, invalid: true });
+    const updated = await call('updateAlertRule', { params: { ruleId: created.json.id }, headers: { 'if-match': `"${created.json.rowVersion}"` }, body: { threshold: 99 }, expect: 200 });
+    assert.equal(updated.json.threshold, 99);
+    await call('updateAlertRule', { params: { ruleId: created.json.id }, headers: { 'if-match': '"99"' }, body: { threshold: 50 }, expect: 412, invalid: true });
+    await call('updateAlertRule', { params: { ruleId: created.json.id }, headers: {}, body: { threshold: 50 }, expect: 428, invalid: true });
+    await call('updateAlertRule', { params: { ruleId: ABSENT }, headers: { 'if-match': '"1"' }, body: { threshold: 50 }, expect: 404, invalid: true });
+    await call('updateAlertRule', { params: { ruleId: created.json.id }, headers: { 'if-match': `"${updated.json.rowVersion}"` }, body: { threshold: 500 }, expect: 422, invalid: true });
+    const feed = await call('listNotifications', { expect: 200 });
+    assert.equal(feed.json.unreadCount >= 1, true);
+    await call('markNotificationsRead', { expect: 200 });
+    assert.equal((await call('listNotifications', { expect: 200 })).json.unreadCount, 0);
+    await call('deleteAlertRule', { params: { ruleId: ABSENT }, expect: 404 });
+    await call('deleteAlertRule', { as: 'operator', params: { ruleId: created.json.id }, expect: 403, invalid: true });
+    assert.equal((await call('deleteAlertRule', { params: { ruleId: created.json.id }, expect: 200 })).json.deleted, 1);
   });
 
   test('listTags, applyTagOperation: set, change and remove tags on resources, the tags on a resource, the ?tag filter, and the documented refusals', async () => {
