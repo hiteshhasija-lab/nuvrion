@@ -16,8 +16,8 @@ const dependenciesInstalled = await Promise.all(['ws', 'pg', 'ssh2', 'amqplib'].
 const PASSWORD = 'Matrix-Test-Password-1!'; // secret-scan:allow (fake test credential)
 const ID = '00000000-0000-4000-8000-000000000001', SESSION_HASH = 'a'.repeat(64);
 const PERMISSIONS = {
-  admin: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage', 'alert.manage'],
-  operator: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view'],
+  admin: ['resource.view', 'resource.operate', 'resource.tag', 'connection.view', 'connection.manage', 'identity.manage', 'audit.view', 'platform.manage', 'alert.manage', 'schedule.manage'],
+  operator: ['resource.view', 'resource.operate', 'resource.tag', 'schedule.manage', 'connection.view'],
   auditor: ['resource.view', 'connection.view', 'audit.view']
 };
 // [method, path, permission, route id used by the coverage check]
@@ -78,6 +78,13 @@ const PROTECTED = [
   ['GET', '/api/v1/resources', 'resource.view', '/api/v1/resources'],
   ['GET', '/api/v1/tags', 'resource.view', '/api/v1/tags'],
   ['GET', '/api/v1/infrastructure', 'resource.view', '/api/v1/infrastructure'],
+  ['GET', '/api/v1/schedules', 'resource.view', '/api/v1/schedules'],
+  ['POST', '/api/v1/schedules', 'schedule.manage', '/api/v1/schedules'],
+  ['POST', '/api/v1/schedules/preview', 'schedule.manage', '/api/v1/schedules/preview'],
+  ['PATCH', `/api/v1/schedules/${ID}`, 'schedule.manage', 'scheduleMatch'],
+  ['DELETE', `/api/v1/schedules/${ID}`, 'schedule.manage', 'scheduleMatch'],
+  ['POST', `/api/v1/schedules/${ID}/run`, 'schedule.manage', 'scheduleRunMatch'],
+  ['GET', '/api/v1/schedule-runs', 'resource.view', '/api/v1/schedule-runs'],
   ['GET', '/api/v1/alert-metrics', 'resource.view', '/api/v1/alert-metrics'],
   ['GET', '/api/v1/alert-rules', 'resource.view', '/api/v1/alert-rules'],
   ['POST', '/api/v1/alert-rules', 'alert.manage', '/api/v1/alert-rules'],
@@ -163,7 +170,7 @@ describe('authorization matrix', { skip: dependenciesInstalled ? false : 'server
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-matrix-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();

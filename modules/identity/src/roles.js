@@ -6,13 +6,14 @@
 
 // A permission that is no use without another one: a role with it must have the other too, so no role can be created that the console shows half-working.
 export const IMPLIES = Object.freeze({
-  'resource.operate': ['resource.view'], 'resource.tag': ['resource.view'], 'connection.manage': ['connection.view'], 'identity.manage': ['resource.view'], 'alert.manage': ['resource.view']
+  'resource.operate': ['resource.view'], 'resource.tag': ['resource.view'], 'connection.manage': ['connection.view'], 'identity.manage': ['resource.view'], 'alert.manage': ['resource.view'], 'schedule.manage': ['resource.view', 'resource.operate']
 });
 
 const CATALOGUE = [
   { key: 'resource.view', group: 'Virtual machines', description: 'See virtual machines, infrastructure, tags, performance and tasks.' },
   { key: 'resource.operate', group: 'Virtual machines', description: 'Power, snapshot, edit and open consoles of virtual machines, mount media, and manage tasks.' },
   { key: 'resource.tag', group: 'Virtual machines', description: 'Add, change and remove Nuvrion tags on virtual machines.' },
+  { key: 'schedule.manage', group: 'Virtual machines', description: 'Create, change, delete and run schedules that power machines on and off, restart or suspend them (needs resource.operate).' },
   { key: 'connection.view', group: 'Connections', description: 'See provider connections, their health and alerts.' },
   { key: 'connection.manage', group: 'Connections', description: 'Add, edit, test, discover and delete provider connections; acknowledge alerts.' },
   { key: 'audit.view', group: 'Platform', description: 'Read the audit history.' },
@@ -25,7 +26,7 @@ export const PERMISSION_KEYS = Object.freeze(PERMISSIONS.map(permission => permi
 
 export const SYSTEM_ROLES = Object.freeze({
   platform_admin: Object.freeze({ description: 'Everything, including users, roles and the platform itself.', permissions: Object.freeze([...PERMISSION_KEYS]) }),
-  operator: Object.freeze({ description: 'Operate virtual machines and see connections; no administration.', permissions: Object.freeze(['resource.view', 'resource.operate', 'resource.tag', 'connection.view']) }),
+  operator: Object.freeze({ description: 'Operate virtual machines and see connections; no administration.', permissions: Object.freeze(['resource.view', 'resource.operate', 'resource.tag', 'schedule.manage', 'connection.view']) }),
   auditor: Object.freeze({ description: 'Read-only, including the audit history.', permissions: Object.freeze(['resource.view', 'connection.view', 'audit.view']) })
 });
 export const SYSTEM_ROLE_NAMES = Object.freeze(Object.keys(SYSTEM_ROLES));

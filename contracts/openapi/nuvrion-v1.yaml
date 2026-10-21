@@ -28,6 +28,7 @@ tags:
   - { name: Tasks, description: Lifecycle operations and their outcomes }
   - { name: Audit, description: The audit log }
   - { name: Alerts, description: Threshold alert rules, the alerts they raise and the notification feed }
+  - { name: Schedules, description: Scheduled operations on machines, and what each run did }
   - { name: Agents, description: Workstation agents, enrollment and signed commands }
   - { name: Mock, description: The built-in mock provider }
 
@@ -625,6 +626,107 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+  /schedules:
+    get:
+      tags: [Schedules]
+      operationId: listSchedules
+      summary: Scheduled operations, with when each runs next and what its latest run did
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The schedules, and the operations a schedule may use, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Schedules]
+      operationId: createSchedule
+      summary: Create a schedule
+      description: An operation (power on, shut down, power off, suspend, restart guest, restart) on listed machines (at most 50) or on the machines that have a tag when the run happens, once, every day, or on chosen days of the week, at a time in a time zone. It runs as the person who made it, with that person's permissions at the time of each run. Names are unique whatever the case; at most 100 schedules. A time that has already passed is refused for a schedule that is on.
+      x-required-permission: schedule.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleCreate' } } }
+      responses:
+        '201': { description: Schedule created, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: The name is taken (NUV_SCHEDULE_EXISTS) or the limit is reached (NUV_SCHEDULE_LIMIT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /schedules/preview:
+    post:
+      tags: [Schedules]
+      operationId: previewSchedule
+      summary: When a schedule would next run and which machines it would cover now, without saving it
+      x-required-permission: schedule.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleCreate' } } }
+      responses:
+        '200': { description: The preview, content: { application/json: { schema: { $ref: '#/components/schemas/SchedulePreview' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /schedules/{scheduleId}:
+    parameters: [{ name: scheduleId, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      tags: [Schedules]
+      operationId: updateSchedule
+      summary: Change some fields of a schedule (optimistic concurrency with If-Match)
+      description: Fields that no longer apply to the new shape (the date of a schedule that stops being once-only, the days of one that stops being weekly) are dropped. Turning a schedule on works out its next run again.
+      x-required-permission: schedule.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/IfMatch' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleChange' } } }
+      responses:
+        '200': { description: Updated schedule, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The name is taken by another schedule (NUV_SCHEDULE_EXISTS), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [Schedules]
+      operationId: deleteSchedule
+      summary: Delete a schedule; its history stays
+      x-required-permission: schedule.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, required: [deleted], properties: { deleted: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /schedules/{scheduleId}/run:
+    post:
+      tags: [Schedules]
+      operationId: runSchedule
+      summary: Run a schedule now, as the caller
+      description: The operation is requested for each machine the schedule covers, exactly as when it is due. The schedule's own timing is not changed.
+      x-required-permission: schedule.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ name: scheduleId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: What the run did, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRun' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /schedule-runs:
+    get:
+      tags: [Schedules]
+      operationId: listScheduleRuns
+      summary: What schedules have done, newest first
+      x-required-permission: resource.view
+      parameters:
+        - { name: scheduleId, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: The runs, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRunList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /alert-metrics:
     get:
       tags: [Alerts]
@@ -1583,7 +1685,7 @@ components:
 
     UserStatus: { type: string, enum: [active, pending, locked, disabled] }
     RoleName: { type: string, description: 'A built-in role (platform_admin, operator, auditor) or a custom one.' }
-    PermissionKey: { type: string, enum: [resource.view, resource.operate, resource.tag, connection.view, connection.manage, audit.view, identity.manage, platform.manage, alert.manage] }
+    PermissionKey: { type: string, enum: [resource.view, resource.operate, resource.tag, connection.view, connection.manage, audit.view, identity.manage, platform.manage, alert.manage, schedule.manage] }
     Permission:
       type: object
       required: [key, group, description, requires]
@@ -1820,6 +1922,105 @@ components:
       type: object
       required: [items, count, unreadCount, lastReadAt, meta]
       properties: { items: { type: array, items: { $ref: '#/components/schemas/NotificationEvent' } }, count: { type: integer }, unreadCount: { type: integer, description: Events newer than the caller last read (the last day's, for someone who never has) }, lastReadAt: { type: [string, 'null'] }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    ScheduleCreate:
+      type: object
+      required: [name, operation, targetKind, frequency, timeOfDay]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 300 }
+        operation: { type: string, enum: [start, stop, power_off, pause, reboot_guest, restart] }
+        targetKind: { type: string, enum: [vms, tag], description: 'vms: the machines listed in vmIds; tag: the machines that have the tag when the run happens' }
+        vmIds: { type: array, items: { type: string, format: uuid }, maxItems: 50 }
+        tag: { type: string, description: 'A tag key (any value) or key=value' }
+        connectionId: { type: [string, 'null'], format: uuid, description: Only machines of this connection (schedules by tag only) }
+        frequency: { type: string, enum: [once, daily, weekly] }
+        timeOfDay: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }
+        weekdays: { type: array, items: { type: integer, minimum: 0, maximum: 6 }, description: 0 is Sunday (weekly schedules) }
+        runDate: { type: string, description: 'YYYY-MM-DD (schedules that run once)' }
+        timeZone: { type: string, description: 'An IANA time zone such as Europe/London (default UTC)' }
+        enabled: { type: boolean }
+    ScheduleChange:
+      type: object
+      description: Any of the fields of a schedule; the rest are kept.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        operation: { type: string }
+        targetKind: { type: string }
+        vmIds: { type: array, items: { type: string } }
+        tag: { type: [string, 'null'] }
+        connectionId: { type: [string, 'null'] }
+        frequency: { type: string }
+        timeOfDay: { type: string }
+        weekdays: { type: array, items: { type: integer } }
+        runDate: { type: [string, 'null'] }
+        timeZone: { type: string }
+        enabled: { type: boolean }
+    ScheduleRun:
+      type: object
+      required: [id, scheduleId, scheduleName, operation, trigger, scheduledFor, startedAt, outcome, matched, submitted, skipped, failed, details, summary]
+      properties:
+        id: { type: string, format: uuid }
+        scheduleId: { type: [string, 'null'], description: Null once the schedule has been deleted }
+        scheduleName: { type: string }
+        operation: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        scheduledFor: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: [string, 'null'] }
+        outcome: { type: string, enum: [completed, partial, failed, skipped, missed, error] }
+        matched: { type: integer }
+        submitted: { type: integer, description: Machines for which the operation was requested (see Tasks for how each went) }
+        skipped: { type: integer, description: Machines not asked, with the reason in details (already in that state, another operation running, gone) }
+        failed: { type: integer }
+        details: { type: array, items: { type: object, required: [resourceId, result], properties: { resourceId: { type: string }, name: { type: [string, 'null'] }, result: { type: string, enum: [submitted, skipped, failed] }, detail: { type: string }, taskId: { type: string } } } }
+        detailsTruncated: { type: boolean }
+        error: { type: [string, 'null'] }
+        summary: { type: string, description: 'For example 2 requested, 1 skipped' }
+    ScheduleRunList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/ScheduleRun' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    Schedule:
+      type: object
+      required: [id, name, description, operation, targetKind, vmIds, tag, connectionId, frequency, timeOfDay, weekdays, runDate, timeZone, enabled, nextRunAt, lastRunAt, lastOutcome, rowVersion, createdAt, updatedAt, lastRun, summary]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        operation: { type: string }
+        targetKind: { type: string, enum: [vms, tag] }
+        vmIds: { type: array, items: { type: string } }
+        tag: { type: [string, 'null'] }
+        connectionId: { type: [string, 'null'] }
+        frequency: { type: string, enum: [once, daily, weekly] }
+        timeOfDay: { type: string }
+        weekdays: { type: array, items: { type: integer } }
+        runDate: { type: [string, 'null'] }
+        timeZone: { type: string }
+        enabled: { type: boolean }
+        nextRunAt: { type: [string, 'null'], description: Null when the schedule is off or a once-only schedule has run }
+        lastRunAt: { type: [string, 'null'] }
+        lastOutcome: { type: [string, 'null'] }
+        createdBy: { type: [string, 'null'] }
+        rowVersion: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastRun: { oneOf: [{ $ref: '#/components/schemas/ScheduleRun' }, { type: 'null' }] }
+        summary: { type: string, description: 'The schedule in words, e.g. Shut down guest: 2 virtual machines, every weekday at 19:00 (Europe/London)' }
+    ScheduleList:
+      type: object
+      required: [items, count, operations, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/Schedule' } }, count: { type: integer }, operations: { type: object, additionalProperties: { type: string }, description: The operations a schedule may use and how each is called }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    SchedulePreview:
+      type: object
+      required: [summary, nextRuns, matchedCount, machines, goneCount]
+      properties:
+        summary: { type: string }
+        nextRuns: { type: array, items: { type: string, format: date-time }, description: The next three runs }
+        matchedCount: { type: integer }
+        machines: { type: array, items: { type: object, required: [id, name], properties: { id: { type: string }, name: { type: string } } }, description: Up to twenty of the machines it would cover now }
+        goneCount: { type: integer, description: Listed machines that no longer exist }
     AuthSession:
       type: object
       required: [user, mfa, passwordChangeRequired, csrfToken, expiresAt, sessionPolicy]

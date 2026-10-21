@@ -42,6 +42,10 @@ import { ReadinessService } from '../../../modules/platform/src/readiness-servic
 import { latestMigrationVersion } from '../../../modules/platform/src/migrations.js';
 import { RetentionService, retentionPoliciesFromEnv } from '../../../modules/platform/src/retention-service.js';
 import { VerificationReconciler } from '../../../modules/tasks/src/verification-reconciler.js';
+import { ScheduleService } from '../../../modules/tasks/src/schedule-service.js';
+import { PostgresScheduleService } from '../../../modules/tasks/src/postgres-schedule-service.js';
+import { createScheduleRunner } from '../../../modules/tasks/src/schedule-runner.js';
+import { OPERATIONS as SCHEDULE_OPERATIONS, ScheduleError, describeSchedule, describeRun, nextRuns, parseSchedule, resolveTargets } from '../../../modules/tasks/src/schedule-rules.js';
 import { AlertService } from '../../../modules/monitoring/src/alert-service.js';
 import { PostgresAlertService } from '../../../modules/monitoring/src/postgres-alert-service.js';
 import { AlertError, METRICS, collectTargets, describeRule, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
@@ -101,6 +105,7 @@ const mockProvider = new MockProvider();
 const identity = production?await PostgresIdentityService.create(store.pool,{idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs}):new IdentityService({idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs});
 const connectionAlertAudit=event=>safeAudit({actorType:'system',actorId:null,actorName:'Nuvrion',action:`connection.alert_${event.type}`,targetType:'provider_connection',targetId:event.connection?.id??event.alert.connectionId,correlationId:randomUUID(),outcome:event.type==='recovered'?'succeeded':event.alert.severity==='critical'?'failed':'warning',detail:{alertId:event.alert.id,severity:event.alert.severity,errorCode:event.alert.errorCode,occurrenceCount:event.alert.occurrenceCount}});
 const connections = production?new PostgresConnectionService(store.pool,{onAlert:connectionAlertAudit}):new ConnectionService({onAlert:connectionAlertAudit});
+const schedules = production?new PostgresScheduleService(store.pool):new ScheduleService({file:process.env.NUVRION_SCHEDULES_FILE ?? '.nuvrion/schedules.json'});
 const alerts = production?new PostgresAlertService(store.pool):new AlertService({file:process.env.NUVRION_ALERTS_FILE ?? '.nuvrion/alerts.json'});
 const inventory = production?new PostgresInventoryService(store.pool):new InventoryService({file:process.env.NUVRION_INVENTORY_FILE ?? '.nuvrion/inventory.json',connectionHealth:id=>connections.get(id)});
 const infrastructure = production?new PostgresInfrastructureService(store.pool):new InfrastructureService({file:process.env.NUVRION_INFRASTRUCTURE_FILE ?? '.nuvrion/infrastructure.json'});
@@ -161,6 +166,25 @@ async function autoUpgradeCycle(){try{return await runAutoUpgradeCycle({agents,u
   catch(error){console.error(JSON.stringify({level:'error',event:'agent.auto_upgrade.failed',error:String(error.message).slice(0,200)}));return null;}}
 const autoUpgradeTimer=setInterval(autoUpgradeCycle,Number(process.env.NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS??60000));autoUpgradeTimer.unref?.();
 const taskRecoveryTimer=setInterval(taskRecovery,Number(process.env.NUVRION_TASK_RECOVERY_INTERVAL_MS??30000));taskRecoveryTimer.unref?.();
+// Scheduled operations (docs/schedules.md): every half minute (NUVRION_SCHEDULE_INTERVAL_MS) the schedules that are due are run. An operation is requested exactly as when a person presses the button
+// (the same state rules, the same task engine, the same audit), as the person who made the schedule, with the permissions that person has now.
+async function submitScheduledOperation(resource,operation,{key,requestedBy}){
+  const validation=await inventory.validateOperation(resource.id,operation);
+  if(!validation.ok)return {result:'skipped',detail:validation.detail??({NUV_OPERATION_STATE_CONFLICT:'Not possible in its current state.',NUV_RESOURCE_UNAVAILABLE:'It is not available.',NUV_OPERATION_INVALID:'This machine does not support that.'}[validation.code]??'Not available for this machine.')};
+  if(await store.activeForTarget(resource.id))return {result:'skipped',detail:'Another operation is already running on it.'};
+  const {task,created}=await store.create({operation,targetId:resource.id,targetType:resource.resourceType,providerNativeId:resource.nativeId,connectionId:resource.connectionId,requestedBy:{id:requestedBy.id,username:requestedBy.username},correlationId:randomUUID(),idempotencyKey:key});
+  if(created){if(production)outboxRelay.kick();else await worker.notify(task.id);}
+  return {result:'submitted',taskId:task.id};
+}
+const scheduleRunner=createScheduleRunner({
+  schedules,clock:()=>Date.now(),submit:submitScheduledOperation,
+  listResources:()=>inventory.list({resourceType:'virtual_machine'}),
+  tagsOf:async()=>{const resources=await inventory.list({resourceType:'virtual_machine'}),own=await tags.forResources(resources.map(resource=>resource.id)),byId=new Map(resources.map(resource=>[resource.id,[...(own.get(resource.id)??[]),...providerTags(resource.attributes)]]));return resource=>byId.get(resource.id)??[];},
+  requester:async userId=>{const person=(await identity.listUsers()).find(user=>user.id===userId);return person&&person.status==='active'&&person.permissions.includes('resource.operate')?{id:person.id,username:person.username}:null;},
+  audit:async({schedule,run,who})=>{try{await store.recordAudit?.({actorType:who?'user':'system',actorId:who?.id??null,actorName:who?.username??'scheduler',action:'schedule.run',targetType:'schedule',targetId:schedule.id,correlationId:randomUUID(),outcome:['completed','partial'].includes(run.outcome)?'succeeded':run.outcome==='skipped'?'succeeded':'failed',detail:{name:schedule.name,operation:schedule.operation,trigger:run.trigger,outcome:run.outcome,matched:run.matched,submitted:run.submitted,skipped:run.skipped,failed:run.failed}});}catch(error){console.error(JSON.stringify({level:'error',event:'audit.record_failed',action:'schedule.run',error:error.message}));}},
+  log:message=>console.error(JSON.stringify({level:'error',event:'schedules.run_failed',error:message}))
+});
+const scheduleTimer=setInterval(()=>scheduleRunner.runDue().catch(error=>console.error(JSON.stringify({level:'error',event:'schedules.check_failed',error:error.message}))),Number(process.env.NUVRION_SCHEDULE_INTERVAL_MS??30000));scheduleTimer.unref?.();
 // Threshold alerts: every minute (NUVRION_ALERT_INTERVAL_MS) the latest measurements are compared with the rules (docs/alerts.md). A failed evaluation is logged and tried again; it never stops discovery.
 let alertEvaluation=null;
 async function evaluateAlerts(){
@@ -275,6 +299,66 @@ export async function handler(req, res) {
         if(error.message==='PASSWORD_INCORRECT'){loginLimiter.recordFailure(`password:${client}`,p.user.username);await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.password_changed',targetType:'user',targetId:p.user.id,correlationId,outcome:'failed',detail:{reason:'current_password_incorrect'}});}
         return passwordRefused(error);
       }
+    }
+    // ---- scheduled operations (docs/schedules.md) ----
+    const SCHEDULE_STATUS={NUV_SCHEDULE_EXISTS:409,NUV_SCHEDULE_LIMIT:409};
+    const scheduleRefused=error=>{
+      if(error instanceof ScheduleError)return problem(res,SCHEDULE_STATUS[error.code]??422,error.code,error.message,correlationId);
+      if(error.message==='VERSION_CONFLICT')return problem(res,412,'NUV_VERSION_CONFLICT','The schedule changed. Refresh and retry.',correlationId);
+      throw error;
+    };
+    const scheduleView=item=>({...item,summary:describeSchedule(item),lastRun:item.lastRun?{...item.lastRun,summary:describeRun(item.lastRun)}:null});
+    const unknownScheduleConnection=async input=>{const id=input&&typeof input==='object'?input.connectionId:null;if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return false;let found=null;try{found=await connections.get(id);}catch{found=null;}return !found||found.status==='deleted';};
+    if(req.method==='GET'&&url.pathname==='/api/v1/schedules'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const items=(await schedules.listSchedules()).map(scheduleView);return json(res,200,{items,count:items.length,operations:SCHEDULE_OPERATIONS,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/schedules'){
+      const p=await requireAuth(req,res,correlationId,'schedule.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const input=await body(req);if(await unknownScheduleConnection(input))return problem(res,422,'NUV_SCHEDULE_INVALID','That connection does not exist.',correlationId);
+        const schedule=await schedules.createSchedule(input,p.user.id);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'schedule.created',targetType:'schedule',targetId:schedule.id,correlationId,outcome:'succeeded',detail:{name:schedule.name,summary:describeSchedule(schedule)}});
+        res.setHeader('etag',`"${schedule.rowVersion}"`);return json(res,201,scheduleView(schedule),correlationId);
+      }catch(error){return scheduleRefused(error);}
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/schedules/preview'){
+      const p=await requireAuth(req,res,correlationId,'schedule.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const schedule=parseSchedule(await body(req)),resources=await inventory.list({resourceType:'virtual_machine'}),own=await tags.forResources(resources.map(resource=>resource.id)),{machines,gone}=resolveTargets(schedule,resources,resource=>[...(own.get(resource.id)??[]),...providerTags(resource.attributes)]);
+        return json(res,200,{summary:describeSchedule(schedule),nextRuns:nextRuns(schedule,Date.now(),3).map(at=>new Date(at).toISOString()),matchedCount:machines.length,machines:machines.slice(0,20).map(resource=>({id:resource.id,name:resource.name})),goneCount:gone.length},correlationId);
+      }catch(error){return scheduleRefused(error);}
+    }
+    if(req.method==='GET'&&url.pathname==='/api/v1/schedule-runs'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const items=(await schedules.listRuns({scheduleId:url.searchParams.get('scheduleId')||null,limit:Number(url.searchParams.get('limit')??50)})).map(run=>({...run,summary:describeRun(run)}));
+      return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    const scheduleMatch=url.pathname.match(/^\/api\/v1\/schedules\/([0-9a-f-]{36})$/i),scheduleRunMatch=url.pathname.match(/^\/api\/v1\/schedules\/([0-9a-f-]{36})\/run$/i);
+    if(req.method==='PATCH'&&scheduleMatch){
+      const p=await requireAuth(req,res,correlationId,'schedule.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);
+      try{
+        const input=await body(req);if(await unknownScheduleConnection(input))return problem(res,422,'NUV_SCHEDULE_INVALID','That connection does not exist.',correlationId);
+        const schedule=await schedules.updateSchedule(scheduleMatch[1],input,version);
+        if(!schedule)return problem(res,404,'NUV_SCHEDULE_NOT_FOUND','The schedule was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'schedule.updated',targetType:'schedule',targetId:schedule.id,correlationId,outcome:'succeeded',detail:{name:schedule.name,summary:describeSchedule(schedule),enabled:schedule.enabled}});
+        res.setHeader('etag',`"${schedule.rowVersion}"`);return json(res,200,scheduleView(schedule),correlationId);
+      }catch(error){return scheduleRefused(error);}
+    }
+    if(req.method==='DELETE'&&scheduleMatch){
+      const p=await requireAuth(req,res,correlationId,'schedule.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const result=await schedules.deleteSchedule(scheduleMatch[1]);
+      if(!result)return problem(res,404,'NUV_SCHEDULE_NOT_FOUND','The schedule was not found.',correlationId);
+      await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'schedule.deleted',targetType:'schedule',targetId:scheduleMatch[1],correlationId,outcome:'succeeded',detail:{}});
+      return json(res,200,result,correlationId);
+    }
+    if(req.method==='POST'&&scheduleRunMatch){
+      const p=await requireAuth(req,res,correlationId,'schedule.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const schedule=await schedules.getSchedule(scheduleRunMatch[1]);
+      if(!schedule)return problem(res,404,'NUV_SCHEDULE_NOT_FOUND','The schedule was not found.',correlationId);
+      const run=await scheduleRunner.execute(schedule,{scheduledFor:Date.now(),trigger:'manual',requestedBy:{id:p.user.id,username:p.user.username}});
+      return json(res,200,{...run,summary:describeRun(run)},correlationId);
     }
     // ---- threshold alerts and the notification centre (docs/alerts.md) ----
     const ALERT_STATUS={NUV_ALERT_RULE_EXISTS:409,NUV_ALERT_RULE_LIMIT:409,NUV_ALERT_RESOLVED:409};
@@ -599,6 +683,10 @@ export async function handler(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/tags.js') {
       const js = await readFile(resolve(webRoot, 'tags.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/schedules.js') {
+      const js = await readFile(resolve(webRoot, 'schedules.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
     if (req.method === 'GET' && url.pathname === '/alerts.js') {

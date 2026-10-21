@@ -1026,4 +1026,93 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(admin.problems()), [], 'the dialog explained the limit itself: no request was sent, so nothing was refused');
     await auditor.close(); await operator.close(); await admin.close();
   });
+
+  // ---- scheduled operations and the Schedules page (apps/web/schedules.js) --------------------------------------------------------------------------------------------------
+  const setValue = (page, id, value) => page.evaluate((id, value) => { const field = document.getElementById(id); field.value = value; field.dispatchEvent(new Event('input', { bubbles: true })); }, id, value);   // a time field takes no typed text through the keyboard shortcut path
+  const setSelect = (page, id, value) => page.evaluate((id, value) => { const select = document.getElementById(id); select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); }, id, value);
+
+  test('an administrator makes a schedule in the console, checks when it would run, runs it by hand and sees a machine skipped for a reason, then changes it to a tag, turns it off and deletes it', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'schedules');
+    await page.waitFor(() => /No schedules yet/.test(document.getElementById('schedule-table').innerText));
+    assert.match(await page.text('#schedule-run-table'), /Nothing has run yet/);
+    await page.click('[data-schedule-new]');
+    await page.waitFor(() => document.getElementById('schedule-dialog').open && document.getElementById('schedule-name'));
+    // refused before any request: nothing chosen yet
+    await page.fill('#schedule-name', 'Keep the app running'); await page.click('#schedule-save');
+    await page.waitFor(() => /at least one machine/.test(document.getElementById('schedule-error').innerText) && !document.getElementById('schedule-error').hidden);
+    await setSelect(page, 'schedule-operation', 'start');
+    await page.fill('#schedule-machine-filter', 'app-01');
+    await page.waitFor(() => [...document.querySelectorAll('#schedule-machine-list [data-machine-name]')].filter(row => !row.hidden).length === 1);
+    await page.click('#schedule-machine-list label:not([hidden]) input[type=checkbox]');
+    await page.waitFor(() => /1 machine chosen/.test(document.getElementById('schedule-machine-count').innerText));
+    await setValue(page, 'schedule-time', '07:30'); await page.fill('#schedule-zone', 'Europe/London');
+    await page.click('#schedule-check');
+    await page.waitFor(() => /would be covered right now/.test(document.getElementById('schedule-preview').innerText));
+    assert.match(await page.text('#schedule-preview'), /Next runs[\s\S]*1 machine would be covered right now: nuvrion-app-01/, 'the preview says when and for which machine, before anything is saved');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#schedule-table [data-schedule-row]').length), 0);
+    await page.click('#schedule-save');
+    await page.waitFor(() => !document.getElementById('schedule-dialog').open && /Power on: 1 virtual machine, every day at 07:30 \(Europe\/London\)/.test(document.getElementById('schedule-table').innerText));
+    assert.match(await page.text('#schedules-summary'), /1 of 1 on/i); assert.match(await page.text('#schedule-table'), /Not run yet/);
+    // run it now: the app is already running, so "Power on" is skipped, and the history says why
+    await page.click('[data-schedule-run]');
+    await page.waitFor(() => /Keep the app running: 0 requested, 1 skipped/.test(document.getElementById('notice').innerText));
+    await page.waitFor(() => /nuvrion-app-01: skipped/.test(document.getElementById('schedule-run-table').innerText));
+    assert.match(await page.text('#schedule-run-table'), /Run by hand[\s\S]*skipped[\s\S]*Unavailable while power state is running/);
+    assert.match(await page.text('#schedule-table'), /0 requested, 1 skipped/);
+    // change it: machines become a tag, daily becomes weekly
+    await page.click('[data-schedule-edit]');
+    await page.waitFor(() => document.getElementById('schedule-dialog').open && document.getElementById('schedule-name').value === 'Keep the app running');
+    assert.equal(await page.evaluate(() => document.getElementById('schedule-weekdays-box').hidden), true);
+    await page.click('input[name=targetKind][value=tag]');
+    await page.waitFor(() => !document.getElementById('schedule-tag-box').hidden && document.getElementById('schedule-machines-box').hidden);
+    await setSelect(page, 'schedule-frequency', 'weekly');
+    await page.waitFor(() => !document.getElementById('schedule-weekdays-box').hidden);
+    await page.click('#schedule-save');
+    await page.waitFor(() => /Give the tag/.test(document.getElementById('schedule-error').innerText) && !document.getElementById('schedule-error').hidden);
+    await page.fill('#schedule-tag', 'env=dev');
+    await page.click('#schedule-save');
+    await page.waitFor(() => /Choose at least one day/.test(document.getElementById('schedule-error').innerText) && document.getElementById('schedule-dialog').open);
+    await page.click('input[name=weekdays][value="1"]'); await page.click('input[name=weekdays][value="5"]');
+    await page.click('#schedule-save');
+    await page.waitFor(() => !document.getElementById('schedule-dialog').open && /machines tagged env=dev, every Mon, Fri at 07:30/.test(document.getElementById('schedule-table').innerText));
+    assert.match(await page.text('#schedule-table'), /By tag/);
+    // off, on, then deleted: the history stays
+    await page.click('[data-schedule-toggle]');
+    await page.waitFor(() => /turned off/i.test(document.getElementById('schedule-table').innerText) && /0 of 1 on/i.test(document.getElementById('schedules-summary').innerText));
+    await page.click('[data-schedule-toggle]');
+    await page.waitFor(() => /1 of 1 on/i.test(document.getElementById('schedules-summary').innerText));
+    await page.click('[data-schedule-delete]');
+    await page.waitFor(() => /No schedules yet/.test(document.getElementById('schedule-table').innerText));
+    assert.match(await page.text('#schedule-run-table'), /Keep the app running/, 'the history outlives the schedule');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('an operator manages schedules; an auditor sees them and the history but is offered nothing, and the server refuses the call anyway', async () => {
+    const operator = await newPage();
+    await signIn(operator, 'olivia.operator', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(operator);
+    await openView(operator, 'schedules');
+    await operator.waitFor(() => document.getElementById('schedules-actions') && !document.getElementById('schedules-actions').hidden);
+    await operator.click('[data-schedule-new]');
+    await operator.waitFor(() => document.getElementById('schedule-dialog').open && document.getElementById('schedule-name'));
+    await operator.fill('#schedule-name', 'Operator’s own'); await setSelect(operator, 'schedule-operation', 'start');
+    await operator.click('input[name=targetKind][value=tag]'); await operator.fill('#schedule-tag', 'env');
+    await operator.click('#schedule-save');
+    await operator.waitFor(() => !document.getElementById('schedule-dialog').open && /Operator’s own/.test(document.getElementById('schedule-table').innerText));
+    await lab.createUser({ username: 'ada.schedules', displayName: 'Ada Schedules', role: 'auditor' });
+    const auditor = await newPage();
+    await signIn(auditor, 'ada.schedules', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(auditor);
+    await openView(auditor, 'schedules');
+    await auditor.waitFor(() => /Operator’s own/.test(document.getElementById('schedule-table').innerText));
+    assert.equal(await auditor.evaluate(() => document.getElementById('schedules-actions').hidden), true, 'no New schedule without schedule.manage');
+    assert.equal(await auditor.evaluate(() => document.querySelectorAll('[data-schedule-run],[data-schedule-edit],[data-schedule-delete],[data-schedule-toggle]').length), 0);
+    const [schedule] = (await lab.api('GET', '/api/v1/schedules')).json.items;
+    assert.equal((await lab.api('DELETE', `/api/v1/schedules/${schedule.id}`)).status, 200);
+    assert.deepEqual(unexpected(operator.problems()), []);
+    await auditor.close(); await operator.close();
+  });
 });

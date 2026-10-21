@@ -1185,3 +1185,10 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .notify-panel .text-button{color:#0d756f!important}
 .notify-panel .text-button:disabled{color:#667276!important}
 .notify-panel .empty strong{color:#1f2d33!important}.notify-panel .empty p{color:#3d4b50!important}
+.schedule-group{border:1px solid #d7dfe2;border-radius:10px;padding:10px 14px 12px;margin:0;display:grid;gap:10px}
+.schedule-group legend{font-size:12px;font-weight:700;padding:0 6px;color:#2c3a40}
+.schedule-choice{display:flex;flex-wrap:wrap;gap:6px 22px}
+.schedule-machines{display:grid;gap:6px;max-height:190px;overflow:auto;border:1px solid #d7dfe2;border-radius:8px;padding:8px 10px;background:#fff}
+.schedule-machines label[hidden]{display:none}
+.schedule-days{display:flex;flex-wrap:wrap;gap:6px 16px}
+.empty-note{margin:0;font-size:13px;color:#4d5b60}

@@ -44,7 +44,7 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.clickText('Sign in →', '#login-form');
     await page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
     await expectNoViolations('overview');
-    for (const view of ['inventory', 'infrastructure', 'alert-rules', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
+    for (const view of ['inventory', 'infrastructure', 'alert-rules', 'schedules', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
     // a host selected: the tree with the selection marked and the detail with usage bars and the list of VMs
     await openView('infrastructure');
     await page.waitFor(() => document.querySelectorAll('#infrastructure-tree [data-infra-select]').length >= 9);
@@ -219,5 +219,25 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('#notify-menu summary');
     await page.click('[data-alert-rule-delete]'); await page.waitFor(() => /No alert rules yet/.test(document.getElementById('alert-rule-table').innerText));
     await page.click('#notify-menu summary'); await page.click('[data-notifications-read]'); await page.waitFor(() => document.getElementById('notify-count').hidden); await page.click('#notify-menu summary');
+  });
+
+  test('the schedule dialog, with a preview and for a tag, and the page with a schedule and its history', async () => {
+    await openView('schedules');
+    await page.click('[data-schedule-new]'); await shown('#schedule-form #schedule-name'); await settle(300);
+    await expectNoViolations('schedule dialog');
+    await page.fill('#schedule-name', 'Axe schedule');
+    await page.click('#schedule-machine-list input[type=checkbox]'); await page.evaluate(() => { const time = document.getElementById('schedule-time'); time.value = '06:00'; }); await page.fill('#schedule-zone', 'UTC');
+    await page.click('#schedule-check'); await page.waitFor(() => /would be covered/.test(document.getElementById('schedule-preview').innerText)); await settle(300);
+    await expectNoViolations('schedule dialog with a preview');
+    await page.click('#schedule-save'); await page.waitFor(() => !document.getElementById('schedule-dialog').open && /Axe schedule/.test(document.getElementById('schedule-table').innerText));
+    await page.click('[data-schedule-run]'); await page.waitFor(() => /Run by hand/.test(document.getElementById('schedule-run-table').innerText)); await settle(400);
+    await expectNoViolations('schedules page with a schedule and a run');
+    await page.click('[data-schedule-edit]'); await page.waitFor(() => document.getElementById('schedule-dialog').open && document.getElementById('schedule-name').value === 'Axe schedule');
+    await page.evaluate(() => { const select = document.getElementById('schedule-frequency'); select.value = 'weekly'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.click('input[name=targetKind][value=tag]'); await settle(300);
+    await expectNoViolations('schedule dialog by tag, weekly');
+    await page.click('#schedule-close');
+    await page.waitFor(() => !document.getElementById('schedule-dialog').open);
+    await page.click('[data-schedule-delete]'); await page.waitFor(() => /No schedules yet/.test(document.getElementById('schedule-table').innerText));
   });
 });

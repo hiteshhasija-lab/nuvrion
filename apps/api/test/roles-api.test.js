@@ -38,7 +38,7 @@ describe('custom roles over the API', { skip: dependenciesInstalled ? false : 's
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-roles-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -56,7 +56,7 @@ describe('custom roles over the API', { skip: dependenciesInstalled ? false : 's
     assert.deepEqual(names.slice(0, 3).sort(), ['auditor', 'operator', 'platform_admin']);
     assert.ok(result.json.items.slice(0, 3).every(role => role.system));
     const operator = result.json.items.find(role => role.name === 'operator');
-    assert.deepEqual(operator.permissions, ['resource.view', 'resource.operate', 'resource.tag', 'connection.view']);
+    assert.deepEqual(operator.permissions, ['resource.view', 'resource.operate', 'resource.tag', 'schedule.manage', 'connection.view']);
     assert.equal(result.json.items.find(role => role.name === 'platform_admin').userCount, 1);
     const catalogue = await call('admin', 'GET', '/api/v1/permissions');
     assert.deepEqual(catalogue.json.items.map(permission => permission.key).sort(), [...new Set(result.json.items.flatMap(role => role.permissions))].sort());

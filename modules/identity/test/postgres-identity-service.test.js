@@ -155,9 +155,9 @@ test('logging out ends the session, and logging out with an unknown token does n
 
 test('each role carries exactly its documented permissions, and no principal means no access', database, async () => {
   const permissions = async roles => { const u = await activeUser(roles); return [...(await identity.session((await identity.authenticate(u.username, PASSWORD)).token)).user.permissions].sort(); };
-  assert.deepEqual(await permissions(['operator']), ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
+  assert.deepEqual(await permissions(['operator']), ['connection.view', 'resource.operate', 'resource.tag', 'resource.view', 'schedule.manage']);
   assert.deepEqual(await permissions(['auditor']), ['audit.view', 'connection.view', 'resource.view']);
-  assert.deepEqual(await permissions(['platform_admin']), ['alert.manage', 'audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view']);
+  assert.deepEqual(await permissions(['platform_admin']), ['alert.manage', 'audit.view', 'connection.manage', 'connection.view', 'identity.manage', 'platform.manage', 'resource.operate', 'resource.tag', 'resource.view', 'schedule.manage']);
   const operator = await identity.session((await identity.authenticate((await activeUser()).username, PASSWORD)).token);
   assert.equal(identity.authorize(operator, 'resource.operate'), true);
   assert.equal(identity.authorize(operator, 'platform.manage'), false);
@@ -259,7 +259,7 @@ test('the built-in roles are in the database with their descriptions, and the ca
   const roles = await identity.listRoles();
   const system = roles.filter(role => role.system).map(role => role.name).sort();
   assert.deepEqual(system, ['auditor', 'operator', 'platform_admin']);
-  assert.deepEqual(roles.find(role => role.name === 'operator').permissions, ['connection.view', 'resource.operate', 'resource.tag', 'resource.view']);
+  assert.deepEqual(roles.find(role => role.name === 'operator').permissions, ['connection.view', 'resource.operate', 'resource.tag', 'resource.view', 'schedule.manage']);
   assert.ok(roles.filter(role => role.system).every(role => role.description.length > 10));
   assert.equal((await db.pool.query("SELECT count(*)::int n FROM identity.permissions WHERE permission_key='resource.tag'")).rows[0].n, 1);
 });
