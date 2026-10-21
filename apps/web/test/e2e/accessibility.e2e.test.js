@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
 import { totpCode } from '../../../../modules/identity/src/totp.js';
+import { midStep } from '../../../../modules/identity/test-support/totp-step.js';
 
 // Automated accessibility checks (axe-core, WCAG 2.0 and 2.1 levels A and AA) on every page of the console and on the dialogs and menus a person can open from
 // them, run in a real browser. A violation fails the test, with the rule, the elements and how many there are. These checks find what a machine can find (names,
@@ -140,6 +141,7 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
   });
 
   test('the two-step verification dialogs: status, setting up, backup codes, and the code prompt at sign-in (with a code and with a backup code)', async () => {
+    await midStep();   // begin the short sequence of one-time-password uses early in a step
     const codeAt = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
     const openMenuMfa = async () => { await page.click('details.account-menu summary'); await page.click('#my-mfa'); await page.waitFor(() => document.getElementById('mfa-dialog').open && /Two-step verification/.test(document.getElementById('mfa-form').innerText)); await settle(300); };
     await openMenuMfa();

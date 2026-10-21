@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
 import { totpCode } from '../../../../modules/identity/src/totp.js';
+import { midStep } from '../../../../modules/identity/test-support/totp-step.js';
 
 // End-to-end tests of the console in a real browser: the real API and web files run in-process with in-memory services and the mock provider, Chrome drives the
 // pages the way a person would (typing, clicking, pressing keys), and each test checks what the person would see. They need Chrome (NUVRION_CHROME, or the usual
@@ -728,6 +729,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
   const mfaRefusals = problems => unexpected(problems).filter(p => /status of (422|403|429)/.test(p));
 
   test('a person sets up two-step verification from the account menu; the next sign-in asks for a code, refuses a wrong one, and accepts a backup code once', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const mia = await lab.createUser({ username: 'mia.mfa', displayName: 'Mia MFA', role: 'operator' });
     const page = await newPage();
     await signIn(page, mia.username, mia.password); await signedIn(page);
@@ -780,6 +782,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
   });
 
   test('cancelling the code prompt signs the person out; five wrong codes end the sign-in', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const user = await lab.createUser({ username: 'ned.mfa', displayName: 'Ned MFA', role: 'operator' });
     const page = await newPage();
     await signIn(page, user.username, user.password); await signedIn(page);
@@ -802,6 +805,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
   });
 
   test('an administrator requires two-step verification for one person: their open session is held at setup at once, others are not, they cannot turn it off, and a reset ends their session', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const user = await lab.createUser({ username: 'pat.policy', displayName: 'Pat Policy', role: 'operator' });
     const person = await newPage();
     await signIn(person, user.username, user.password); await signedIn(person);

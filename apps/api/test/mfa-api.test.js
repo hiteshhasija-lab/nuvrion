@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpCode } from '../../../modules/identity/src/totp.js';
+import { midStep } from '../../../modules/identity/test-support/totp-step.js';
 
 // Two-factor sign-in through the real HTTP API (in-memory services): the sign-in in two steps, what a half-finished session may do, enrolment, backup codes, the lock-out,
 // the policy and the administrator's reset. TOTP codes are computed with the real clock; the steps used by one person are strictly increasing (previous, current, next), which
@@ -61,6 +62,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   after(async () => { await new Promise(resolve => server?.close(resolve)); server?.closeAllConnections?.(); rmSync(workDir, { recursive: true, force: true }); });
 
   test('setting it up: a wrong code enrols nothing, the right one returns ten backup codes, and the secret comes back as a link an authenticator app can read', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     await addUser('ann');
     assert.equal((await login('ann')).json.mfa.state, 'verified');
     const status = await call('ann', 'GET', '/api/v1/auth/mfa');
@@ -84,6 +86,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   });
 
   test('signing in then takes two steps: the password gives a session that can only finish signing in, and a code gives the rest', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const { secret } = await enrolledUser('bob');
     const second = await login('bob2', 'bob');
     assert.equal(second.status, 200); assert.equal(second.json.mfa.state, 'verification_required'); assert.deepEqual(second.json.user.permissions, []);
@@ -107,6 +110,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   });
 
   test('a backup code finishes signing in once, and the count falls; regenerating needs a code and replaces them; turning it off needs a code too', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const { secret, backupCodes } = await enrolledUser('cora');
     await login('cora2', 'cora');
     const used = await call('cora2', 'POST', '/api/v1/auth/mfa/verify', { body: { backupCode: backupCodes[0].toUpperCase() } });
@@ -127,6 +131,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   });
 
   test('wrong codes: five end the sign-in, ten lock the account with a Retry-After, and a locked account refuses even the right code', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const { secret } = await enrolledUser('dave');
     await login('dave2', 'dave');
     for (let i = 0; i < 4; i++) assert.equal((await call('dave2', 'POST', '/api/v1/auth/mfa/verify', { body: { code: '000000' } })).code, 'NUV_MFA_CODE_INVALID');
@@ -150,6 +155,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   };
 
   test('requiring it for a person: they must set it up at once (their open session too), nobody else is affected, they cannot turn it off, and an administrator’s reset ends their sessions but keeps the requirement', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     await addUser('erin'); await addUser('frank');
     assert.equal((await login('erin')).json.mfa.state, 'verified'); await login('frank');
     const bad = await call('admin', 'PATCH', `/api/v1/users/${(await userOf('erin')).id}`, { body: { status: 'active', roles: ['operator'], mfaRequired: 'yes' }, version: (await userOf('erin')).rowVersion });
@@ -180,6 +186,7 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
   });
 
   test('requiring it for an administrator does not lock them out: they set it up with the password they have', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
     const admin = await userOf('admin');
     try {
       const set = await call('admin', 'PATCH', `/api/v1/users/${admin.id}`, { body: { status: 'active', roles: ['platform_admin'], mfaRequired: true }, version: admin.rowVersion });

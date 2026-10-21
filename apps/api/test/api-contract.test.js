@@ -326,6 +326,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   test('two-factor sign-in: getMfaStatus, startMfaEnrollment, confirmMfaEnrollment, verifyMfa, regenerateMfaBackupCodes, disableMfa, getMfaPolicy, setMfaPolicy, resetUserMfa', async () => {
     const { totpCode } = await import('../../../modules/identity/src/totp.js');
+    await (await import('../../../modules/identity/test-support/totp-step.js')).midStep();   // begin the short sequence of one-time-password uses early in a step
     const at = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
     const signup = await call('signup', { as: null, body: { username: 'mfa1', displayName: 'Two Factor', password: PASSWORD }, expect: 201 });
     await call('updateUser', { params: { userId: signup.json.user.id }, body: { status: 'active', roles: ['operator'] }, headers: { 'if-match': `"${signup.json.user.rowVersion}"` }, expect: 200 });
