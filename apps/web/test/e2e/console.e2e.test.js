@@ -32,9 +32,12 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.clickText('Sign in →', '#login-form');
   };
   const signedIn = page => page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
+  // The machine list in the sidebar fills in a moment after sign-in and moves the buttons below it, so a click aimed where the button was can land on its neighbour: look at the page that opened, and click again if it is not the one asked for.
   const openView = async (page, view) => {
-    await page.click(`#navigation button[data-view=${view}]`);
-    await page.waitFor(view => { const section = document.getElementById(`view-${view}`); return section && section.getClientRects().length > 0; }, view);
+    for (let attempt = 1; ; attempt++) {
+      await page.click(`#navigation button[data-view=${view}]`);
+      try { await page.waitFor(view => { const section = document.getElementById(`view-${view}`); return section && section.getClientRects().length > 0; }, view, { timeout: attempt < 3 ? 4000 : 15000 }); return; } catch (error) { if (attempt === 3) throw error; }
+    }
   };
   const MONITOR_HEADINGS = { performance: /VIRTUAL MACHINES/i, alerts: /Alert history/i, tasks: /Task history/i, audit: /Audit history/i };
   const openMonitorTab = async (page, tab) => {                  // Alerts, Tasks and Audit are tabs of the Monitor page
