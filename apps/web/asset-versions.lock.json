@@ -12,8 +12,8 @@
     "sha256": "c6a30e3351cc0c4f98b88fd1d18c3115d36e9ddfdd378b644977912a175115ab"
   },
   "app.js": {
-    "version": "20261023-164",
-    "sha256": "a7f36fb4a972e4b8b699161cc3a4b27da7e391c246ca9febeddaffebe275ab00"
+    "version": "20261023-166",
+    "sha256": "76151d8cc72b85a404f8d85fb6a52231c85e336525d3ad9b200cade6cdb19e28"
   },
   "capacity.js": {
     "version": "20261023-2",
@@ -22,6 +22,14 @@
   "connection-issue.js": {
     "version": "20261006-115",
     "sha256": "b9639b942e84abacbc33f6a8227dfa31892e97cccc75e938b5a86e7a9053767d"
+  },
+  "dark-tweaks.css": {
+    "version": "20261023-1",
+    "sha256": "bb6eeb63f977deab01a27a8afdd315c00c898be1719693610a5397991c665666"
+  },
+  "dark.css": {
+    "version": "20261023-2",
+    "sha256": "ef735bbc02f6bcd576a51fde2ee62346ddcbc6182ba04e55c56cdc87fa0e3f35"
   },
   "dashboard.js": {
     "version": "20261017-4",
@@ -32,8 +40,8 @@
     "sha256": "8dc99d7f3b29fbdcece5b372a9a19b23a81efd230b85aad7371fb40adbc1898b"
   },
   "launcher.js": {
-    "version": "20261023-2",
-    "sha256": "ee41e5087bfa8142ce41988ca339d663cabaa020bc27ff3c67d62f55b4f7ec2f"
+    "version": "20261023-3",
+    "sha256": "e1f6ed49b6316078461131e350ffbe8493fa765198aec7af39a8eb05f89b249b"
   },
   "login-polish.js": {
     "version": "20260913-112",
@@ -52,12 +60,16 @@
     "sha256": "0d713a336bb057b96c803b4c4543e853184e035da59aff56bc110a717dbdb3ec"
   },
   "styles.css": {
-    "version": "20261023-141",
-    "sha256": "944f672b51834add52355635ab7e51e1f87116cdd5ee67cb89b92e4a22ac6188"
+    "version": "20261023-142",
+    "sha256": "1822c912f2b941023387f9a415789dc58cc43ba231a1b04a68e22d236c516888"
   },
   "tags.js": {
     "version": "20261017-1",
     "sha256": "5af9f9857ea1ac99edc5bf153f3c8951b568cb454bd40cdb07252b694ec21c4c"
+  },
+  "theme.js": {
+    "version": "20261023-1",
+    "sha256": "f5a5a209f679b8e5f596fb38496a64749574c5a792d532804061fa30b0157827"
   },
   "upgrade-center.js": {
     "version": "20260911",

@@ -1442,4 +1442,65 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await auditor.press('Escape');
     await auditor.close();
   });
+
+  // ---- light and dark themes (apps/web/theme.js, dark.css) --------------------------------------------------------------------------------------------------------------------------
+  // the cards fade between colours, so the change is let finish before the colour is read
+  const cardShade = async page => { await page.waitFor(() => document.querySelector('#summary-cards .metric-card')); await new Promise(resolve => setTimeout(resolve, 700)); return page.evaluate(() => { const [r, g, b] = getComputedStyle(document.querySelector('#summary-cards .metric-card')).backgroundColor.match(/[\d.]+/g).map(Number); return Math.round((r + g + b) / 3); }); };
+
+  test('the account menu switches between light, dark and "match this device"; the choice is kept across reloads and is in force before the page is drawn', async () => {
+    const page = await newPage();
+    await page.evaluate(() => { try { localStorage.removeItem('nuvrion.theme'); } catch { /* none */ } });
+    await page.goto(lab.url);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light', 'a device with no preference gets the light theme');
+    await signIn(page); await signedIn(page);
+    assert.ok(await cardShade(page) > 200, 'the light theme has pale cards');
+    await page.click('.account-menu summary');
+    await page.waitFor(() => document.querySelector('[data-theme-choice=dark]')?.getClientRects().length);
+    assert.equal(await page.evaluate(() => document.querySelector('[data-theme-choice=system]').getAttribute('aria-pressed')), 'true');
+    await page.click('[data-theme-choice=dark]');
+    await page.waitFor(() => document.documentElement.dataset.theme === 'dark');
+    assert.equal(await page.evaluate(() => document.querySelector('[data-theme-choice=dark]').getAttribute('aria-pressed')), 'true');
+    assert.match(await page.evaluate(() => document.getElementById('theme-choice-hint').textContent), /Dark theme/);
+    assert.match(await page.text('#notice'), /Dark theme on/);
+    assert.ok(await cardShade(page) < 80, 'the dark theme has dark cards');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'dark', 'native controls and scrollbars follow');
+    // kept across a reload, and set before the console draws anything (the sign-in page is dark-theme too)
+    await page.goto(lab.url);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+    assert.equal(await page.evaluate(() => localStorage.getItem('nuvrion.theme')), 'dark');
+    await signedIn(page);
+    await page.click('.account-menu summary');
+    await page.waitFor(() => document.querySelector('[data-theme-choice=light]')?.getClientRects().length);
+    await page.click('[data-theme-choice=light]');
+    await page.waitFor(() => document.documentElement.dataset.theme === 'light');
+    assert.ok(await cardShade(page) > 200);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'light');
+    await page.evaluate(() => { document.querySelector('.account-menu').open = true; });
+    await page.waitFor(() => document.querySelector('[data-theme-choice=system]')?.getClientRects().length);
+    await page.click('[data-theme-choice=system]');
+    await page.waitFor(() => localStorage.getItem('nuvrion.theme') === null);
+    assert.match(await page.evaluate(() => document.getElementById('theme-choice-hint').textContent), /Following this device/);
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the launcher switches the theme, and nothing that is not a known choice in storage can break the page', async () => {
+    const page = await newPage();
+    await page.evaluate(() => { try { localStorage.setItem('nuvrion.theme', 'neon'); } catch { /* none */ } });
+    await page.goto(lab.url);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light', 'an unknown stored choice is ignored');
+    await signIn(page); await signedIn(page);
+    await openLauncher(page); await page.waitFor(() => document.getElementById('launcher-dialog').open);
+    await page.fill('#launcher-input', 'dark');
+    await page.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'Use the dark theme');
+    await page.press('Enter');
+    await page.waitFor(() => document.documentElement.dataset.theme === 'dark' && !document.getElementById('launcher-dialog').open);
+    await openLauncher(page); await page.waitFor(() => document.getElementById('launcher-dialog').open);
+    await page.fill('#launcher-input', 'light theme');
+    await page.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'Use the light theme');
+    await page.press('Enter');
+    await page.waitFor(() => document.documentElement.dataset.theme === 'light');
+    await page.evaluate(() => localStorage.removeItem('nuvrion.theme'));
+    await page.close();
+  });
 });

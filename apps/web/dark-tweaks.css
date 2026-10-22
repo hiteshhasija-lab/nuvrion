@@ -1,0 +1,3 @@
+/* Hand-made parts of the dark theme (docs/themes.md), loaded after the generated dark.css. */
+html[data-theme="light"]{color-scheme:light}
+html[data-theme="dark"]{color-scheme:dark;--teal-ink:#5fd3c8}

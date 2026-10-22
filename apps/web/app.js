@@ -5,14 +5,15 @@ import {schedulesHtml,runsHtml,scheduleDialogHtml,previewHtml as schedulePreview
 import {capacityRowsHtml,summaryOf as capacitySummaryOf,detailDialogHtml as capacityDetailHtml,computeRowsHtml,computeSummaryOf,computeDetailDialogHtml} from '/capacity.js?v=20261023-2';
 import {webhooksHtml,webhookDialogHtml,webhookRequestBody,webhookProblem,historyDialogHtml,testResultText} from '/webhooks.js?v=20261022-2';
 import {currentView,applyView,describeView as describeSavedView,viewsMenuHtml,viewsButtonLabel,saveViewDialogHtml,viewProblem,toCsv,exportRow,exportFileName,EXPORT_COLUMNS} from '/views.js?v=20261023-1';
-import {buildCommands,rankCommands,rememberCommand,moveActive,shellHtml,resultsHtml,statusText} from '/launcher.js?v=20261023-2';
+import {THEME_KEY,normaliseChoice,resolveTheme,choiceHtml,choiceHint,CHOICE_LABEL} from '/theme.js?v=20261023-1';
+import {buildCommands,rankCommands,rememberCommand,moveActive,shellHtml,resultsHtml,statusText} from '/launcher.js?v=20261023-3';
 import {generatePassword,newUserHtml,credentialsHtml,setPasswordHtml,changePasswordHtml,changePasswordProblem,newUserBody,copyText} from '/accounts.js?v=20261017-1';
 import {verifyHtml,setupHtml,codesHtml,statusHtml,resetResultText} from '/mfa.js?v=20261017-2';
 import {roleTableHtml,roleDialogHtml,roleRequestBody,permissionsAfterToggle,userRoleOptionsHtml} from '/roles.js?v=20261017-2';
 import {hostFactHtml,buildIndex as buildInfrastructureIndex,treeHtml as infrastructureTreeHtml,detailHtml as infrastructureDetailHtml,placementRowsHtml,placementSearchText,placementRows} from '/infrastructure.js?v=20261017-5';
 import {summarizeEstate,recentAlerts,matchesDrill,drillIsEmpty,estateHealthHtml,providerOverviewHtml,recentAlertsHtml,drillChipsHtml} from '/dashboard.js?v=20261017-4';
 const $=id=>document.getElementById(id);const esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-document.head.insertAdjacentHTML('beforeend','<link rel="stylesheet" href="/styles.css?v=20261023-141"><link rel="stylesheet" href="/vm-workspace.css?v=20261006-115">');
+document.head.insertAdjacentHTML('beforeend','<link rel="stylesheet" href="/styles.css?v=20261023-142"><link rel="stylesheet" href="/vm-workspace.css?v=20261006-115"><link rel="stylesheet" href="/dark.css?v=20261023-2"><link rel="stylesheet" href="/dark-tweaks.css?v=20261023-1">');
 function separateVmFilterCard(){const head=document.querySelector('#view-inventory .vm-workspace-head'),filter=head?.querySelector('.vm-filter-toolbar');if(!head||!filter||filter.closest('.vm-filter-card'))return;const input=filter.querySelector('#inventory-search');if(input){input.placeholder='Search VM inventory';input.setAttribute('aria-label','Search all virtual machine fields')}const card=document.createElement('div');card.className='vm-filter-card';card.setAttribute('aria-label','Virtual machine search and filters');head.before(card);card.append(filter)}
 separateVmFilterCard();
 const state={csrf:'',user:null,health:null,resources:[],infrastructure:[],infrastructureSelected:null,infrastructureQuery:'',roles:[],permissionCatalogue:[],roleDialog:null,mfa:null,mfaGating:false,account:null,alertRules:[],alertMetrics:[],alertsOpen:[],alertsResolved:[],notifications:{items:[],unreadCount:0,lastReadAt:null},alertRuleDialog:null,schedules:[],scheduleRuns:[],scheduleOperations:{},scheduleDialog:null,capacity:[],capacityCompute:[],capacityTab:'datastores',capacityDialog:null,webhooks:[],webhookCatalogue:{events:{},formats:{}},webhookDialog:null,views:[],activeViewId:null,viewDialog:null,visibleResources:[],performanceLatest:{},connections:[],alerts:[],tasks:[],audit:[],auditTotal:0,auditOffset:0,auditLimit:100,auditQuery:'',auditLoading:false,auditSearchTimer:null,monitorLimit:100,monitorOffsets:{performance:0,alerts:0,tasks:0},users:[],selectedResourceId:null,selectedResourceSource:null,bulkSelection:new Set(),monitorTab:'performance',pending:null,mediaResourceId:null,media:null,mediaBrowse:null,mediaBusy:false,mediaOverrides:new Map(),refreshing:false,loading:false,vmStateLoading:false,vmSort:null,sessionPolicy:{idleTimeoutMs:30*60_000,absoluteTimeoutMs:8*60*60_000},lastActivityAt:Date.now(),sessionWarningShown:false};const titles={overview:'Platform Overview',inventory:'Virtual Machines',infrastructure:'Infrastructure','alert-rules':'Alert Rules',schedules:'Schedules',capacity:'Capacity',connections:'Provider Connections',monitor:'Monitor',alerts:'Connection Alerts',tasks:'Task Activity',audit:'Audit History',users:'User Administration',health:'Platform Health'};
@@ -1372,6 +1373,9 @@ function runLauncherCommand(command) {
         'new-schedule': () => { clickNav('schedules'); openScheduleDialog(null); },
         'save-view': () => { clickNav('inventory'); openViewDialog('new'); },
         export: async () => { clickNav('inventory'); renderInventory(); await exportInventory(); },
+        'theme-system': () => setTheme('system'),
+        'theme-light': () => setTheme('light'),
+        'theme-dark': () => setTheme('dark'),
         refresh: () => $('refresh').click(),
         sessions: () => $('my-sessions')?.click(),
         'sign-out': () => $('logout')?.click()
@@ -1399,3 +1403,24 @@ $('launcher-form').addEventListener('mousemove', event => {
   const option = event.target.closest('[data-launcher-index]');
   if (option && Number(option.dataset.launcherIndex) !== launcher.active) { launcher.active = Number(option.dataset.launcherIndex); renderLauncher(); }
 });
+
+// ---- Light and dark themes (logic in theme.js, which has its own tests; theme-boot.js sets the theme before the first paint) ------------------------------------------------------
+const themeQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
+const storedTheme = () => { try { return normaliseChoice(localStorage.getItem(THEME_KEY)); } catch { return 'system'; } };
+function applyTheme(choice) {
+  const resolved = resolveTheme(choice, themeQuery?.matches);
+  document.documentElement.setAttribute('data-theme', resolved);
+  // eslint-disable-next-line no-unsanitized/property -- constant strings built in theme.js
+  $('theme-choice-buttons').innerHTML = choiceHtml(choice);
+  $('theme-choice-hint').textContent = choiceHint(choice, resolved);
+  return resolved;
+}
+function setTheme(value) {
+  const choice = normaliseChoice(value);
+  try { if (choice === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, choice); } catch { /* storage may be blocked: the choice then lasts until the page is closed */ }
+  const resolved = applyTheme(choice);
+  notice(choice === 'system' ? `Following this device: the ${resolved} theme is on.` : `${CHOICE_LABEL[choice]} theme on.`);
+}
+$('theme-choice-buttons').addEventListener('click', event => { const button = event.target.closest('[data-theme-choice]'); if (button) setTheme(button.dataset.themeChoice); });
+themeQuery?.addEventListener?.('change', () => { if (storedTheme() === 'system') applyTheme('system'); });
+applyTheme(storedTheme());

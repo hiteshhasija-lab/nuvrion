@@ -33,6 +33,9 @@ const ACTIONS = [
   { id: 'action:new-schedule', title: 'New schedule', permission: 'schedule.manage', action: 'new-schedule', keywords: 'scheduled operation start stop restart timer' },
   { id: 'action:save-view', title: 'Save the current inventory view…', action: 'save-view', keywords: 'filters sort search remember' },
   { id: 'action:export', title: 'Export the inventory to CSV', action: 'export', keywords: 'download spreadsheet excel csv' },
+  { id: 'action:theme-light', title: 'Use the light theme', action: 'theme-light', keywords: 'appearance theme day bright white mode' },
+  { id: 'action:theme-dark', title: 'Use the dark theme', action: 'theme-dark', keywords: 'appearance theme night mode' },
+  { id: 'action:theme-system', title: 'Match the theme to this device', action: 'theme-system', keywords: 'appearance theme automatic system os' },
   { id: 'action:refresh', title: 'Refresh the data', action: 'refresh', keywords: 'reload update discovery' },
   { id: 'action:sessions', title: 'My sessions', action: 'sessions', keywords: 'signed in devices revoke account' },
   { id: 'action:sign-out', title: 'Sign out', action: 'sign-out', keywords: 'log out logout' }

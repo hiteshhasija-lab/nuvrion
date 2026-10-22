@@ -887,6 +887,22 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'tags.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/theme.js') {
+      const js = await readFile(resolve(webRoot, 'theme.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/theme-boot.js') {
+      const js = await readFile(resolve(webRoot, 'theme-boot.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/dark.css') {
+      const css = await readFile(resolve(webRoot, 'dark.css'));
+      res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
+    }
+    if (req.method === 'GET' && url.pathname === '/dark-tweaks.css') {
+      const css = await readFile(resolve(webRoot, 'dark-tweaks.css'));
+      res.writeHead(200, securityHeaders('text/css; charset=utf-8','public, max-age=300')); return res.end(css);
+    }
     if (req.method === 'GET' && url.pathname === '/launcher.js') {
       const js = await readFile(resolve(webRoot, 'launcher.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);

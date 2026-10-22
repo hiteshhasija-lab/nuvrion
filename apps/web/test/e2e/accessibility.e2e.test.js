@@ -10,13 +10,19 @@ import { midStep } from '../../../../modules/identity/test-support/totp-step.js'
 // roles, labels, contrast, structure); they do not replace a review with a screen reader or keyboard-only walk-through of each journey.
 const skip = await browserSkipReason();
 
-describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false }, () => {
+// Every page and dialog is checked in the light theme (this file) and in the dark one (accessibility-dark.e2e.test.js, which sets NUVRION_AXE_THEME and runs this file), since a colour that passes on a
+// pale panel can fail on a dark one (docs/themes.md). They are separate files because each lab server is one per process.
+const theme = process.env.NUVRION_AXE_THEME === 'dark' ? 'dark' : 'light';
+describe(`accessibility (axe-core, WCAG 2.1 A and AA), ${theme} theme`, { skip: skip ?? false }, () => {
   let lab, browser, page;
   before(async () => {
     lab = await startConsole();
     browser = await launchBrowser();
     page = await browser.newPage();
     await page.goto(lab.url);
+    await page.evaluate(chosen => localStorage.setItem('nuvrion.theme', chosen), theme);
+    await page.goto(lab.url);
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
   });
   after(async () => { await page?.close(); await browser?.close(); await lab?.close(); });
 

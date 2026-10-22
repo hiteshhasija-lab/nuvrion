@@ -28,7 +28,7 @@ test('every command says where it goes: a page, a tab, a machine, an object, a v
   assert.deepEqual(commands.find(command => command.id === 'vm:m1').run, { type: 'machine', id: 'm1' });
   assert.deepEqual(commands.find(command => command.id === 'monitor:tasks').run, { type: 'monitor', tab: 'tasks' });
   const actions = commands.filter(command => command.run.type === 'action').map(command => command.run.action);
-  assert.deepEqual(actions.sort(), ['export', 'new-alert-rule', 'new-connection', 'new-schedule', 'new-webhook', 'refresh', 'save-view', 'sessions', 'sign-out']);
+  assert.deepEqual(actions.sort(), ['export', 'new-alert-rule', 'new-connection', 'new-schedule', 'new-webhook', 'refresh', 'save-view', 'sessions', 'sign-out', 'theme-dark', 'theme-light', 'theme-system']);
   assert.ok(actions.every(action => !/start|stop|power|restart|delete|revoke/.test(action)), 'a power operation or a deletion is never one keystroke away');
   assert.equal(new Set(ids(commands)).size, commands.length, 'identifiers are unique');
 });
