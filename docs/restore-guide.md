@@ -53,8 +53,8 @@ Restore into a **new, empty PostgreSQL 16**. For a drill, never restore on top o
    ```bash
    pg_restore -U <user> -d <db> --no-owner --no-privileges nuvrion.dump
    ```
-   The 12 October rehearsal restored a dump of about 35 MB in 4.3 seconds. Its evidence file records timings, not the exact
-   command line, so the flags above are the standard form and were not re-run when this guide was written.
+   The 12 October rehearsal restored a dump of about 35 MB in 4.3 seconds; the 22 October rehearsal ran exactly this command
+   (with `--exit-on-error`, from the dump inside the throwaway PostgreSQL container) on a 29 MB dump: 3.1 seconds, exit 0, no errors.
 4. **Check the schema is what you think it is.** From v0.1.174 the database records its own migrations:
    ```sql
    select count(*), max(version) from platform.schema_migrations;   -- 29 rows, 0029 as of v0.1.174
@@ -109,6 +109,23 @@ no older than seven days.
   was not run, and the recovery point was about 19 hours old against the 15-minute threshold.
 - Everything created for the drill was removed afterwards and the host matched its recorded baseline.
 
+## The second rehearsal (22 October 2026)
+
+The newest hourly set (`20261022T160120Z`, 33 minutes old) was verified and decrypted on the owner's computer, copied over SSH to NOVAAPP02 (a different host, x86_64) and restored into an empty
+`postgres:16-alpine` (16.15) on a private podman network with no published ports; the release 0.1.198 source then ran in `node:24.21.0-bookworm-slim` against it with a throwaway
+`rabbitmq:3.13-alpine`, in the production profile. Everything was removed afterwards and NOVAAPP02 matched its recorded baseline.
+
+- **Authentic and intact**: the signature, every checksum and the evidence archive passed `node tools/backup.js verify` (51 sets, 77 releases); the decrypted dump had the same SHA-256 on both machines.
+- **Restored in 3.1 s**; the counts equal the restore check the production host recorded in the signed manifest: 41 migrations (latest 0041), 40 tables, 3 users, 4 connections, 77 resources, 4,761 tasks,
+  10,661 audit events, 2 agents.
+- **Ready about 160 s** after the restore began: `/api/v1/readiness` returned ready (database, broker, worker and agent maintenance healthy, migrations current).
+- **Keys**: taken from the encrypted configuration of the same set, they opened the credentials of all three live connections and the active agent's secret.
+- **Used**: a drill-only administrator created on the copy read 77 VMs, 3 connections, 8 infrastructure objects, tasks and the audit trail through the API.
+- The recovery gate returned **blocked**, with two blockers (five in October): **discovery was not completed** (ESXi 7 and ESXi 8 refused connections and the Workstation agent was offline, because the lab was
+  powered down) and **the recovery point was 2,019 s** against the 900 s threshold (an hourly backup cannot meet it).
+- Not exercised: the original administrator's password hash (its password was not available; not asked for), recovery of a stranded task (none was in flight: all 4,761 tasks were final), and the switch to the
+  restricted application role. The evidence is `Nuvrion-Recovery-Drill-2026-10-22-evidence.json` and `-report.json`, kept beside the status document.
+
 ## Closed on 17 October 2026
 
 - Scheduled backups (hourly) and a copy that does not live on the production host (the owner's computer), each with a signed
@@ -122,8 +139,7 @@ no older than seven days.
 
 - **The recovery point.** Backups are hourly, so the gate's 900 s RPO is not met (an hour at best, more while the owner's
   computer is off). Meeting it needs continuous WAL archiving.
-- **A full rehearsal with a scheduled-backup set**: restore it into a separate PostgreSQL, start the application on it and
-  run discovery. The host-side restore check and the byte-for-byte check on the owner's computer are done; this end-to-end
-  rehearsal is not, and the gate needs it.
+- **Discovery after a restore.** The 22 October rehearsal restored a scheduled-backup set and ran the application on it, but could not complete discovery because the lab was powered down. Repeat it with
+  the lab on (the Workstation agent must be pointed at the copy, or the copy's Workstation connection will stay offline; the ESXi connections need only the hosts to be up); the gate needs it.
 - **A second copy of the recovery private key** that is not on the owner's computer, made by the owner.
 - An approved RPO and RTO. The gate's 900 s and 3,600 s are defaults, not commitments.
