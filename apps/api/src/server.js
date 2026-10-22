@@ -49,6 +49,9 @@ import { OPERATIONS as SCHEDULE_OPERATIONS, ScheduleError, describeSchedule, des
 import { AlertService } from '../../../modules/monitoring/src/alert-service.js';
 import { PostgresAlertService } from '../../../modules/monitoring/src/postgres-alert-service.js';
 import { AlertError, METRICS, collectTargets, describeRule, feedFromAlerts, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
+import { ViewService } from '../../../modules/inventory/src/view-service.js';
+import { PostgresViewService } from '../../../modules/inventory/src/postgres-view-service.js';
+import { ViewError, describeView, parseExportNote } from '../../../modules/inventory/src/view-rules.js';
 import { DestinationService } from '../../../modules/notifications/src/destination-service.js';
 import { PostgresDestinationService } from '../../../modules/notifications/src/postgres-destination-service.js';
 import { createDispatcher } from '../../../modules/notifications/src/dispatcher.js';
@@ -118,6 +121,7 @@ const capacity = production?new PostgresCapacityService(store.pool,{intervalMs:N
 // and this machine itself is refused always in production (NUVRION_WEBHOOK_ALLOW_LOOPBACK is honoured only outside production, for tests).
 const webhookPolicy={allowHttp:process.env.NUVRION_WEBHOOK_ALLOW_HTTP==='true',blockPrivate:process.env.NUVRION_WEBHOOK_BLOCK_PRIVATE==='true',allowLoopback:!production&&process.env.NUVRION_WEBHOOK_ALLOW_LOOPBACK==='true'};
 const webhooks = production?new PostgresDestinationService(store.pool,{policy:webhookPolicy}):new DestinationService({file:process.env.NUVRION_WEBHOOKS_FILE ?? '.nuvrion/webhooks.json',policy:webhookPolicy});
+const views = production?new PostgresViewService(store.pool):new ViewService({file:process.env.NUVRION_VIEWS_FILE ?? '.nuvrion/views.json'});
 const schedules = production?new PostgresScheduleService(store.pool):new ScheduleService({file:process.env.NUVRION_SCHEDULES_FILE ?? '.nuvrion/schedules.json'});
 const alerts = production?new PostgresAlertService(store.pool):new AlertService({file:process.env.NUVRION_ALERTS_FILE ?? '.nuvrion/alerts.json'});
 const inventory = production?new PostgresInventoryService(store.pool):new InventoryService({file:process.env.NUVRION_INVENTORY_FILE ?? '.nuvrion/inventory.json',connectionHealth:id=>connections.get(id)});
@@ -367,6 +371,40 @@ export async function handler(req, res) {
     };
     const scheduleView=item=>({...item,summary:describeSchedule(item),lastRun:item.lastRun?{...item.lastRun,summary:describeRun(item.lastRun)}:null});
     const unknownScheduleConnection=async input=>{const id=input&&typeof input==='object'?input.connectionId:null;if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return false;let found=null;try{found=await connections.get(id);}catch{found=null;}return !found||found.status==='deleted';};
+    // ---- saved views of the inventory, and the record that a list was exported (docs/views.md). A person's views are theirs alone.
+    const VIEW_STATUS={NUV_VIEW_EXISTS:409,NUV_VIEW_LIMIT:409},savedViewMatch=url.pathname.match(/^\/api\/v1\/saved-views\/([0-9a-f-]{36})$/i);
+    const viewRefused=error=>{
+      if(error instanceof ViewError)return problem(res,VIEW_STATUS[error.code]??422,error.code,error.message,correlationId);
+      if(error.message==='VERSION_CONFLICT')return problem(res,412,'NUV_VERSION_CONFLICT','The view changed. Refresh and retry.',correlationId);
+      throw error;
+    };
+    if(req.method==='GET'&&url.pathname==='/api/v1/saved-views'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const items=await views.listViews(p.user.id);return json(res,200,{items,count:items.length,limit:20,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/saved-views'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{const item=await views.createView(p.user.id,await body(req));res.setHeader('etag',`"${item.rowVersion}"`);return json(res,201,item,correlationId);}catch(error){return viewRefused(error);}
+    }
+    if(req.method==='PATCH'&&savedViewMatch){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);
+      try{const item=await views.updateView(p.user.id,savedViewMatch[1].toLowerCase(),await body(req),version);if(!item)return problem(res,404,'NUV_VIEW_NOT_FOUND','The view was not found.',correlationId);res.setHeader('etag',`"${item.rowVersion}"`);return json(res,200,item,correlationId);}catch(error){return viewRefused(error);}
+    }
+    if(req.method==='DELETE'&&savedViewMatch){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const result=await views.deleteView(p.user.id,savedViewMatch[1].toLowerCase());
+      return result?json(res,200,result,correlationId):problem(res,404,'NUV_VIEW_NOT_FOUND','The view was not found.',correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/inventory-exports'){
+      // The console builds the file from the list it shows; this records that it was done, by whom, how big and with which filters, because an export takes inventory out of the platform.
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const note=parseExportNote(await body(req));
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'inventory.exported',targetType:'inventory',targetId:null,correlationId,outcome:'succeeded',detail:{format:'csv',rows:note.count,columns:note.columns,filters:note.view?describeView(note.view):null}});
+        return json(res,200,{recorded:true,rows:note.count,meta:{correlationId}},correlationId);
+      }catch(error){return viewRefused(error);}
+    }
     // ---- webhooks: where alerts, connection problems and failed schedule runs are sent (docs/webhooks.md). Reading and changing them needs alert.manage: where alerts go is part of alerting.
     const WEBHOOK_STATUS={NUV_WEBHOOK_EXISTS:409,NUV_WEBHOOK_LIMIT:409},webhookMatch=url.pathname.match(/^\/api\/v1\/webhooks\/([0-9a-f-]{36})$/i),webhookTestMatch=url.pathname.match(/^\/api\/v1\/webhooks\/([0-9a-f-]{36})\/test$/i);
     const webhookRefused=error=>{
@@ -847,6 +885,10 @@ export async function handler(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/tags.js') {
       const js = await readFile(resolve(webRoot, 'tags.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/views.js') {
+      const js = await readFile(resolve(webRoot, 'views.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
     if (req.method === 'GET' && url.pathname === '/webhooks.js') {

@@ -29,6 +29,7 @@ tags:
   - { name: Audit, description: The audit log }
   - { name: Alerts, description: Threshold alert rules, the alerts they raise and the notification feed }
   - { name: Schedules, description: Scheduled operations on machines, and what each run did }
+  - { name: Views, description: Saved views of the inventory and the record of an export }
   - { name: Webhooks, description: Where alerts, connection problems and failed schedule runs are sent, and what was sent }
   - { name: Capacity, description: How full each datastore is, how fast it is filling and when it will be full }
   - { name: Agents, description: Workstation agents, enrollment and signed commands }
@@ -729,6 +730,80 @@ paths:
         '200': { description: The runs, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRunList' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /saved-views:
+    get:
+      tags: [Views]
+      operationId: listSavedViews
+      summary: The caller's saved views of the inventory
+      description: A person sees only their own views.
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The caller's views, content: { application/json: { schema: { $ref: '#/components/schemas/SavedViewList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Views]
+      operationId: createSavedView
+      summary: Save the filters and sort of the inventory under a name
+      x-required-permission: resource.view
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SavedViewCreate' } } }
+      responses:
+        '201': { description: Saved, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SavedView' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: The caller has a view with that name (NUV_VIEW_EXISTS) or already keeps twenty (NUV_VIEW_LIMIT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /saved-views/{viewId}:
+    parameters: [{ name: viewId, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      tags: [Views]
+      operationId: updateSavedView
+      summary: Rename a saved view, or save the current filters over it (optimistic concurrency with If-Match)
+      x-required-permission: resource.view
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/IfMatch' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SavedViewChange' } } }
+      responses:
+        '200': { description: Updated, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SavedView' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The caller has another view with that name (NUV_VIEW_EXISTS), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [Views]
+      operationId: deleteSavedView
+      summary: Delete a saved view
+      x-required-permission: resource.view
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, required: [deleted], properties: { deleted: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /inventory-exports:
+    post:
+      tags: [Views]
+      operationId: recordInventoryExport
+      summary: Record that the inventory list was exported to a file
+      description: The console builds the CSV file from the list it shows; this puts in the audit history who exported how many rows with which filters. No data is returned.
+      x-required-permission: resource.view
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/InventoryExportNote' } } }
+      responses:
+        '200': { description: Recorded, content: { application/json: { schema: { type: object, required: [recorded, rows], properties: { recorded: { type: boolean }, rows: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /webhooks:
     get:
       tags: [Webhooks]
@@ -2119,6 +2194,45 @@ components:
         detailsTruncated: { type: boolean }
         error: { type: [string, 'null'] }
         summary: { type: string, description: 'For example 2 requested, 1 skipped' }
+    InventoryView:
+      type: object
+      properties:
+        search: { type: string, maxLength: 100 }
+        platform: { type: string, description: 'A platform key such as vmware_esxi; empty for all' }
+        power: { type: string, nullable: true }
+        health: { type: string, nullable: true }
+        tag: { type: string, nullable: true, maxLength: 200, description: 'A tag key or key=value' }
+        sortKey: { type: string, nullable: true, enum: [name, status, guestOs, hostname, power, ip, cpu, memory, storage, null] }
+        sortDirection: { type: string, enum: [asc, desc] }
+    SavedViewCreate:
+      type: object
+      required: [name, view]
+      properties: { name: { type: string, maxLength: 60 }, view: { $ref: '#/components/schemas/InventoryView' } }
+    SavedViewChange:
+      type: object
+      properties: { name: { type: string, maxLength: 60 }, view: { $ref: '#/components/schemas/InventoryView' } }
+    SavedView:
+      type: object
+      required: [id, scope, name, view, rowVersion, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [inventory] }
+        name: { type: string }
+        view: { $ref: '#/components/schemas/InventoryView' }
+        rowVersion: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SavedViewList:
+      type: object
+      required: [items, count, limit, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/SavedView' } }, count: { type: integer }, limit: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    InventoryExportNote:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, minimum: 0, maximum: 1000000, description: Rows in the file }
+        columns: { type: integer, minimum: 1, maximum: 100 }
+        view: { $ref: '#/components/schemas/InventoryView' }
     WebhookCreate:
       type: object
       required: [name, url]

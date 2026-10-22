@@ -1256,4 +1256,109 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(page.problems()), []);
     await page.close();
   });
+
+  // ---- saved views and CSV export in the inventory (apps/web/views.js) ----------------------------------------------------------------------------------------------------------
+  test('a person saves the filters of the inventory as a view, sees when the list has moved away from it, updates and renames it, finds it again in a new browser session, and deletes it', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    const rows = () => page.evaluate(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length);
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2);
+    const all = await rows();
+    await page.click('#views-button');
+    await page.waitFor(() => /No saved views yet/.test(document.getElementById('views-panel').innerText));
+    await page.click('#views-button');                       // closed again
+    await page.fill('#inventory-search', 'app-01');
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length === 1);
+    await page.click('#views-button'); await page.click('[data-view-save]');
+    await page.waitFor(() => document.getElementById('view-dialog').open && document.getElementById('view-name'));
+    assert.match(await page.text('#view-form'), /search “app-01”/, 'the dialog says what will be remembered');
+    await page.click('#view-save');                          // the browser asks for a name first
+    await page.fill('#view-name', 'App servers'); await page.click('#view-save');
+    await page.waitFor(() => !document.getElementById('view-dialog').open && document.getElementById('views-button').textContent === 'Views: App servers');
+    // moving away from it is shown
+    await page.fill('#inventory-search', '');
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2 && /\(changed\)/.test(document.getElementById('views-button').textContent));
+    // choosing it brings the filters back
+    await page.click('#views-button'); await page.click('[data-view-apply]');
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length === 1 && document.getElementById('inventory-search').value === 'app-01' && document.getElementById('views-button').textContent === 'Views: App servers');
+    // update it to a different search
+    await page.fill('#inventory-search', 'db-01');
+    await page.waitFor(() => /\(changed\)/.test(document.getElementById('views-button').textContent));
+    await page.click('#views-button'); await page.click('[data-view-update]');
+    await page.waitFor(() => /updated/.test(document.getElementById('notice').innerText) && document.getElementById('views-button').textContent === 'Views: App servers');
+    // rename it
+    await page.click('#views-button'); await page.click('[data-view-rename]');
+    await page.waitFor(() => document.getElementById('view-dialog').open && document.getElementById('view-name').value === 'App servers');
+    await page.fill('#view-name', 'Database'); await page.click('#view-save');
+    await page.waitFor(() => !document.getElementById('view-dialog').open && document.getElementById('views-button').textContent === 'Views: Database');
+    // a new browser session finds it, and it filters as it was saved
+    const again = await newPage();
+    await signIn(again); await signedIn(again); await openView(again, 'inventory');
+    await again.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2);
+    await again.click('#views-button');
+    await again.waitFor(() => /Database/.test(document.getElementById('views-panel').innerText) && /search “db-01”/.test(document.getElementById('views-panel').innerText));
+    await again.click('[data-view-apply]');
+    await again.waitFor(() => document.getElementById('inventory-search').value === 'db-01' && document.querySelectorAll('#inventory-table tr[data-select-resource]').length === 1);
+    await again.close();
+    // delete it
+    await page.click('#views-button'); await page.click('[data-view-delete]');
+    await page.waitFor(() => /deleted/.test(document.getElementById('notice').innerText) && document.getElementById('views-button').textContent === 'Views');
+    assert.equal((await lab.api('GET', '/api/v1/saved-views')).json.count, 0);
+    assert.equal(all >= 2, true);
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the inventory is exported as a CSV of exactly the list on screen, with a formula in a name made harmless, and the export is in the audit history', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'inventory');
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2);
+    await page.evaluate(() => {      // keep what would be downloaded: the file's text and name
+      window.__csv = null; window.__fileName = null;
+      const create = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = blob => { blob.arrayBuffer().then(buffer => { window.__bytes = [...new Uint8Array(buffer.slice(0, 3))]; window.__csv = new TextDecoder('utf-8', { ignoreBOM: true }).decode(buffer); }); return create(blob); };
+      HTMLAnchorElement.prototype.click = function () { window.__fileName = this.download; };
+    });
+    await page.fill('#inventory-search', 'app-01');
+    await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length === 1);
+    await page.click('#inventory-export-button');
+    await page.waitFor(() => window.__csv && window.__fileName);
+    const csv = await page.evaluate(() => window.__csv), fileName = await page.evaluate(() => window.__fileName);
+    assert.match(fileName, /^nuvrion-inventory-\d{8}-\d{4}\.csv$/);
+    assert.deepEqual(await page.evaluate(() => window.__bytes), [0xef, 0xbb, 0xbf], 'a byte-order mark so that Excel reads the accents');
+    assert.equal(csv.charCodeAt(0), 0xfeff);
+    const lines = csv.slice(1).split('\r\n').filter(Boolean);
+    assert.equal(lines.length, 2, 'the header and the one machine on screen');
+    assert.equal(lines[0], 'Name,Platform,Connection,Power,Health,Guest OS,Hostname,IP address,CPU use (MHz),CPU use (%),Memory used (GB),Memory use (%),Storage used (GB),Host,Datastores,Networks,Tags,Last seen');
+    assert.match(lines[1], /^nuvrion-app-01,VMware (vSphere \/ vCenter|ESXi),E2E lab,running,/);
+    assert.match(lines[1], /esx-mock-0\d\.lab\.example/, 'where it runs is in the file');
+    await page.waitFor(() => /Exported 1 virtual machine/.test(document.getElementById('notice').innerText));
+    const events = (await lab.api('GET', '/api/v1/audit-events?limit=20&search=inventory.exported')).json.items;
+    assert.equal(events.length >= 1, true);
+    assert.deepEqual([events[0].action, events[0].detail.rows, events[0].detail.columns, events[0].detail.format], ['inventory.exported', 1, 18, 'csv']);
+    assert.match(events[0].detail.filters, /search “app-01”/);
+    // with nothing on screen there is nothing to export
+    await page.fill('#inventory-search', 'no such machine');
+    await page.waitFor(() => document.getElementById('inventory-export-button').disabled);
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('an auditor may keep views of their own but sees none of the operator’s', async () => {
+    await lab.createUser({ username: 'ada.views', displayName: 'Ada Views', role: 'auditor' });
+    const auditor = await newPage();
+    await signIn(auditor, 'ada.views', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await auditor.waitFor(() => !document.getElementById('application').hidden);
+    await openView(auditor, 'inventory');
+    await auditor.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2);
+    await auditor.fill('#inventory-search', 'db');
+    await auditor.click('#views-button'); await auditor.click('[data-view-save]');
+    await auditor.waitFor(() => document.getElementById('view-dialog').open);
+    await auditor.fill('#view-name', 'Auditor’s view'); await auditor.click('#view-save');
+    await auditor.waitFor(() => document.getElementById('views-button').textContent === 'Views: Auditor’s view');
+    assert.deepEqual((await lab.api('GET', '/api/v1/saved-views')).json.items, [], 'the administrator’s own list is empty: nobody sees another person’s views');
+    await auditor.close();
+  });
 });

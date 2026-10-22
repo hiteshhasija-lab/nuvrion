@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_WEBHOOKS_FILE: join(workDir, 'webhooks.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_WEBHOOKS_FILE: join(workDir, 'webhooks.json'), NUVRION_VIEWS_FILE: join(workDir, 'views.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -531,6 +531,25 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('getCapacityCompute', { params: { objectId: first.id }, query: { metric: 'disk' }, expect: 422, invalid: true });
     await call('getCapacityCompute', { params: { objectId: first.id }, query: { days: '120' }, expect: 422, invalid: true });
     await call('getCapacityCompute', { params: { objectId: ABSENT }, expect: 404, invalid: true });
+  });
+
+  test('saved views and exports: listSavedViews, createSavedView, updateSavedView, deleteSavedView, recordInventoryExport', async () => {
+    const body = { name: 'Contract view', view: { search: 'web', power: 'running', sortKey: 'name', sortDirection: 'asc' } };
+    const created = await call('createSavedView', { as: 'auditor', body, expect: 201 });
+    assert.ok(created.headers.get('etag')); assert.equal(created.json.view.power, 'running');
+    await call('createSavedView', { as: 'auditor', body, expect: 409, invalid: true });
+    await call('createSavedView', { as: 'auditor', body: { name: 'Bad', view: { sortKey: 'nope' } }, expect: 422, invalid: true });
+    assert.equal((await call('listSavedViews', { as: 'auditor', expect: 200 })).json.items.some(item => item.id === created.json.id), true);
+    assert.equal((await call('listSavedViews', { expect: 200 })).json.items.some(item => item.id === created.json.id), false, 'another person’s views are not listed');
+    const updated = await call('updateSavedView', { as: 'auditor', params: { viewId: created.json.id }, headers: { 'if-match': `"${created.json.rowVersion}"` }, body: { name: 'Renamed' }, expect: 200 });
+    assert.equal(updated.json.rowVersion, 2);
+    await call('updateSavedView', { as: 'auditor', params: { viewId: created.json.id }, headers: { 'if-match': '"99"' }, body: { name: 'X' }, expect: 412, invalid: true });
+    await call('updateSavedView', { as: 'auditor', params: { viewId: created.json.id }, headers: {}, body: { name: 'X' }, expect: 428, invalid: true });
+    await call('updateSavedView', { params: { viewId: created.json.id }, headers: { 'if-match': '"2"' }, body: { name: 'X' }, expect: 404, invalid: true });
+    await call('recordInventoryExport', { as: 'operator', body: { count: 3, columns: 12 }, expect: 200 });
+    await call('recordInventoryExport', { body: { count: -2 }, expect: 422, invalid: true });
+    await call('deleteSavedView', { params: { viewId: created.json.id }, expect: 404, invalid: true });
+    assert.equal((await call('deleteSavedView', { as: 'auditor', params: { viewId: created.json.id }, expect: 200 })).json.deleted, 1);
   });
 
   test('webhooks: listWebhooks, createWebhook, updateWebhook, testWebhook, listWebhookDeliveries, deleteWebhook', async () => {

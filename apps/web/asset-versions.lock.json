@@ -12,8 +12,8 @@
     "sha256": "c6a30e3351cc0c4f98b88fd1d18c3115d36e9ddfdd378b644977912a175115ab"
   },
   "app.js": {
-    "version": "20261023-158",
-    "sha256": "d382bc7c1925e36a12e2158da1aaef40b9c371e6397c3124e7e731c40d565506"
+    "version": "20261023-161",
+    "sha256": "68992b3835de2c8af6ca1e33679227aa8a44b4130988f8da3a3bf6aff25652ca"
   },
   "capacity.js": {
     "version": "20261023-2",
@@ -48,8 +48,8 @@
     "sha256": "0d713a336bb057b96c803b4c4543e853184e035da59aff56bc110a717dbdb3ec"
   },
   "styles.css": {
-    "version": "20261023-139",
-    "sha256": "89e71231a23b2dcd54df5f21ab1ede94f8aed782653d45e8dea59a8b928c2434"
+    "version": "20261023-140",
+    "sha256": "80b61e124c74e9fd7817c774d71f4ddbb0aba744b983e49eaf553ebbb1d72fa4"
   },
   "tags.js": {
     "version": "20261017-1",
@@ -58,6 +58,10 @@
   "upgrade-center.js": {
     "version": "20260911",
     "sha256": "64ebd0f4c69dc2e5bc1a17044702ef2f14b27bcd3ceff6397bc7e182fbeba36e"
+  },
+  "views.js": {
+    "version": "20261023-1",
+    "sha256": "39c05a9664cc95e40a2973317024c42a6abc0e21f553d48ab7830aaf01e95f30"
   },
   "vm-column-resize.js": {
     "version": "20261005-114",

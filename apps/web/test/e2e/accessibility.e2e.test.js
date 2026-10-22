@@ -285,4 +285,18 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('#capacity-close'); await page.waitFor(() => !document.getElementById('capacity-dialog').open);
     await page.click('[data-capacity-tab=datastores]');
   });
+
+  test('the Views menu open, the save dialog, and the inventory toolbar with the export button', async () => {
+    await openView('inventory'); await page.waitFor(() => document.querySelectorAll('#inventory-table tr[data-select-resource]').length >= 2); await settle(300);
+    await expectNoViolations('inventory toolbar with Views and Export CSV');
+    await page.click('#views-button'); await settle(300);
+    await expectNoViolations('views menu, empty');
+    await page.click('[data-view-save]'); await shown('#view-form #view-name'); await settle(300);
+    await expectNoViolations('save view dialog');
+    await page.fill('#view-name', 'Axe view'); await page.click('#view-save');
+    await page.waitFor(() => !document.getElementById('view-dialog').open && document.getElementById('views-button').textContent === 'Views: Axe view');
+    await page.click('#views-button'); await settle(300);
+    await expectNoViolations('views menu with a view in use');
+    await page.click('[data-view-delete]'); await page.waitFor(() => document.getElementById('views-button').textContent === 'Views');
+  });
 });
