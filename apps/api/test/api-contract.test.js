@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_WEBHOOKS_FILE: join(workDir, 'webhooks.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -519,6 +519,34 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('deleteAlertRule', { params: { ruleId: ABSENT }, expect: 404 });
     await call('deleteAlertRule', { as: 'operator', params: { ruleId: created.json.id }, expect: 403, invalid: true });
     assert.equal((await call('deleteAlertRule', { params: { ruleId: created.json.id }, expect: 200 })).json.deleted, 1);
+  });
+
+  test('webhooks: listWebhooks, createWebhook, updateWebhook, testWebhook, listWebhookDeliveries, deleteWebhook', async () => {
+    const body = { name: 'Contract hook', url: 'https://hooks.example.test/services/secret-token', format: 'text', events: ['alert.fired'], minSeverity: 'critical', signingSecret: 'a-long-signing-secret' };   // secret-scan:allow (fake test credential)
+    const created = await call('createWebhook', { body, expect: 201 });
+    assert.ok(created.headers.get('etag')); assert.equal(created.json.urlHint, 'https://hooks.example.test/…'); assert.equal(JSON.stringify(created.json).includes('secret-token'), false);
+    await call('createWebhook', { body, expect: 409, invalid: true });
+    await call('createWebhook', { body: { ...body, name: 'Bad', url: 'http://insecure.example.test/x' }, expect: 422, invalid: true });
+    await call('createWebhook', { as: 'operator', body: { ...body, name: 'Refused' }, expect: 403, invalid: true });
+    const list = await call('listWebhooks', { expect: 200 });
+    assert.equal(list.json.items.some(item => item.id === created.json.id), true); assert.ok(list.json.events['alert.fired']); assert.ok(list.json.formats.json);
+    await call('listWebhooks', { as: 'auditor', expect: 403, invalid: true });
+    const updated = await call('updateWebhook', { params: { webhookId: created.json.id }, headers: { 'if-match': `"${created.json.rowVersion}"` }, body: { minSeverity: 'warning', signingSecret: '' }, expect: 200 });
+    assert.deepEqual([updated.json.minSeverity, updated.json.hasSigningSecret, updated.json.rowVersion], ['warning', false, 2]);
+    await call('updateWebhook', { params: { webhookId: created.json.id }, headers: { 'if-match': '"99"' }, body: { enabled: false }, expect: 412, invalid: true });
+    await call('updateWebhook', { params: { webhookId: created.json.id }, headers: {}, body: { enabled: false }, expect: 428, invalid: true });
+    await call('updateWebhook', { params: { webhookId: ABSENT }, headers: { 'if-match': '"1"' }, body: { enabled: false }, expect: 404, invalid: true });
+    await call('updateWebhook', { params: { webhookId: created.json.id }, headers: { 'if-match': '"2"' }, body: { url: 'ftp://x.example.test' }, expect: 422, invalid: true });
+    const tested = await call('testWebhook', { params: { webhookId: created.json.id }, expect: 200 });
+    assert.equal(tested.json.eventType, 'test'); assert.equal(tested.json.status, 'failed', 'nothing listens at hooks.example.test');
+    await call('testWebhook', { params: { webhookId: ABSENT }, expect: 404, invalid: true });
+    await call('testWebhook', { as: 'operator', params: { webhookId: created.json.id }, expect: 403, invalid: true });
+    const deliveries = await call('listWebhookDeliveries', { query: { destinationId: created.json.id, limit: '10' }, expect: 200 });
+    assert.equal(deliveries.json.items.length, 1);
+    await call('listWebhookDeliveries', { as: 'auditor', expect: 403, invalid: true });
+    await call('deleteWebhook', { params: { webhookId: ABSENT }, expect: 404, invalid: true });
+    await call('deleteWebhook', { as: 'operator', params: { webhookId: created.json.id }, expect: 403, invalid: true });
+    assert.equal((await call('deleteWebhook', { params: { webhookId: created.json.id }, expect: 200 })).json.deleted, 1);
   });
 
   test('capacity: listCapacityDatastores, getCapacityDatastore', async () => {

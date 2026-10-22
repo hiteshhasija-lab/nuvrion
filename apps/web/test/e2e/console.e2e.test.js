@@ -1158,4 +1158,72 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await auditor.waitFor(() => document.getElementById('capacity-dialog').open && document.querySelector('#capacity-title'));
     await auditor.close();
   });
+
+  // ---- webhooks on the Alert rules page (apps/web/webhooks.js) ---------------------------------------------------------------------------------------------------------
+  test('an administrator adds a webhook, sends a test, sees what was sent, changes it without retyping the address, turns it off and deletes it; an operator does not see webhooks', async () => {
+    const receiver = await lab.startReceiver();
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'alert-rules');
+    await page.waitFor(() => !document.getElementById('webhooks-card').hidden && /No webhooks yet/.test(document.getElementById('webhook-table').innerText));
+    await page.click('[data-webhook-new]');
+    await page.waitFor(() => document.getElementById('webhook-dialog').open && document.getElementById('webhook-name'));
+    await page.fill('#webhook-name', 'Ops channel');
+    await page.fill('#webhook-url', 'http://169.254.169.254/latest'); await page.click('#webhook-save');
+    await page.waitFor(() => /not one a webhook may use/.test(document.getElementById('webhook-error').innerText) && !document.getElementById('webhook-error').hidden && document.getElementById('webhook-dialog').open);
+    await page.fill('#webhook-url', `${receiver.url}/hooks/super-secret-token`);
+    await page.fill('#webhook-secret', 'a-long-signing-secret');
+    await page.click('#webhook-save');
+    await page.waitFor(() => !document.getElementById('webhook-dialog').open && /Ops channel/.test(document.getElementById('webhook-table').innerText));
+    const row = await page.text('#webhook-table');
+    assert.match(row, /Ops channel[\s\S]*Text message · all events · warning and above/); assert.match(row, /Signed/); assert.match(row, /nothing sent yet/i);
+    assert.equal(row.includes('super-secret-token'), false, 'the address is never shown');
+    assert.match(row, new RegExp(`${receiver.url.replace(/[.:/]/g, '\\$&')}/…`));
+    // a test message arrives, signed
+    await page.click('[data-webhook-test]');
+    await page.waitFor(() => /Test message delivered/.test(document.getElementById('notice').innerText));
+    assert.equal(receiver.received.length, 1); assert.equal(receiver.received[0].url, '/hooks/super-secret-token'); assert.match(receiver.received[0].headers['x-nuvrion-signature'], /^sha256=[0-9a-f]{64}$/);
+    assert.match(JSON.parse(receiver.received[0].body).text, /Test message from Nuvrion/);
+    await page.waitFor(() => /healthy/i.test(document.getElementById('webhook-table').innerText));
+    // a receiver that refuses is reported, and the webhook is marked failing
+    receiver.answerWith(500);
+    await page.click('[data-webhook-test]');
+    await page.waitFor(() => /not delivered: HTTP 500/.test(document.getElementById('notice').innerText));
+    await page.waitFor(() => /failing/i.test(document.getElementById('webhook-table').innerText));
+    receiver.answerWith(200);
+    // the history
+    await page.click('[data-webhook-history]');
+    await page.waitFor(() => document.getElementById('webhook-history-dialog').open && /Test/.test(document.getElementById('webhook-history-form').innerText));
+    const history = await page.text('#webhook-history-form tbody');
+    assert.match(history, /HTTP 200/); assert.match(history, /HTTP 500/); assert.equal((history.match(/Test/g) ?? []).length >= 2, true);
+    await page.click('#webhook-history-close'); await page.waitFor(() => !document.getElementById('webhook-history-dialog').open);
+    // edit: the address is left empty, so it is kept; the events are narrowed
+    await page.click('[data-webhook-edit]');
+    await page.waitFor(() => document.getElementById('webhook-dialog').open && document.getElementById('webhook-name').value === 'Ops channel');
+    assert.equal(await page.evaluate(() => document.getElementById('webhook-url').value), '', 'the address is not in the page');
+    await page.evaluate(() => { for (const box of document.querySelectorAll('#webhook-form input[name=events]')) if (box.value !== 'alert.fired') box.click(); });
+    await page.click('#webhook-save');
+    await page.waitFor(() => !document.getElementById('webhook-dialog').open && /Text message · alert\.fired · warning and above/.test(document.getElementById('webhook-table').innerText));
+    receiver.received.length = 0;
+    await page.click('[data-webhook-test]');
+    await page.waitFor(() => /Test message delivered/.test(document.getElementById('notice').innerText));
+    assert.equal(receiver.received[0].url, '/hooks/super-secret-token', 'the saved address still works');
+    // off and on, then delete
+    await page.click('[data-webhook-toggle]');
+    await page.waitFor(() => /turned off/i.test(document.getElementById('webhook-table').innerText));
+    await page.click('[data-webhook-toggle]');
+    await page.waitFor(() => !/turned off/i.test(document.getElementById('webhook-table').innerText));
+    // an operator may see alerts but not where they are sent
+    const operator = await newPage();
+    await signIn(operator, 'olivia.operator', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(operator);
+    await openView(operator, 'alert-rules');
+    await operator.waitFor(() => document.getElementById('alert-rules-actions') !== null);
+    assert.equal(await operator.evaluate(() => document.getElementById('webhooks-card').hidden), true);
+    await operator.close();
+    await page.click('[data-webhook-delete]');
+    await page.waitFor(() => /No webhooks yet/.test(document.getElementById('webhook-table').innerText));
+    assert.deepEqual(unexpected(page.problems()).filter(problem => !/status of 422 .*\/api\/v1\/webhooks$/.test(problem)), [], 'the only thing the browser logged is the refusal of the forbidden address, which the dialog explained');
+    await page.close();
+  });
 });

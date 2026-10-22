@@ -12,8 +12,8 @@
     "sha256": "4d673957fa2e68d6349f4ae77f799e63fcb23999a205baa55185060c8eb1b19b"
   },
   "app.js": {
-    "version": "20261022-154",
-    "sha256": "1c8148f2d107ac507eb6a514c7965e00b38dd2fa7fddb08b544a38ceea83c0cd"
+    "version": "20261022-156",
+    "sha256": "c0bb6ede3964e28966bc5b31d4aa095ccf697862b3f55e3e233d2d8aed8a3632"
   },
   "capacity.js": {
     "version": "20261022-1",
@@ -48,8 +48,8 @@
     "sha256": "0d713a336bb057b96c803b4c4543e853184e035da59aff56bc110a717dbdb3ec"
   },
   "styles.css": {
-    "version": "20261022-137",
-    "sha256": "1204816be6b7289ee41290f0af9ea4cd8f257cc6df458257a40196ab00bf3df3"
+    "version": "20261022-138",
+    "sha256": "e380565f5b77f35eb7a292a40d988b04a98ddd600333a1a9235098f263663b97"
   },
   "tags.js": {
     "version": "20261017-1",
@@ -66,5 +66,9 @@
   "vm-workspace.css": {
     "version": "20261006-115",
     "sha256": "7d5f4f679b29031d73afaa7bdf5305196bc7476666cbc384bbab33dcd89eab82"
+  },
+  "webhooks.js": {
+    "version": "20261022-2",
+    "sha256": "2b731afc6c039f0fa3dc635919d6a408eec4df42145b11f0b1a62a8a10face49"
   }
 }

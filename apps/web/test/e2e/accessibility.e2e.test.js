@@ -251,4 +251,24 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('#capacity-close');
     await page.waitFor(() => !document.getElementById('capacity-dialog').open);
   });
+
+  test('the webhooks section, the webhook dialog and the history dialog', async () => {
+    const receiver = await lab.startReceiver();
+    await openView('alert-rules');
+    await page.waitFor(() => !document.getElementById('webhooks-card').hidden); await settle(300);
+    await expectNoViolations('alert rules page with the webhooks section empty');
+    await page.click('[data-webhook-new]'); await shown('#webhook-form #webhook-name'); await settle(300);
+    await expectNoViolations('new webhook dialog');
+    await page.fill('#webhook-name', 'Axe hook'); await page.fill('#webhook-url', `${receiver.url}/axe`);
+    await page.click('#webhook-save'); await page.waitFor(() => !document.getElementById('webhook-dialog').open && /Axe hook/.test(document.getElementById('webhook-table').innerText));
+    await page.click('[data-webhook-test]'); await page.waitFor(() => /Test message delivered/.test(document.getElementById('notice').innerText)); await settle(600);
+    await expectNoViolations('alert rules page with a webhook');
+    await page.click('[data-webhook-edit]'); await shown('#webhook-form #webhook-name'); await settle(300);
+    await expectNoViolations('edit webhook dialog');
+    await page.click('#webhook-close'); await page.waitFor(() => !document.getElementById('webhook-dialog').open);
+    await page.click('[data-webhook-history]'); await shown('#webhook-history-form tbody tr'); await settle(300);
+    await expectNoViolations('webhook history dialog');
+    await page.click('#webhook-history-close'); await page.waitFor(() => !document.getElementById('webhook-history-dialog').open);
+    await page.click('[data-webhook-delete]'); await page.waitFor(() => /No webhooks yet/.test(document.getElementById('webhook-table').innerText));
+  });
 });

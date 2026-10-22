@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ export const ADMIN_PASSWORD = 'E2e-Test-Password-1!'; // secret-scan:allow (fake
 
 export async function startConsole() {
   const workDir = mkdtempSync(join(tmpdir(), 'nuvrion-e2e-'));
-  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_SCHEDULE_INTERVAL_MS: '3600000', NUVRION_ALERT_INTERVAL_MS: '3600000', NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
+  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_WEBHOOKS_FILE: join(workDir, 'webhooks.json'), NUVRION_WEBHOOK_ALLOW_HTTP: 'true', NUVRION_WEBHOOK_ALLOW_LOOPBACK: 'true', NUVRION_WEBHOOK_INTERVAL_MS: '200', NUVRION_SCHEDULE_INTERVAL_MS: '3600000', NUVRION_ALERT_INTERVAL_MS: '3600000', NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
   delete process.env.NUVRION_RUNTIME_PROFILE;
   const log = console.log;                                          // the server logs every request as a JSON line; keep the test output readable
   console.log = (...args) => { if (!(typeof args[0] === 'string' && args[0].startsWith('{"level":'))) log(...args); };
@@ -73,8 +74,18 @@ export async function startConsole() {
     return capacityService.record(points);
   };
 
+  // A receiver for webhooks on this machine (the lab's server is told it may post to this machine; a real installation never is): it keeps what it was sent and answers as told.
+  const receivers = [];
+  const startReceiver = async () => {
+    const received = [], state = { status: 200 };
+    const receiver = http.createServer((req, res) => { let data = ''; req.on('data', chunk => { data += chunk; }); req.on('end', () => { received.push({ url: req.url, headers: req.headers, body: data }); res.writeHead(state.status); res.end(); }); });
+    await new Promise(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    receivers.push(receiver);
+    return { url: `http://127.0.0.1:${receiver.address().port}`, received, answerWith: status => { state.status = status; } };
+  };
+
   return {
-    url, api, createUser, addWorkstationAgent, giveDatastoreHistory,
-    async close() { console.log = log; const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections?.(); await closed; rmSync(workDir, { recursive: true, force: true }); }
+    url, api, createUser, addWorkstationAgent, giveDatastoreHistory, startReceiver,
+    async close() { console.log = log; for (const receiver of receivers) { receiver.closeAllConnections?.(); receiver.close(); } const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections?.(); await closed; rmSync(workDir, { recursive: true, force: true }); }
   };
 }

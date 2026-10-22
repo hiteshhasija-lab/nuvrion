@@ -29,6 +29,7 @@ tags:
   - { name: Audit, description: The audit log }
   - { name: Alerts, description: Threshold alert rules, the alerts they raise and the notification feed }
   - { name: Schedules, description: Scheduled operations on machines, and what each run did }
+  - { name: Webhooks, description: Where alerts, connection problems and failed schedule runs are sent, and what was sent }
   - { name: Capacity, description: How full each datastore is, how fast it is filling and when it will be full }
   - { name: Agents, description: Workstation agents, enrollment and signed commands }
   - { name: Mock, description: The built-in mock provider }
@@ -726,6 +727,93 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
       responses:
         '200': { description: The runs, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRunList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: The webhooks, without their addresses
+      description: The address of a webhook usually carries a secret, so it is write-only; only where it goes (scheme and host) is shown.
+      x-required-permission: alert.manage
+      responses:
+        '200': { description: The webhooks and the events and formats that can be chosen, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      summary: Add a webhook
+      description: The address must be https (unless the installation allows http), carry no user name or password, and not be this machine or a link-local or reserved address; the name is checked again when a message is sent.
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WebhookCreate' } } }
+      responses:
+        '201': { description: Created, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Webhook' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A webhook has that name (NUV_WEBHOOK_EXISTS) or the limit of 20 is reached (NUV_WEBHOOK_LIMIT), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /webhooks/{webhookId}:
+    parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      tags: [Webhooks]
+      operationId: updateWebhook
+      summary: Change some fields of a webhook (optimistic concurrency with If-Match)
+      description: The address and the signing secret are kept unless they are given. An empty signing secret removes it. Turning a webhook on again does not send what happened while it was off.
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/IfMatch' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WebhookChange' } } }
+      responses:
+        '200': { description: Updated webhook, headers: { ETag: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/Webhook' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The name is taken by another webhook (NUV_WEBHOOK_EXISTS), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      summary: Delete a webhook and its delivery history
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, required: [deleted], properties: { deleted: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /webhooks/{webhookId}/test:
+    parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [Webhooks]
+      operationId: testWebhook
+      summary: Send a test message now
+      description: The result is returned and kept in the history. A test is not tried again, whatever the answer.
+      x-required-permission: alert.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      responses:
+        '200': { description: What happened, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookDelivery' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /webhook-deliveries:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: What was sent (or is waiting to be sent), newest first
+      x-required-permission: alert.manage
+      parameters:
+        - { name: destinationId, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        '200': { description: The deliveries, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookDeliveryList' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /capacity/datastores:
@@ -2004,6 +2092,84 @@ components:
         detailsTruncated: { type: boolean }
         error: { type: [string, 'null'] }
         summary: { type: string, description: 'For example 2 requested, 1 skipped' }
+    WebhookCreate:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, maxLength: 100 }
+        url: { type: string, maxLength: 2048, description: 'The address to post to; write-only' }
+        format: { type: string, enum: [json, text, discord], description: 'json: every field; text: {"text": ...} for Slack, Mattermost, Teams and Google Chat; discord: {"content": ...}' }
+        events: { type: array, items: { type: string, enum: [alert.fired, alert.resolved, connection.down, connection.recovered, schedule.problem] } }
+        minSeverity: { type: string, enum: [warning, critical] }
+        signingSecret: { type: string, minLength: 8, maxLength: 200, description: 'When set, every message carries X-Nuvrion-Signature: sha256=HMAC of "<X-Nuvrion-Timestamp>.<body>"; write-only' }
+        enabled: { type: boolean }
+    WebhookChange:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100 }
+        url: { type: string, maxLength: 2048 }
+        format: { type: string, enum: [json, text, discord] }
+        events: { type: array, items: { type: string, enum: [alert.fired, alert.resolved, connection.down, connection.recovered, schedule.problem] } }
+        minSeverity: { type: string, enum: [warning, critical] }
+        signingSecret: { type: string, nullable: true, description: 'An empty string or null removes the secret' }
+        enabled: { type: boolean }
+    Webhook:
+      type: object
+      required: [id, name, format, events, minSeverity, enabled, activeSince, urlHint, hasSigningSecret, consecutiveFailures, lastAttemptAt, lastSuccessAt, lastError, rowVersion, createdAt, updatedAt, pendingCount]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        format: { type: string, enum: [json, text, discord] }
+        events: { type: array, items: { type: string } }
+        minSeverity: { type: string, enum: [warning, critical] }
+        enabled: { type: boolean }
+        activeSince: { type: string, format: date-time, description: Only events after this time are sent }
+        urlHint: { type: string, description: Where it goes (scheme and host); the path and query are not shown }
+        hasSigningSecret: { type: boolean }
+        consecutiveFailures: { type: integer }
+        lastAttemptAt: { type: string, format: date-time, nullable: true }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        lastError: { type: string, nullable: true }
+        rowVersion: { type: integer }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        pendingCount: { type: integer, description: Messages waiting to be sent or tried again }
+    WebhookList:
+      type: object
+      required: [items, count, events, formats, meta]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Webhook' } }
+        count: { type: integer }
+        events: { type: object, additionalProperties: { type: string }, description: The events that can be chosen, with a description }
+        formats: { type: object, additionalProperties: { type: string } }
+        meta: { $ref: '#/components/schemas/ListMeta' }
+    WebhookDelivery:
+      type: object
+      required: [id, destinationId, destinationName, eventId, eventType, severity, title, detail, occurredAt, status, attempts, nextAttemptAt, responseStatus, error, durationMs, createdAt, sentAt]
+      properties:
+        id: { type: string, format: uuid }
+        destinationId: { type: string, format: uuid, nullable: true }
+        destinationName: { type: string }
+        eventId: { type: string }
+        eventType: { type: string }
+        severity: { type: string }
+        title: { type: string }
+        detail: { type: string }
+        occurredAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending, sent, failed] }
+        attempts: { type: integer }
+        nextAttemptAt: { type: string, format: date-time }
+        claimedUntil: { type: string, format: date-time, nullable: true }
+        responseStatus: { type: integer, nullable: true }
+        error: { type: string, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        sentAt: { type: string, format: date-time, nullable: true }
+    WebhookDeliveryList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/WebhookDelivery' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
     CapacityForecast:
       type: object
       required: [status, confidence, growthBytesPerDay, daysUntilFull, projectedFullAt, sampleCount, spanDays, fit, summary]

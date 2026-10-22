@@ -48,7 +48,12 @@ import { createScheduleRunner } from '../../../modules/tasks/src/schedule-runner
 import { OPERATIONS as SCHEDULE_OPERATIONS, ScheduleError, describeSchedule, describeRun, nextRuns, parseSchedule, resolveTargets } from '../../../modules/tasks/src/schedule-rules.js';
 import { AlertService } from '../../../modules/monitoring/src/alert-service.js';
 import { PostgresAlertService } from '../../../modules/monitoring/src/postgres-alert-service.js';
-import { AlertError, METRICS, collectTargets, describeRule, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
+import { AlertError, METRICS, collectTargets, describeRule, feedFromAlerts, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
+import { DestinationService } from '../../../modules/notifications/src/destination-service.js';
+import { PostgresDestinationService } from '../../../modules/notifications/src/postgres-destination-service.js';
+import { createDispatcher } from '../../../modules/notifications/src/dispatcher.js';
+import { postWebhook } from '../../../modules/notifications/src/webhook-sender.js';
+import { EVENT_TYPES, FORMATS, WebhookError, collectEvents as collectWebhookEventList } from '../../../modules/notifications/src/webhook-rules.js';
 import { CapacityService } from '../../../modules/monitoring/src/capacity-service.js';
 import { PostgresCapacityService } from '../../../modules/monitoring/src/postgres-capacity-service.js';
 import { DAY_MS, RETENTION_DAYS, WINDOW_DAYS, SAMPLE_INTERVAL_MS, chartPoints, describeForecast, forecast as capacityForecast, trend as capacityTrend } from '../../../modules/monitoring/src/capacity-rules.js';
@@ -109,6 +114,10 @@ const identity = production?await PostgresIdentityService.create(store.pool,{idl
 const connectionAlertAudit=event=>safeAudit({actorType:'system',actorId:null,actorName:'Nuvrion',action:`connection.alert_${event.type}`,targetType:'provider_connection',targetId:event.connection?.id??event.alert.connectionId,correlationId:randomUUID(),outcome:event.type==='recovered'?'succeeded':event.alert.severity==='critical'?'failed':'warning',detail:{alertId:event.alert.id,severity:event.alert.severity,errorCode:event.alert.errorCode,occurrenceCount:event.alert.occurrenceCount}});
 const connections = production?new PostgresConnectionService(store.pool,{onAlert:connectionAlertAudit}):new ConnectionService({onAlert:connectionAlertAudit});
 const capacity = production?new PostgresCapacityService(store.pool,{intervalMs:Number(process.env.NUVRION_CAPACITY_SAMPLE_MS??SAMPLE_INTERVAL_MS)}):new CapacityService({file:process.env.NUVRION_CAPACITY_FILE ?? '.nuvrion/capacity.json',intervalMs:Number(process.env.NUVRION_CAPACITY_SAMPLE_MS??SAMPLE_INTERVAL_MS)});
+// Webhooks (docs/webhooks.md). The policy is the installation's: https only unless NUVRION_WEBHOOK_ALLOW_HTTP=true, private network addresses blocked when NUVRION_WEBHOOK_BLOCK_PRIVATE=true,
+// and this machine itself is refused always in production (NUVRION_WEBHOOK_ALLOW_LOOPBACK is honoured only outside production, for tests).
+const webhookPolicy={allowHttp:process.env.NUVRION_WEBHOOK_ALLOW_HTTP==='true',blockPrivate:process.env.NUVRION_WEBHOOK_BLOCK_PRIVATE==='true',allowLoopback:!production&&process.env.NUVRION_WEBHOOK_ALLOW_LOOPBACK==='true'};
+const webhooks = production?new PostgresDestinationService(store.pool,{policy:webhookPolicy}):new DestinationService({file:process.env.NUVRION_WEBHOOKS_FILE ?? '.nuvrion/webhooks.json',policy:webhookPolicy});
 const schedules = production?new PostgresScheduleService(store.pool):new ScheduleService({file:process.env.NUVRION_SCHEDULES_FILE ?? '.nuvrion/schedules.json'});
 const alerts = production?new PostgresAlertService(store.pool):new AlertService({file:process.env.NUVRION_ALERTS_FILE ?? '.nuvrion/alerts.json'});
 const inventory = production?new PostgresInventoryService(store.pool):new InventoryService({file:process.env.NUVRION_INVENTORY_FILE ?? '.nuvrion/inventory.json',connectionHealth:id=>connections.get(id)});
@@ -191,6 +200,13 @@ const scheduleRunner=createScheduleRunner({
 const scheduleTimer=setInterval(()=>scheduleRunner.runDue().catch(error=>console.error(JSON.stringify({level:'error',event:'schedules.check_failed',error:error.message}))),Number(process.env.NUVRION_SCHEDULE_INTERVAL_MS??30000));scheduleTimer.unref?.();
 // Threshold alerts: every minute (NUVRION_ALERT_INTERVAL_MS) the latest measurements are compared with the rules (docs/alerts.md). A failed evaluation is logged and tried again; it never stops discovery.
 let alertEvaluation=null;
+// The connection problems and recoveries of the notification feed (the bell and the webhooks use the same words).
+const connectionEventsOf=list=>list.flatMap(alert=>{const severity=alert.severity==='critical'?'critical':'warning',title=alert.connectionName,detail=`Connection ${severity==='critical'?'is unreachable':'is having problems'}`;return [{id:`connection:${alert.id}:fired`,kind:'fired',at:alert.openedAt,source:'connection',alertId:alert.id,severity,title,detail},...(alert.recoveredAt?[{id:`connection:${alert.id}:resolved`,kind:'resolved',at:alert.recoveredAt,source:'connection',alertId:alert.id,severity,title,detail:'Connection recovered'}]:[])];});
+const webhookDispatcher=createDispatcher({destinations:webhooks,version:releaseVersion,log:message=>console.warn(JSON.stringify({level:'warn',event:'webhooks.delivery_problem',message})),
+  send:request=>postWebhook({...request,policy:webhookPolicy}),
+  collectEvents:async since=>{const [thresholdAlerts,connectionAlerts,runs]=await Promise.all([alerts.listAlerts({status:'all',limit:300}),connections.alerts({limit:200}),schedules.listRuns({limit:100})]);return collectWebhookEventList({feed:[...feedFromAlerts(thresholdAlerts,1000),...connectionEventsOf(connectionAlerts)],runs,since});}});
+const webhookTimer=setInterval(()=>webhookDispatcher.tick().catch(error=>console.error(JSON.stringify({level:'error',event:'webhooks.dispatch_failed',error:error.message}))),Number(process.env.NUVRION_WEBHOOK_INTERVAL_MS??15000));webhookTimer.unref?.();
+const webhookPruneTimer=setInterval(()=>webhooks.prune().catch(error=>console.error(JSON.stringify({level:'error',event:'webhooks.prune_failed',error:error.message}))),60*60_000);webhookPruneTimer.unref?.();
 // Capacity (docs/capacity.md): a reading of every datastore that was seen in the last ten minutes is kept (at most one every half hour), and a forecast is a line through the last 14 days.
 const CAPACITY_FRESH_MS=10*60_000;
 async function recordCapacity(){
@@ -324,6 +340,55 @@ export async function handler(req, res) {
     };
     const scheduleView=item=>({...item,summary:describeSchedule(item),lastRun:item.lastRun?{...item.lastRun,summary:describeRun(item.lastRun)}:null});
     const unknownScheduleConnection=async input=>{const id=input&&typeof input==='object'?input.connectionId:null;if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return false;let found=null;try{found=await connections.get(id);}catch{found=null;}return !found||found.status==='deleted';};
+    // ---- webhooks: where alerts, connection problems and failed schedule runs are sent (docs/webhooks.md). Reading and changing them needs alert.manage: where alerts go is part of alerting.
+    const WEBHOOK_STATUS={NUV_WEBHOOK_EXISTS:409,NUV_WEBHOOK_LIMIT:409},webhookMatch=url.pathname.match(/^\/api\/v1\/webhooks\/([0-9a-f-]{36})$/i),webhookTestMatch=url.pathname.match(/^\/api\/v1\/webhooks\/([0-9a-f-]{36})\/test$/i);
+    const webhookRefused=error=>{
+      if(error instanceof WebhookError)return problem(res,WEBHOOK_STATUS[error.code]??422,error.code,error.message,correlationId);
+      if(error.message==='VERSION_CONFLICT')return problem(res,412,'NUV_VERSION_CONFLICT','The webhook changed. Refresh and retry.',correlationId);
+      throw error;
+    };
+    const webhookDetail=item=>({name:item.name,destination:item.urlHint,events:item.events,minSeverity:item.minSeverity,enabled:item.enabled});
+    if(req.method==='GET'&&url.pathname==='/api/v1/webhooks'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;
+      const items=await webhooks.listDestinations();return json(res,200,{items,count:items.length,events:EVENT_TYPES,formats:FORMATS,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/webhooks'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      try{
+        const item=await webhooks.createDestination(await body(req),p.user.id);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'webhook.created',targetType:'webhook',targetId:item.id,correlationId,outcome:'succeeded',detail:webhookDetail(item)});
+        res.setHeader('etag',`"${item.rowVersion}"`);return json(res,201,item,correlationId);
+      }catch(error){return webhookRefused(error);}
+    }
+    if(req.method==='PATCH'&&webhookMatch){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const version=Number(String(req.headers['if-match']??'').replaceAll('"',''));if(!version)return problem(res,428,'NUV_PRECONDITION_REQUIRED','If-Match is required.',correlationId);
+      try{
+        const input=await body(req),item=await webhooks.updateDestination(webhookMatch[1].toLowerCase(),input,version);
+        if(!item)return problem(res,404,'NUV_WEBHOOK_NOT_FOUND','The webhook was not found.',correlationId);
+        await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'webhook.updated',targetType:'webhook',targetId:item.id,correlationId,outcome:'succeeded',detail:{...webhookDetail(item),changed:Object.keys(input).filter(key=>key!=='signingSecret'&&key!=='url'),addressChanged:Object.hasOwn(input,'url'),signingSecretChanged:Object.hasOwn(input,'signingSecret')}});
+        res.setHeader('etag',`"${item.rowVersion}"`);return json(res,200,item,correlationId);
+      }catch(error){return webhookRefused(error);}
+    }
+    if(req.method==='DELETE'&&webhookMatch){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const before=await webhooks.getDestination(webhookMatch[1].toLowerCase()),result=await webhooks.deleteDestination(webhookMatch[1].toLowerCase());
+      if(!result)return problem(res,404,'NUV_WEBHOOK_NOT_FOUND','The webhook was not found.',correlationId);
+      await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'webhook.deleted',targetType:'webhook',targetId:webhookMatch[1].toLowerCase(),correlationId,outcome:'succeeded',detail:webhookDetail(before)});
+      return json(res,200,result,correlationId);
+    }
+    if(req.method==='POST'&&webhookTestMatch){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const delivery=await webhookDispatcher.test(webhookTestMatch[1].toLowerCase());
+      if(!delivery)return problem(res,404,'NUV_WEBHOOK_NOT_FOUND','The webhook was not found.',correlationId);
+      await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'webhook.tested',targetType:'webhook',targetId:delivery.destinationId,correlationId,outcome:delivery.status==='sent'?'succeeded':'failed',detail:{name:delivery.destinationName,responseStatus:delivery.responseStatus,error:delivery.error}});
+      return json(res,200,delivery,correlationId);
+    }
+    if(req.method==='GET'&&url.pathname==='/api/v1/webhook-deliveries'){
+      const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;
+      const items=await webhooks.listDeliveries({destinationId:url.searchParams.get('destinationId')||null,limit:Number(url.searchParams.get('limit')??50)});
+      return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
     // ---- capacity: how full each datastore is, how fast it is filling, and when it will be full (docs/capacity.md)
     const capacityDatastoreMatch=url.pathname.match(/^\/api\/v1\/capacity\/datastores\/([0-9a-f-]{36})$/i);
     const capacityItem=(object,samples,connectionNames,now)=>{
@@ -475,7 +540,7 @@ export async function handler(req, res) {
       }catch(error){return alertRefused(error);}
     }
     // the bell: threshold alerts and, for those who may see connections, connection problems, as one feed read by the person once
-    const connectionEvents=list=>list.flatMap(alert=>{const severity=alert.severity==='critical'?'critical':'warning',title=alert.connectionName,detail=`Connection ${severity==='critical'?'is unreachable':'is having problems'}`;return [{id:`connection:${alert.id}:fired`,kind:'fired',at:alert.openedAt,source:'connection',alertId:alert.id,severity,title,detail},...(alert.recoveredAt?[{id:`connection:${alert.id}:resolved`,kind:'resolved',at:alert.recoveredAt,source:'connection',alertId:alert.id,severity,title,detail:'Connection recovered'}]:[])];});
+    const connectionEvents=connectionEventsOf;
     if(req.method==='GET'&&url.pathname==='/api/v1/notifications'){
       const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
       const feed=await alerts.notifications(p.user.id,{limit:100}),own=identity.authorize(p,'connection.view')?connectionEvents(await connections.alerts({limit:200})):[];
@@ -723,6 +788,10 @@ export async function handler(req, res) {
     }
     if (req.method === 'GET' && url.pathname === '/tags.js') {
       const js = await readFile(resolve(webRoot, 'tags.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
+    if (req.method === 'GET' && url.pathname === '/webhooks.js') {
+      const js = await readFile(resolve(webRoot, 'webhooks.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
     if (req.method === 'GET' && url.pathname === '/capacity.js') {

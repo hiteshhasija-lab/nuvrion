@@ -72,4 +72,4 @@ Rules, alerts and each person's last-read time are in `monitoring.alert_rules`, 
 and target, so two evaluations at the same moment cannot raise the same alert twice). Evaluation reads the same data the rest of the console shows: the latest sample of each virtual machine, the hosts and
 datastores of the [infrastructure](infrastructure.md), and the connections. `NUVRION_ALERT_INTERVAL_MS` (default 60000) sets how often it runs.
 
-**Not yet**: sending alerts out of the console (e-mail, a webhook), and alerts on the Overview page's counts; the bell and the Alert rules page are where alerts appear today.
+Alerts can also be **sent out of the console** to a chat channel or your own system: see [webhooks](webhooks.md). **Not yet**: e-mail, and alerts on the Overview page's counts; the bell and the Alert rules page are where alerts appear today.
