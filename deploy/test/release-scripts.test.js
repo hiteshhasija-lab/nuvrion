@@ -449,3 +449,85 @@ test('the clean-up cannot make a deploy fail or roll back: it ignores the prunin
   const recorded = upgradeScript.indexOf('Recorded v$version as the stable release'), cleanup = upgradeScript.indexOf('if ! cleanup_after_deploy');
   assert.ok(recorded > 0 && cleanup > recorded, 'cleanup_after_deploy is called after the stable release is recorded, and a failure of it is only a warning');
 });
+
+// ---- migrations: every one the database does not record is applied, not only the newest ----
+// v0.1.199 carried 0042 and 0043; the script applied only 0043 and the new code failed on the missing column until 0042 was applied by hand.
+const migrationFunctions = sectionBetween('# ---- migrations (begin)', '# ---- migrations (end)');
+const migrationGuard = sectionBetween('pending="$(pending_migrations)"', '(the last is the release\'s newest, applied at every deploy; the others are not yet recorded in the database)."');
+const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => String(from + i).padStart(4, '0'));
+
+// An archive like the server overlay (migrations under database/migrations, with or without a leading ./) and a pretend database whose ledger holds `recorded`.
+function migrationRun({ inArchive, recorded, required, prefix = '', ledgerFails = false, guard = false }) {
+  const dir = mkdtempSync(join(tmpdir(), 'nuvrion-migrations-'));
+  try {
+    mkdirSync(join(dir, 'tree', 'database', 'migrations'), { recursive: true });
+    for (const version of inArchive) writeFileSync(join(dir, 'tree', 'database', 'migrations', `${version}_something.sql`), '-- migration\n');
+    writeFileSync(join(dir, 'tree', 'database', 'README.md'), 'not a migration\n');
+    writeFileSync(join(dir, 'tree', 'database', 'migrations', 'notes.txt'), 'not a migration\n');
+    const made = spawnSync('tar', ['-czf', join(dir, 'Nuvrion-Server-Overlay-0.1.199.tar.gz'), '-C', join(dir, 'tree'), `${prefix}database`], { encoding: 'utf8' });
+    assert.equal(made.status, 0, made.stderr);
+    const script = `set -Eeuo pipefail
+podman() { ${ledgerFails ? 'return 1' : 'printf "%s\\n" "$LEDGER"'}; }
+release_dir="$D"; server_artifact=Nuvrion-Server-Overlay-0.1.199.tar.gz; required_migration=${required}
+postgres_container=pg; database_user=u; database_name=d
+${migrationFunctions}
+${guard ? migrationGuard : 'pending_migrations'}`;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, D: dir, LEDGER: recorded.join('\n') } });
+    return { ...result, versions: result.stdout.split('\n').filter(line => /^\d{4}$/.test(line)) };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('a release that adds two migrations applies both, oldest first (the v0.1.199 case)', () => {
+  const run = migrationRun({ inArchive: range(1, 43), recorded: range(1, 41), required: '0043' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.versions, ['0042', '0043']);
+});
+
+test('a migration missing from the ledger is applied even when a newer one is already recorded', () => {
+  const run = migrationRun({ inArchive: range(1, 43), recorded: [...range(1, 41), '0043'], required: '0043' });
+  assert.deepEqual(run.versions, ['0042', '0043'], 'the maximum recorded version must not hide a gap');
+});
+
+test('with everything recorded, only the newest is applied, as before', () => {
+  assert.deepEqual(migrationRun({ inArchive: range(1, 43), recorded: range(1, 43), required: '0043' }).versions, ['0043']);
+});
+
+test('a migration newer than the one the release requires is left alone', () => {
+  assert.deepEqual(migrationRun({ inArchive: range(1, 45), recorded: range(1, 41), required: '0043' }).versions, ['0042', '0043']);
+});
+
+test('an archive whose names start with ./ is read the same way, and files that are not migrations are ignored', () => {
+  const run = migrationRun({ inArchive: range(1, 43), recorded: range(1, 41), required: '0043', prefix: './' });
+  assert.deepEqual(run.versions, ['0042', '0043']);
+});
+
+test('a release whose archive lacks the migration it requires is refused', () => {
+  const run = migrationRun({ inArchive: range(1, 42), recorded: range(1, 42), required: '0043' });
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /no migration 0043/);
+  assert.deepEqual(run.versions, []);
+});
+
+test('a database that cannot be asked what it has applied stops the upgrade instead of guessing', () => {
+  const run = migrationRun({ inArchive: range(1, 43), recorded: [], required: '0043', ledgerFails: true });
+  assert.notEqual(run.status, 0);
+  assert.deepEqual(run.versions, []);
+});
+
+test('the preflight says what will be applied, and refuses a list so long that the ledger must be incomplete', () => {
+  const ok = migrationRun({ inArchive: range(1, 43), recorded: range(1, 41), required: '0043', guard: true });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /Migrations to apply, oldest first: 0042 0043 /);
+  const refused = migrationRun({ inArchive: range(1, 43), recorded: range(1, 30), required: '0043', guard: true });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /13 migrations are pending, more than 10.*ledger looks incomplete/);
+  assert.doesNotMatch(refused.stdout, /Migrations to apply/);
+});
+
+test('the upgrade applies every pending migration in order, each from the archive it unpacked, and stops at the first that fails', () => {
+  assert.doesNotMatch(upgradeScript, /migration_file="\$\{migration_files\[0\]\}"/, 'the single-migration lookup is gone');
+  const apply = sectionBetween('migration_files=()', 'done\n');
+  assert.match(apply, /for migration in \$pending; do/);
+  assert.match(upgradeScript, /for migration_file in "\$\{migration_files\[@\]\}"; do\n[\s\S]*?psql -v ON_ERROR_STOP=1[\s\S]*?\ndone/);
+  assert.ok(upgradeScript.indexOf('pending="$(pending_migrations)"') < upgradeScript.indexOf('if $check_only; then'), '--check reports the migrations too');
+});

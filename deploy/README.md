@@ -33,9 +33,16 @@ that was scanned: CI builds it (on arm64, the host's architecture), scans it, si
    and a `supplyChain` section), `SHA256SUMS.txt` covering every file, both SBOMs, the provenance, the signed bundles and the scan report.
 4. `scp -r` it to `~/nuvrion-upgrades/releases/`, then `upgrade-nuvrion.sh <dir> --check`, read it, then `--yes`. The script verifies the checksums and that the
    evidence is complete and belongs to the archive, checks that the scan passed, **loads the image archive** (it fails unless the loaded image has the id the manifest
-   names and reports this release's version), runs the migration, swaps the container and validates health. No image is built on the host and no base image is
+   names and reports this release's version), runs the migrations, swaps the container and validates health. No image is built on the host and no base image is
    needed there. (The host has no signature verifier; signatures are verified where the release is assembled. Verify again anywhere with
    `gh attestation verify <archive> --bundle <bundle> --repo hiteshhasija-lab/nuvrion`.)
+
+**Migrations.** `--check` prints the migrations the release will apply: every migration in the archive up to the release's newest (`requiredMigration`) that
+`platform.schema_migrations` does not record yet, oldest first, and the newest itself at every deploy (migrations are idempotent and record themselves). The host's
+ledger decides, not the highest version recorded, so a gap is filled. A list longer than 10 is refused (the ledger must be incomplete: apply by hand and look first).
+Before 2026-10-22 the script applied only the newest migration, so a release with two new migrations silently skipped the older one (v0.1.199 left out 0042 until it
+was applied by hand). **A copy of the script that does not say "Migrations to apply" in `--check` is the old one: release one migration at a time until the new one
+is installed** (copy it over `~/nuvrion-upgrades/upgrade-nuvrion.sh`, keeping the previous one as `.bak-<date>`).
 
 Older releases (without `server.imageArchive`) are built on the host from the overlay archive and `localhost/nuvrion:base-arm64`; the script still does that for
 them.

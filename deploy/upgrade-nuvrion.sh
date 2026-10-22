@@ -137,6 +137,28 @@ current_image="$(podman inspect "$api_container" --format '{{.Image}}')"
 current_status="$(podman inspect "$api_container" --format '{{.State.Status}}')"
 [[ "$current_status" == "running" ]] || { echo "The active API container is not running." >&2; exit 1; }
 
+# ---- migrations (begin) ---------------------------------------------------------------------------------------------------------------------------------------------------
+# A release applies the migrations the database does not record yet, oldest first, up to the release's required (newest) one, and the required one itself every time (migrations are idempotent).
+# The ledger platform.schema_migrations says what has been applied. Applying only the newest skipped an older one in v0.1.199 (0042 was left out when 0043 was applied).
+max_pending_migrations=10
+pending_migrations() {
+  local recorded versions version
+  recorded="$(podman exec "$postgres_container" psql -v ON_ERROR_STOP=1 -U "$database_user" -d "$database_name" -At -c 'SELECT version FROM platform.schema_migrations')" || return 1
+  versions="$(tar -tzf "$release_dir/$server_artifact" | sed -nE 's#^(\./)?database/migrations/([0-9]{4})_[^/]*\.sql$#\2#p' | sort -u)"
+  grep -qx -- "$required_migration" <<<"$versions" || { echo "The release archive has no migration $required_migration." >&2; return 1; }
+  while IFS= read -r version; do
+    if [[ "$version" > "$required_migration" ]]; then continue; fi
+    if [[ "$version" == "$required_migration" ]] || ! grep -qx -- "$version" <<<"$recorded"; then echo "$version"; fi
+  done <<<"$versions"
+}
+# ---- migrations (end) -----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+pending="$(pending_migrations)" || { echo "Could not work out which migrations to apply." >&2; exit 1; }
+pending_count="$(wc -w <<<"$pending" | tr -d ' ')"
+(( pending_count <= max_pending_migrations )) \
+  || { echo "$pending_count migrations are pending, more than $max_pending_migrations: the database's migration ledger looks incomplete. Apply them by hand and check platform.schema_migrations first." >&2; exit 1; }
+echo "Migrations to apply, oldest first: $(tr '\n' ' ' <<<"$pending")(the last is the release's newest, applied at every deploy; the others are not yet recorded in the database)."
+
 echo "Preflight passed for Nuvrion v$version."
 if $check_only; then
   echo "No changes were made."
@@ -308,9 +330,12 @@ echo "Preparing and building v$version..."
 tar -xzf "$release_dir/$server_artifact" -C "$build_dir"
 containerfile="$build_dir/Containerfile.overlay"
 [[ -f "$containerfile" ]] || { echo "The overlay Containerfile is missing." >&2; false; }
-migration_files=("$build_dir/database/migrations/${required_migration}_"*.sql)
-[[ ${#migration_files[@]} -eq 1 && -f "${migration_files[0]}" ]] || { echo "Migration $required_migration is missing or ambiguous." >&2; false; }
-migration_file="${migration_files[0]}"
+migration_files=()
+for migration in $pending; do
+  candidates=("$build_dir/database/migrations/${migration}_"*.sql)
+  [[ ${#candidates[@]} -eq 1 && -f "${candidates[0]}" ]] || { echo "Migration $migration is missing or ambiguous." >&2; false; }
+  migration_files+=("${candidates[0]}")
+done
 if [[ -n "$image_archive" ]]; then
   echo "Loading the image CI built and scanned (not building one here)..."
   load_ci_image "$release_dir/$image_archive" "$image_archive_id" "$target_image" "$version"
@@ -319,10 +344,12 @@ else
     -f "$containerfile" -t "$target_image" "$build_dir"
 fi
 
-echo "Applying migration $required_migration..."
-podman cp "$migration_file" "$postgres_container:/tmp/nuvrion-release-migration.sql"
-podman exec "$postgres_container" psql -v ON_ERROR_STOP=1 -U "$database_user" -d "$database_name" \
-  -f /tmp/nuvrion-release-migration.sql
+for migration_file in "${migration_files[@]}"; do
+  echo "Applying migration $(basename "$migration_file" | cut -c1-4)..."
+  podman cp "$migration_file" "$postgres_container:/tmp/nuvrion-release-migration.sql"
+  podman exec "$postgres_container" psql -v ON_ERROR_STOP=1 -U "$database_user" -d "$database_name" \
+    -f /tmp/nuvrion-release-migration.sql
+done
 
 echo "Replacing the active API container via systemd..."
 podman tag "$target_image" "$stable_image"
