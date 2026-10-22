@@ -326,6 +326,27 @@ test('a connection attempt that never answers is given up and tried again, and a
   await broker.close();
 });
 
+test('closing while a connection attempt is still in flight: the attempt that finishes afterwards is closed and no consumer is left behind', async () => {
+  // found by the live-broker tests: a consumer left attached by a broker that had been closed took the messages of the next test off the shared queue
+  const { state, connectImpl: working } = fakeRabbit();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const connectImpl = async url => { await gate; return working(url); };
+  const broker = new RabbitTaskBroker('amqp://broker.invalid', { connectImpl, reconnectMs: 5 });
+  await broker.subscribe(async () => {});
+  const opening = broker.open().catch(() => {});
+  await wait(20);
+  await broker.close();                                   // the attempt is still waiting for the broker
+  release();
+  await opening;
+  await wait(40);
+  assert.equal(state.consumers.length, 0, 'no consumer was registered by a broker that had been closed');
+  assert.equal(broker.status, 'stopped');
+  assert.equal(broker.connection, null); assert.equal(broker.channel, null);
+  assert.ok(state.closed >= 2, 'the connection and channel that finished opening were closed');
+  assert.equal(state.connects, 1, 'and nothing reconnected');
+});
+
 test('closing never throws because the broker is already gone', async () => {
   const { state, connectImpl } = fakeRabbit();
   const broker = await RabbitTaskBroker.connect('amqp://broker.invalid', { connectImpl });

@@ -91,6 +91,20 @@ async function drainQueue() {
   } finally { await connection.close(); }
 }
 
+// How many consumers are attached to the task queue. A consumer left behind by an earlier test (its broker closed while it was still connecting) takes the next test's messages
+// off the shared queue, which looked like "the five messages were in the queue (0 removed)"; the broker no longer does that, and this says so plainly if anything ever does.
+async function consumerCount() {
+  const { connect } = await import('amqplib');
+  const connection = await connect(url());
+  try { return (await (await connection.createChannel()).checkQueue('nuvrion.tasks')).consumerCount; } finally { await connection.close(); }
+}
+async function expectNoStrayConsumers() {
+  const deadline = Date.now() + 5000;
+  let count = await consumerCount();
+  while (count > 0 && Date.now() < deadline) { await wait(100); count = await consumerCount(); }
+  assert.equal(count, 0, `${count} consumer(s) from an earlier test are still attached to the task queue and would take this test's messages`);
+}
+
 // The production chain, with a provider that counts how often each task was really executed.
 async function chain({ providerDelayMs = 0, reconnectMs = 250, startWorker = true, heartbeatMs = 10_000, scripted = {} } = {}) {
   if (!broker) await startContainer();
@@ -193,6 +207,7 @@ test('the broker crashes (killed, not shut down) under load: nothing is lost and
 test('tasks whose messages were lost with the broker are announced again, and completed once each', options, async t => {
   const c = await chain({ startWorker: false });
   try {
+    await expectNoStrayConsumers();
     const tasks = [];
     for (let i = 0; i < 5; i++) tasks.push(await c.create());
     await until(async () => (await c.pendingOutbox()) === 0, 15_000, 'the relay to publish all five');
