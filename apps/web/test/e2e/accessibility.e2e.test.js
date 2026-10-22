@@ -223,7 +223,16 @@ describe(`accessibility (axe-core, WCAG 2.1 A and AA), ${theme} theme`, { skip: 
     await page.click('#notify-menu summary'); await page.waitFor(() => /Axe rule/.test(document.getElementById('notify-panel').innerText)); await settle(300);
     await expectNoViolations('notification bell, open');
     await page.click('#notify-menu summary');
-    await page.click('[data-alert-rule-delete]'); await page.waitFor(() => /No alert rules yet/.test(document.getElementById('alert-rule-table').innerText));
+    // On a slow CI runner this click was sometimes lost (in 2 of 3 runs of one commit: the rule stayed, nothing was reported). So: wait for the bell to be closed, click again if the rule is
+    // still there after a few seconds, and, if it still is, say what the page was doing.
+    const ruleTable = () => page.evaluate(() => document.getElementById('alert-rule-table').innerText);
+    await page.waitFor(() => !document.getElementById('notify-menu').open);
+    for (let attempt = 1; attempt <= 3 && !/No alert rules yet/.test(await ruleTable()); attempt++) {
+      await page.click('[data-alert-rule-delete]').catch(() => {});             // already gone: the deletion went through
+      for (const until = Date.now() + 6000; Date.now() < until && !/No alert rules yet/.test(await ruleTable());) await settle(100);
+    }
+    const left = await ruleTable();
+    assert.match(left, /No alert rules yet/, `the rule was not deleted; the table says "${left.replace(/\s+/g, ' ').slice(0, 160)}", the page said "${await page.evaluate(() => document.getElementById('notice').textContent)}", dialogs ${JSON.stringify(page.dialogs())}`);
     await page.click('#notify-menu summary'); await page.click('[data-notifications-read]'); await page.waitFor(() => document.getElementById('notify-count').hidden); await page.click('#notify-menu summary');
   });
 
