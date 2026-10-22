@@ -116,4 +116,79 @@ describe('capacity over the API', { skip: dependenciesInstalled ? false : 'serve
     assert.deepEqual(open.map(alert => [alert.targetName, alert.targetKind, alert.severity]), [['datastore2', 'datastore', 'critical']]);
     assert.ok(Math.abs(open[0].value - 10.2) < 0.7);
   });
+
+  // ---- hosts and clusters ------------------------------------------------------------------------------------------------------------------------------------------------
+  // The mock estate has one cluster of two hosts: esx-mock-01 (50,400 MHz, 9,800 in use; 256 GB, 96 GB in use) and esx-mock-02 (50,400 MHz, 2,100 in use; 256 GB, 32 GB in use).
+  const history = async (id, metric, capacityValue, usedNow, perDay) => {
+    const now = Date.now(), points = [];
+    for (let hours = 10 * 24; hours >= 6; hours -= 6) points.push({ objectId: id, metric, connectionId: undefined, capacityBytes: capacityValue, freeBytes: capacityValue - (usedNow - perDay * (hours / 24)), observedAt: now - hours * 3_600_000 });
+    return capacityService.record(points);
+  };
+  const compute = async who => (await call(who, 'GET', '/api/v1/capacity/compute')).json;
+
+  test('hosts and clusters are listed with their processor and memory, the cluster as the sum of its hosts, and with no history say so', async () => {
+    const list = await waitFor(async () => { const body = await compute('admin'); return body.items.length === 3 && body.items.every(item => item.cpu.capacity !== null) ? body : null; }, 'the first reading of the hosts and the cluster');
+    const byName = Object.fromEntries(list.items.map(item => [item.name, item]));
+    const cluster = byName['Mock cluster'], first = byName['esx-mock-01.lab.example'], second = byName['esx-mock-02.lab.example'];
+    assert.deepEqual([cluster.kind, first.kind, cluster.hostCount, first.parentName, first.connectionName], ['cluster', 'host', 2, 'Mock cluster', 'Capacity lab']);
+    assert.deepEqual([first.cpu.capacity, first.cpu.used, first.memory.capacity, first.memory.used], [50400, 9800, 256 * GB, 96 * GB]);
+    assert.deepEqual([cluster.cpu.capacity, cluster.cpu.used, cluster.memory.capacity, cluster.memory.used, cluster.memory.free], [100800, 11900, 512 * GB, 128 * GB, 384 * GB], 'the cluster is its hosts added together');
+    assert.deepEqual([second.cpu.usedPercent, Math.round(first.memory.usedPercent * 10) / 10], [4.17, 37.5]);
+    assert.ok(list.items.every(item => item.cpu.forecast.status === 'insufficient' && item.memory.forecast.status === 'insufficient'), 'a day of readings is needed');
+    assert.match(first.cpu.forecast.summary, /Not enough history/);
+    assert.equal((await call('auditor1', 'GET', '/api/v1/capacity/compute')).status, 200);
+    assert.equal((await call(null, 'GET', '/api/v1/capacity/compute')).status, 401);
+    ids = Object.fromEntries(list.items.map(item => [item.name, item.id]));
+  });
+  let ids;
+
+  test('a history gives each host and cluster a forecast for its processor and for its memory, soonest first, in words that say "fully used"', async () => {
+    await history(ids['esx-mock-01.lab.example'], 'cpu', 50400, 9800, 800);            // 40,600 MHz free at 800 a day: about 51 days
+    await history(ids['esx-mock-02.lab.example'], 'cpu', 50400, 2100, 0);              // flat
+    await history(ids['Mock cluster'], 'memory', 512 * GB, 128 * GB, 8 * GB);          // 384 GB free at 8 GB a day: about 48 days
+    await history(ids['Mock cluster'], 'cpu', 100800, 11900, 0);
+    const body = await compute('operator1');
+    const byName = Object.fromEntries(body.items.map(item => [item.name, item]));
+    const hostCpu = byName['esx-mock-01.lab.example'].cpu.forecast, clusterMemory = byName['Mock cluster'].memory.forecast;
+    assert.deepEqual([hostCpu.status, hostCpu.confidence], ['growing', 'high']);
+    assert.ok(Math.abs(hostCpu.daysUntilFull - 50.75) < 1.5, String(hostCpu.daysUntilFull));
+    assert.ok(Math.abs(hostCpu.growthBytesPerDay - 800) < 20, 'growth is in MHz a day for a processor');
+    assert.match(hostCpu.summary, /^Growing by about 0\.8 GHz a day: fully used in about 5\d(\.\d)? days$/);
+    assert.deepEqual([clusterMemory.status, clusterMemory.confidence], ['growing', 'high']);
+    assert.ok(Math.abs(clusterMemory.daysUntilFull - 48) < 1.5, String(clusterMemory.daysUntilFull));
+    assert.match(clusterMemory.summary, /^Growing by about 8 GB a day: fully used in about 4\d(\.\d)? days$/);
+    assert.equal(byName['esx-mock-02.lab.example'].cpu.forecast.status, 'stable'); assert.equal(byName['Mock cluster'].cpu.forecast.status, 'stable');
+    assert.equal(byName['esx-mock-01.lab.example'].memory.forecast.status, 'insufficient', 'a metric with no history is not guessed');
+    assert.deepEqual(body.items.slice(0, 2).map(item => item.name), ['Mock cluster', 'esx-mock-01.lab.example'], 'soonest to be fully used first (the cluster’s memory, then the host’s processor)');
+    assert.ok(byName['esx-mock-01.lab.example'].cpu.trend.length >= 20);
+  });
+
+  test('one host or cluster comes with its history for a chart, for the metric and range asked, and refuses what makes no sense', async () => {
+    const detail = await call('auditor1', 'GET', `/api/v1/capacity/compute/${ids['esx-mock-01.lab.example']}?metric=cpu&days=7`);
+    assert.equal(detail.status, 200, detail.text);
+    assert.deepEqual([detail.json.name, detail.json.metric, detail.json.days, detail.json.cpu.forecast.status], ['esx-mock-01.lab.example', 'cpu', 7, 'growing']);
+    assert.ok(detail.json.points.length >= 25 && detail.json.points.length <= 31, String(detail.json.points.length));
+    assert.ok(detail.json.points.every(point => point.capacityBytes === 50400), 'processor capacity in MHz');
+    assert.equal((await call('admin', 'GET', `/api/v1/capacity/compute/${ids['Mock cluster']}`)).json.metric, 'cpu', 'processor by default');
+    const memory = await call('admin', 'GET', `/api/v1/capacity/compute/${ids['Mock cluster']}?metric=memory`);
+    assert.deepEqual([memory.json.metric, memory.json.days, memory.json.points.at(-1).capacityBytes], ['memory', 30, 512 * GB]);
+    assert.deepEqual([(await call('admin', 'GET', `/api/v1/capacity/compute/${ids['Mock cluster']}?metric=disk`)).code, (await call('admin', 'GET', `/api/v1/capacity/compute/${ids['Mock cluster']}?days=0`)).code], ['NUV_CAPACITY_METRIC_INVALID', 'NUV_CAPACITY_RANGE_INVALID']);
+    assert.equal((await call('admin', 'GET', '/api/v1/capacity/compute/00000000-0000-4000-8000-000000000001')).code, 'NUV_CAPACITY_OBJECT_NOT_FOUND');
+    assert.equal((await call('admin', 'GET', `/api/v1/capacity/compute/${ids['datastore1'] ?? 'x'}`)).status, 404);
+  });
+
+  test('alert rules on the days until a host or a cluster is fully used fire for the ones that are filling, and the alert is about a cluster when it is one', async () => {
+    const hostRule = { name: 'Host CPU within 60 days', metric: 'host.cpu_days_until_full', comparison: 'below', threshold: 60, severity: 'warning', durationMinutes: 0 };
+    const clusterRule = { name: 'Cluster memory within 60 days', metric: 'cluster.memory_days_until_full', comparison: 'below', threshold: 60, severity: 'critical', durationMinutes: 0 };
+    const preview = await call('admin', 'POST', '/api/v1/alert-rules/preview', { body: clusterRule });
+    assert.equal(preview.status, 200, preview.text);
+    assert.deepEqual([preview.json.summary, preview.json.matches.map(match => match.name)], ['Cluster memory days until fully used below 60 days', ['Mock cluster']]);
+    assert.equal((await call('admin', 'POST', '/api/v1/alert-rules', { body: hostRule })).status, 201);
+    assert.equal((await call('admin', 'POST', '/api/v1/alert-rules', { body: clusterRule })).status, 201);
+    assert.equal((await call('admin', 'POST', '/api/v1/alerts/evaluate')).json.fired, 2);
+    const open = (await call('admin', 'GET', '/api/v1/alerts?status=open')).json.items.filter(alert => /_days_until_full$/.test(alert.metric) && alert.metric !== 'datastore.days_until_full');
+    assert.deepEqual(open.map(alert => [alert.targetKind, alert.targetName, alert.severity]).sort(), [['cluster', 'Mock cluster', 'critical'], ['host', 'esx-mock-01.lab.example', 'warning']]);
+    const metrics = (await call('operator1', 'GET', '/api/v1/alert-metrics')).json.items;
+    assert.deepEqual(metrics.filter(metric => metric.kind === 'cluster').map(metric => metric.key).sort(), ['cluster.cpu_days_until_full', 'cluster.memory_days_until_full']);
+  });
 });

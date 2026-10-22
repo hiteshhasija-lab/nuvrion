@@ -92,6 +92,8 @@ const PROTECTED = [
   ['POST', `/api/v1/webhooks/${ID}/test`, 'alert.manage', 'webhookTestMatch'],
   ['GET', '/api/v1/webhook-deliveries', 'alert.manage', '/api/v1/webhook-deliveries'],
   ['GET', '/api/v1/capacity/datastores', 'resource.view', '/api/v1/capacity/datastores'],
+  ['GET', '/api/v1/capacity/compute', 'resource.view', '/api/v1/capacity/compute'],
+  ['GET', `/api/v1/capacity/compute/${ID}`, 'resource.view', 'capacityComputeMatch'],
   ['GET', `/api/v1/capacity/datastores/${ID}`, 'resource.view', 'capacityDatastoreMatch'],
   ['GET', '/api/v1/alert-metrics', 'resource.view', '/api/v1/alert-metrics'],
   ['GET', '/api/v1/alert-rules', 'resource.view', '/api/v1/alert-rules'],

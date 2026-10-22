@@ -1,6 +1,7 @@
 // Capacity forecasts (docs/capacity.md): how fast a datastore is filling and when it will be full. Pure functions, shared by both stores and the API so they cannot disagree.
 //
-// Nuvrion records the size and free space of every datastore about every half hour. A forecast is a straight line fitted (least squares) through the used space of the last 14 days. It is
+// Nuvrion records the size and free space of every datastore, and the CPU and memory capacity and use of every host and cluster, about every half hour (a "reading" is a size and how
+// much of it is used, in bytes for storage and memory and in MHz for CPU). A forecast is a straight line fitted (least squares) through the used space of the last 14 days. It is
 // deliberately simple and says how far to trust it: a line through three days of data is a hint, a line through two weeks that hugs the points is a plan. Three things are never guessed:
 // a datastore with too little history, one whose size changed inside the window (only the samples since the change are used) and one whose growth is too small to matter.
 
@@ -12,6 +13,8 @@ export const MIN_SPAN_MS = 24 * 3_600_000;               // a forecast needs a f
 export const HORIZON_DAYS = 3650;                         // beyond ten years the answer is "no end in sight"
 export const STABLE_SHARE = 0.01;                         // under 1% of the size gained or lost in 30 days counts as stable
 export const DAY_MS = 86_400_000;
+export const METRICS = Object.freeze(['storage', 'cpu', 'memory']);
+export const COMPUTE_BUCKET_MS = 6 * 3_600_000;   // processor use is spiky: a host's line is drawn through six-hour averages, not through every reading
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const round = (value, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
@@ -31,11 +34,20 @@ export function worthKeeping(reading, kept, intervalMs = SAMPLE_INTERVAL_MS) {
   return near.every(sample => sample.capacityBytes !== reading.capacityBytes) && !near.some(sample => sample.at === reading.at);
 }
 
+// Readings averaged in buckets of `bucketMs` (the use is averaged, the size is the newest in the bucket, the time is the middle of the readings): [{ at, capacityBytes, usedBytes }] ascending.
+export function bucketed(samples, bucketMs) {
+  if (!bucketMs) return samples;
+  const buckets = new Map();
+  for (const sample of samples) { const key = Math.floor(sample.at / bucketMs); const list = buckets.get(key) ?? []; list.push(sample); buckets.set(key, list); }
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, list]) => ({ at: Math.round(list.reduce((sum, item) => sum + item.at, 0) / list.length), capacityBytes: list.at(-1).capacityBytes, usedBytes: Math.round(list.reduce((sum, item) => sum + item.usedBytes, 0) / list.length) }));
+}
+
 // samples: [{ at (ms), capacityBytes, usedBytes }] ascending. Returns the forecast:
 //   status      insufficient | full | stable | growing | shrinking
 //   confidence  low | medium | high (from how long the history is and how closely the points follow the line); null when insufficient
 //   growthBytesPerDay, daysUntilFull (growing only; 0 when full), projectedFullAt (ISO, growing and within ten years), and what the forecast rests on.
-export function forecast(samples, { now = Date.now(), windowDays = WINDOW_DAYS } = {}) {
+export function forecast(rawSamples, { now = Date.now(), windowDays = WINDOW_DAYS, bucketMs = 0 } = {}) {
+  const samples = bucketed(rawSamples.filter(sample => sample.at <= now), bucketMs);
   const inWindow = samples.filter(sample => sample.at <= now && sample.at >= now - windowDays * DAY_MS);
   const latest = inWindow.at(-1) ?? samples.filter(sample => sample.at <= now).at(-1) ?? null;
   const base = { status: 'insufficient', confidence: null, growthBytesPerDay: null, daysUntilFull: null, projectedFullAt: null, sampleCount: 0, spanDays: 0, usedBytes: latest?.usedBytes ?? null, capacityBytes: latest?.capacityBytes ?? null, freeBytes: latest ? latest.capacityBytes - latest.usedBytes : null };
@@ -94,14 +106,15 @@ export function chartPoints(samples, max = 240) {
   return pick.map(sample => ({ at: new Date(sample.at).toISOString(), usedBytes: sample.usedBytes, capacityBytes: sample.capacityBytes }));
 }
 
-// One sentence for a forecast, shared by the console and the documents.
-export function describeForecast(f) {
+// One sentence for a forecast, shared by the console and the documents. subject: storage (a datastore is "full"), cpu (in MHz; "fully used") or memory (in bytes; "fully used").
+export function describeForecast(f, subject = 'storage') {
   if (!f) return 'No forecast';
-  const gb = bytes => `${round(Math.abs(bytes) / 1024 ** 3, 1)} GB`;
-  if (f.status === 'full') return 'Full';
+  const amount = value => (subject === 'cpu' ? `${round(Math.abs(value) / 1000, 2)} GHz` : `${round(Math.abs(value) / 1024 ** 3, 1)} GB`);
+  const end = subject === 'storage' ? 'full' : 'fully used';
+  if (f.status === 'full') return subject === 'storage' ? 'Full' : 'Fully used';
   if (f.status === 'insufficient') return 'Not enough history yet (needs a day of readings)';
   if (f.status === 'stable') return 'Stable: no meaningful growth';
-  if (f.status === 'shrinking') return `Shrinking by about ${gb(f.growthBytesPerDay)} a day`;
-  if (f.daysUntilFull === null) return `Growing by about ${gb(f.growthBytesPerDay)} a day, not full within ten years`;
-  return `Growing by about ${gb(f.growthBytesPerDay)} a day: full in about ${f.daysUntilFull} day${f.daysUntilFull === 1 ? '' : 's'}`;
+  if (f.status === 'shrinking') return `Shrinking by about ${amount(f.growthBytesPerDay)} a day`;
+  if (f.daysUntilFull === null) return `Growing by about ${amount(f.growthBytesPerDay)} a day, not ${end} within ten years`;
+  return `Growing by about ${amount(f.growthBytesPerDay)} a day: ${end} in about ${f.daysUntilFull} day${f.daysUntilFull === 1 ? '' : 's'}`;
 }

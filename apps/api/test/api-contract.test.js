@@ -521,6 +521,18 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     assert.equal((await call('deleteAlertRule', { params: { ruleId: created.json.id }, expect: 200 })).json.deleted, 1);
   });
 
+  test('capacity of hosts and clusters: listCapacityCompute, getCapacityCompute', async () => {
+    const list = await call('listCapacityCompute', { as: 'auditor', expect: 200 });
+    assert.ok(list.json.items.length >= 1 && list.json.items.every(item => item.cpu.forecast && item.memory.forecast));
+    const first = list.json.items[0];
+    const detail = await call('getCapacityCompute', { as: 'operator', params: { objectId: first.id }, expect: 200 });
+    assert.deepEqual([detail.json.id, detail.json.metric, detail.json.days], [first.id, 'cpu', 30]);
+    await call('getCapacityCompute', { params: { objectId: first.id }, query: { metric: 'memory', days: '7' }, expect: 200 });
+    await call('getCapacityCompute', { params: { objectId: first.id }, query: { metric: 'disk' }, expect: 422, invalid: true });
+    await call('getCapacityCompute', { params: { objectId: first.id }, query: { days: '120' }, expect: 422, invalid: true });
+    await call('getCapacityCompute', { params: { objectId: ABSENT }, expect: 404, invalid: true });
+  });
+
   test('webhooks: listWebhooks, createWebhook, updateWebhook, testWebhook, listWebhookDeliveries, deleteWebhook', async () => {
     const body = { name: 'Contract hook', url: 'https://hooks.example.test/services/secret-token', format: 'text', events: ['alert.fired'], minSeverity: 'critical', signingSecret: 'a-long-signing-secret' };   // secret-scan:allow (fake test credential)
     const created = await call('createWebhook', { body, expect: 201 });

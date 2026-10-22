@@ -1226,4 +1226,34 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(page.problems()).filter(problem => !/status of 422 .*\/api\/v1\/webhooks$/.test(problem)), [], 'the only thing the browser logged is the refusal of the forbidden address, which the dialog explained');
     await page.close();
   });
+
+  test('the Capacity page has a tab for hosts and clusters: processor and memory of each, the cluster as its hosts together, when each will be fully used, and a chart of one', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'capacity');
+    await page.click('[data-capacity-tab=compute]');
+    await page.waitFor(() => !document.getElementById('capacity-compute-card').hidden && document.querySelectorAll('#capacity-compute-table [data-capacity-compute-row]').length === 3);
+    assert.equal(await page.evaluate(() => document.querySelector('[data-capacity-tab=compute]').getAttribute('aria-selected')), 'true');
+    assert.equal(await page.evaluate(() => document.getElementById('capacity-datastores-card').hidden), true);
+    const text = await page.text('#capacity-compute-table');
+    assert.match(text, /Mock cluster[\s\S]*Cluster · E2E lab · 2 hosts counted/); assert.match(text, /esx-mock-01\.lab\.example[\s\S]*Host · E2E lab · in Mock cluster/);
+    assert.match(text, /Processor[\s\S]*11\.8%[\s\S]*11\.9 GHz of 101 GHz/); assert.match(text, /Not enough history yet/);
+    await lab.giveComputeHistory('esx-mock-01.lab.example', 'cpu', 800); await lab.giveComputeHistory('Mock cluster', 'memory', 8 * 1024 ** 3);
+    await page.waitFor(() => /(4|5)\d days/i.test(document.getElementById('capacity-compute-table').innerText));
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#capacity-compute-table [data-capacity-compute-row] strong')].map(item => item.textContent)).then(names => names.slice(0, 2)), ['Mock cluster', 'esx-mock-01.lab.example'], 'the one fully used soonest is on top');
+    assert.match(await page.text('#capacity-summary-badge'), /none fully used within 30 days/i);
+    await page.click('[data-capacity-compute-details]');
+    await page.waitFor(() => document.getElementById('capacity-dialog').open && document.querySelector('#capacity-title')?.textContent === 'Mock cluster');
+    assert.match(await page.text('#capacity-form .capacity-summary'), /Not enough history|Stable/);
+    assert.match(await page.text('#capacity-form'), /Not enough readings in this range to draw a chart/, 'the cluster’s processor has no history yet: no chart is drawn from nothing');
+    await page.evaluate(() => { const metric = document.getElementById('capacity-metric'); metric.value = 'memory'; metric.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitFor(() => document.getElementById('capacity-metric')?.value === 'memory' && /fully used in about (4|5)\d/.test(document.querySelector('#capacity-form .capacity-summary')?.innerText ?? ''));
+    assert.match(await page.evaluate(() => document.querySelector('svg.capacity-chart').getAttribute('aria-label')), /^Memory use of the cluster from .* expected to be fully used in about/);
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('svg.capacity-chart .capacity-projection'))), true);
+    await page.click('#capacity-close'); await page.waitFor(() => !document.getElementById('capacity-dialog').open);
+    await page.click('[data-capacity-tab=datastores]');
+    await page.waitFor(() => document.getElementById('capacity-compute-card').hidden && !document.getElementById('capacity-datastores-card').hidden);
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
 });

@@ -271,4 +271,18 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('#webhook-history-close'); await page.waitFor(() => !document.getElementById('webhook-history-dialog').open);
     await page.click('[data-webhook-delete]'); await page.waitFor(() => /No webhooks yet/.test(document.getElementById('webhook-table').innerText));
   });
+
+  test('the Capacity tab for hosts and clusters, and its dialog with a chart', async () => {
+    await lab.giveComputeHistory('esx-mock-01.lab.example', 'cpu', 800); await lab.giveComputeHistory('Mock cluster', 'memory', 8 * 1024 ** 3);
+    await openView('capacity');
+    await page.click('[data-capacity-tab=compute]'); await page.waitFor(() => /\d+ days/i.test(document.getElementById('capacity-compute-table').innerText)); await settle(500);
+    await expectNoViolations('capacity page, hosts and clusters');
+    await page.click('[data-capacity-compute-details]'); await shown('#capacity-form #capacity-metric'); await settle(300);
+    await expectNoViolations('capacity dialog for a cluster without a chart');
+    await page.evaluate(() => { const metric = document.getElementById('capacity-metric'); metric.value = 'memory'; metric.dispatchEvent(new Event('change', { bubbles: true })); });
+    await shown('#capacity-form svg.capacity-chart'); await settle(300);
+    await expectNoViolations('capacity dialog for a cluster with a chart');
+    await page.click('#capacity-close'); await page.waitFor(() => !document.getElementById('capacity-dialog').open);
+    await page.click('[data-capacity-tab=datastores]');
+  });
 });

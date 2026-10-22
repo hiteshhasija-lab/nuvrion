@@ -15,6 +15,8 @@ A rule says: *this measurement of this kind of thing, above (or below) this limi
 | Datastore space used | each datastore | % |
 | Datastore free space | each datastore | GB |
 | Datastore days until full | each datastore | days (see [capacity](capacity.md)) |
+| Host CPU / memory days until fully used | each ESXi or vCenter host | days (see [capacity](capacity.md)) |
+| Cluster CPU / memory days until fully used | each vCenter cluster | days (see [capacity](capacity.md)) |
 
 - **Limit**: a number from 0 to 100 for a percentage (any number for free space in GB). **Above** means strictly above; **below** strictly below.
 - **For at least (minutes)**: how long the condition must hold before the alert is raised, 0 to 1440. With 10, a spike that lasts three minutes raises nothing; the clock starts when it first holds, and

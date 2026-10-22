@@ -74,6 +74,15 @@ export async function startConsole() {
     return capacityService.record(points);
   };
 
+  // The same for a host or a cluster: ten days of processor or memory readings (one every six hours) that end where it is now and grow by `perDay` (MHz for processor, bytes for memory) a day.
+  const giveComputeHistory = async (name, metric, perDay) => {
+    const item = (await api('GET', '/api/v1/capacity/compute')).json.items.find(candidate => candidate.name === name);
+    if (!item) throw new Error(`no host or cluster called ${name}`);
+    const now = Date.now(), points = [];
+    for (let hours = 240; hours >= 6; hours -= 6) points.push({ objectId: item.id, metric, connectionId: item.connectionId, capacityBytes: item[metric].capacity, freeBytes: item[metric].free + perDay * hours / 24, observedAt: now - hours * 3_600_000 });
+    return capacityService.record(points);
+  };
+
   // A receiver for webhooks on this machine (the lab's server is told it may post to this machine; a real installation never is): it keeps what it was sent and answers as told.
   const receivers = [];
   const startReceiver = async () => {
@@ -85,7 +94,7 @@ export async function startConsole() {
   };
 
   return {
-    url, api, createUser, addWorkstationAgent, giveDatastoreHistory, startReceiver,
+    url, api, createUser, addWorkstationAgent, giveDatastoreHistory, giveComputeHistory, startReceiver,
     async close() { console.log = log; for (const receiver of receivers) { receiver.closeAllConnections?.(); receiver.close(); } const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections?.(); await closed; rmSync(workDir, { recursive: true, force: true }); }
   };
 }

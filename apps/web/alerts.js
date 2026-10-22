@@ -4,7 +4,7 @@
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const SEVERITY_LABEL = { critical: 'Critical', warning: 'Warning' };
-const KIND_LABEL = { vm: 'Virtual machines', host: 'Hosts', datastore: 'Datastores' };
+const KIND_LABEL = { vm: 'Virtual machines', host: 'Hosts', datastore: 'Datastores', cluster: 'Clusters' };
 const trim = value => String(Math.round(Number(value) * 100) / 100);
 
 export const formatValue = (metrics, key, value) => {

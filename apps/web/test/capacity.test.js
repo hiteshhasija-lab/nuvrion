@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, tierOf, daysText, summaryOf, sparklineSvg, capacityRowsHtml, chartSvg, detailDialogHtml } from '../capacity.js';
+import { formatBytes, tierOf, daysText, summaryOf, sparklineSvg, capacityRowsHtml, chartSvg, detailDialogHtml, formatMhz, computeRowsHtml, computeSummaryOf, computeDetailDialogHtml } from '../capacity.js';
 
 // The capacity table, the small trend, the chart and the dialog: what each says for a datastore that is filling, steady, new, full or unreachable, that urgency is shown in words as well
 // as colour, that the chart carries the forecast on to the day it reaches 100%, and that nothing a server sent is put in the page unescaped.
@@ -94,5 +94,53 @@ test('nothing a server sent is put in the page unescaped', () => {
   const evil = '<img src=x onerror=alert(1)>';
   const html = capacityRowsHtml([item({ name: evil, connectionName: evil, observedAt: evil, stale: true, forecast: forecast({ projectedFullAt: evil, confidence: evil }) })], ctx)
     + detailDialogHtml({ ...item({ name: evil, connectionName: evil, forecast: forecast({ summary: evil, projectedFullAt: evil }) }), days: 30, points, meta: {} }, ctx);
+  assert.doesNotMatch(html, /<img/);
+});
+
+// ---- hosts and clusters ------------------------------------------------------------------------------------------------------------------------------------------------
+const metricView = (over = {}) => ({ capacity: 50400, used: 9800, free: 40600, usedPercent: 19.44, forecast: forecast({ summary: 'Growing by about 0.8 GHz a day: fully used in about 51 days', growthBytesPerDay: 800, daysUntilFull: 51, projectedFullAt: '2026-12-12T12:00:00.000Z' }), trend: [18, 18.5, 19, 19.4], ...over });
+const insufficient = forecast({ status: 'insufficient', confidence: null, growthBytesPerDay: null, daysUntilFull: null, projectedFullAt: null, sampleCount: 2, summary: 'Not enough history yet' });
+const compute = (over = {}) => ({ id: 'h1', kind: 'host', name: 'esx-1.lab', connectionId: 'c1', connectionName: 'ESXi 8', parentName: 'Prod cluster', hostCount: null, observedAt: '2026-10-22T12:00:00Z', stale: false,
+  cpu: metricView(), memory: metricView({ capacity: 256 * GB, used: 96 * GB, free: 160 * GB, usedPercent: 37.5, forecast: insufficient, trend: [] }), ...over });
+
+test('processor sizes are written in MHz and GHz', () => {
+  assert.deepEqual([formatMhz(900), formatMhz(9800), formatMhz(50400), formatMhz(100800), formatMhz(250000), formatMhz(null)], ['900 MHz', '9.8 GHz', '50.4 GHz', '101 GHz', '250 GHz', '—']);
+});
+
+test('the table of hosts and clusters shows each one’s processor and memory use, when each will be fully used, and says where a host belongs and how many hosts a cluster counts', () => {
+  const html = computeRowsHtml([compute(), compute({ id: 'cl1', kind: 'cluster', name: 'Prod cluster', parentName: null, hostCount: 2 })], ctx);
+  assert.match(html, /<strong>esx-1\.lab<\/strong><small class="block">Host · ESXi 8 · in Prod cluster<\/small>/); assert.match(html, /<strong>Prod cluster<\/strong><small class="block">Cluster · ESXi 8 · 2 hosts counted<\/small>/);
+  assert.match(html, /aria-label="Processor 19\.4% used"/); assert.match(html, /9\.8 GHz of 50\.4 GHz/); assert.match(html, /96 GB of 256 GB/); assert.match(html, /aria-label="Memory 37\.5% used"/);
+  assert.match(html, /capacity-label">Processor<\/span> <span class="badge good">51 days<\/span> <small>about on 2026-12-12, high confidence<\/small>/); assert.match(html, /capacity-label">Memory<\/span> <span class="capacity-unknown">Not enough history yet<\/span>/);
+  assert.equal((html.match(/<svg class="capacity-spark"/g) ?? []).length, 2, 'the processor of each has a trend; the memory with no history has none'); assert.match(html, /aria-label="Processor use over the last 14 days: from 18% to 19\.4%"/);
+  assert.match(html, /data-capacity-compute-details="h1">Details<span class="sr-only"> of host esx-1\.lab<\/span>/); assert.match(html, /of cluster Prod cluster/);
+  assert.match(computeRowsHtml([compute({ stale: true })], ctx), /Last seen at 2026-10-22T12:00:00Z/); assert.match(computeRowsHtml([compute({ connectionName: null })], ctx), /A connection that was removed/);
+  assert.match(computeRowsHtml([compute({ cpu: metricView({ capacity: null, used: null, free: null, usedPercent: null, forecast: insufficient, trend: [] }) })], ctx), /<small class="block">Processor<\/small><span class="capacity-used">—<\/span>/);
+  assert.match(computeRowsHtml([], ctx), /No hosts yet/);
+  assert.match(computeRowsHtml([compute({ cpu: metricView({ forecast: forecast({ status: 'full', daysUntilFull: 0 }) }) })], ctx), /badge bad">Fully used/);
+  assert.match(computeRowsHtml([compute({ memory: metricView({ forecast: forecast({ status: 'stable', daysUntilFull: null }) }) })], ctx), /badge good">Not filling/);
+});
+
+test('the badge for hosts and clusters counts the processors and memories that will be fully used soon', () => {
+  assert.deepEqual(computeSummaryOf([]), { tone: 'neutral', text: 'No hosts' });
+  assert.deepEqual(computeSummaryOf([compute({ cpu: metricView({ forecast: forecast({ daysUntilFull: 90 }) }) })]), { tone: 'good', text: 'None fully used within 30 days' });
+  assert.deepEqual(computeSummaryOf([compute({ cpu: metricView({ forecast: forecast({ daysUntilFull: 25 }) }) })]), { tone: 'warn', text: '1 resource fully used within 30 days' });
+  assert.deepEqual(computeSummaryOf([compute({ cpu: metricView({ forecast: forecast({ daysUntilFull: 5 }) }), memory: metricView({ forecast: forecast({ daysUntilFull: 9 }) }) })]), { tone: 'bad', text: '2 resources fully used within 14 days' });
+});
+
+test('the dialog for a host or cluster offers the processor and the memory and the ranges, draws the chart in the right words, and lists the facts in the right units', () => {
+  const points = Array.from({ length: 13 }, (_, i) => ({ at: new Date(Date.parse('2026-10-09T12:00:00Z') + i * 86_400_000).toISOString(), usedBytes: 6000 + 300 * i, capacityBytes: 50400 }));
+  const html = computeDetailDialogHtml({ ...compute({ kind: 'cluster', name: 'Prod cluster', hostCount: 2 }), metric: 'cpu', days: 30, points, meta: {} }, ctx);
+  assert.match(html, /CLUSTER · ESXi 8/); assert.match(html, /<h2 id="capacity-title">Prod cluster<\/h2>/); assert.match(html, /role="status">Growing by about 0\.8 GHz a day: fully used in about 51 days/);
+  assert.match(html, /<option value="cpu" selected>Processor<\/option>/); assert.match(html, /<option value="memory">Memory<\/option>/); assert.match(html, /<option value="30" selected>30 days<\/option>/);
+  assert.match(html, /aria-label="Processor use of the cluster from 11\.9% to 19% over 12 days, expected to be fully used in about 51 days\."/);
+  assert.match(html, /<dt>Capacity<\/dt><dd>50\.4 GHz<\/dd>/); assert.match(html, /<dt>Growth<\/dt><dd>\+800 MHz a day<\/dd>/); assert.match(html, /<dt>Fully used in<\/dt><dd>51 days, about on 2026-12-12<\/dd>/); assert.match(html, /<dt>Hosts counted<\/dt><dd>2<\/dd>/);
+  const memory = computeDetailDialogHtml({ ...compute(), metric: 'memory', days: 7, points: [], meta: {} }, ctx);
+  assert.match(memory, /<option value="memory" selected>/); assert.match(memory, /<dt>Capacity<\/dt><dd>256 GB<\/dd>/); assert.match(memory, /Not enough readings in this range/); assert.match(memory, /1 reading|2 readings so far/); assert.doesNotMatch(memory, /Hosts counted/);
+});
+
+test('nothing a server sent about a host or cluster is put in the page unescaped', () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const html = computeRowsHtml([compute({ name: evil, connectionName: evil, parentName: evil, observedAt: evil, stale: true })], ctx) + computeDetailDialogHtml({ ...compute({ name: evil, connectionName: evil }), metric: 'cpu', days: 30, points: [], meta: {} }, ctx);
   assert.doesNotMatch(html, /<img/);
 });

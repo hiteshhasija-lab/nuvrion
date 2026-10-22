@@ -8,16 +8,16 @@
     "sha256": "3af328e7f69895fb2e384ba4a06d37eaec645a570fefa8328a45b7e01bc2ff86"
   },
   "alerts.js": {
-    "version": "20261017-2",
-    "sha256": "4d673957fa2e68d6349f4ae77f799e63fcb23999a205baa55185060c8eb1b19b"
+    "version": "20261023-1",
+    "sha256": "c6a30e3351cc0c4f98b88fd1d18c3115d36e9ddfdd378b644977912a175115ab"
   },
   "app.js": {
-    "version": "20261022-156",
-    "sha256": "c0bb6ede3964e28966bc5b31d4aa095ccf697862b3f55e3e233d2d8aed8a3632"
+    "version": "20261023-158",
+    "sha256": "d382bc7c1925e36a12e2158da1aaef40b9c371e6397c3124e7e731c40d565506"
   },
   "capacity.js": {
-    "version": "20261022-1",
-    "sha256": "540a7dda32f3c61fc16067b35c9cf7761dc1891e6d1c776134e0d0d5074d374c"
+    "version": "20261023-2",
+    "sha256": "930edb6b008dba590b191f67e900d6af053aba39fb9dc0b0dcbca9347487e443"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -48,8 +48,8 @@
     "sha256": "0d713a336bb057b96c803b4c4543e853184e035da59aff56bc110a717dbdb3ec"
   },
   "styles.css": {
-    "version": "20261022-138",
-    "sha256": "e380565f5b77f35eb7a292a40d988b04a98ddd600333a1a9235098f263663b97"
+    "version": "20261023-139",
+    "sha256": "89e71231a23b2dcd54df5f21ab1ede94f8aed782653d45e8dea59a8b928c2434"
   },
   "tags.js": {
     "version": "20261017-1",

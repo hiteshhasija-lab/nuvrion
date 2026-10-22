@@ -816,6 +816,33 @@ paths:
         '200': { description: The deliveries, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookDeliveryList' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /capacity/compute:
+    get:
+      tags: [Capacity]
+      operationId: listCapacityCompute
+      summary: Every host and cluster with its processor and memory use and when each will be fully used
+      description: Soonest to be fully used first. A cluster is the sum of its hosts that are up. Processor is in MHz and memory in bytes; the forecast is a straight line through six-hour averages of the last 14 days.
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The hosts and clusters, content: { application/json: { schema: { $ref: '#/components/schemas/CapacityComputeList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /capacity/compute/{objectId}:
+    get:
+      tags: [Capacity]
+      operationId: getCapacityCompute
+      summary: One host or cluster with its history for a chart
+      x-required-permission: resource.view
+      parameters:
+        - { name: objectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: metric, in: query, schema: { type: string, enum: [cpu, memory] } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 90 } }
+      responses:
+        '200': { description: The host or cluster, content: { application/json: { schema: { $ref: '#/components/schemas/CapacityComputeDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /capacity/datastores:
     get:
       tags: [Capacity]
@@ -1927,7 +1954,7 @@ components:
     AlertMetric:
       type: object
       required: [key, kind, label, unit, max]
-      properties: { key: { type: string }, kind: { type: string, enum: [vm, host, datastore] }, label: { type: string }, unit: { type: string }, max: { type: number } }
+      properties: { key: { type: string }, kind: { type: string, enum: [vm, host, datastore, cluster] }, label: { type: string }, unit: { type: string }, max: { type: number } }
     AlertMetricList:
       type: object
       required: [items, count, meta]
@@ -2001,7 +2028,7 @@ components:
         comparison: { type: string }
         threshold: { type: number }
         severity: { type: string, enum: [warning, critical] }
-        targetKind: { type: string, enum: [vm, host, datastore] }
+        targetKind: { type: string, enum: [vm, host, datastore, cluster] }
         targetId: { type: string }
         targetName: { type: string }
         connectionId: { type: [string, 'null'] }
@@ -2170,6 +2197,50 @@ components:
       type: object
       required: [items, count, meta]
       properties: { items: { type: array, items: { $ref: '#/components/schemas/WebhookDelivery' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    CapacityComputeMetric:
+      type: object
+      required: [capacity, used, free, usedPercent, forecast, trend]
+      properties:
+        capacity: { type: integer, nullable: true, description: 'MHz for processor, bytes for memory' }
+        used: { type: integer, nullable: true }
+        free: { type: integer, nullable: true }
+        usedPercent: { type: number, nullable: true }
+        forecast: { $ref: '#/components/schemas/CapacityForecast' }
+        trend: { type: array, items: { type: number }, description: Used share (0 to 100) over the last 14 days, at most 28 values }
+    CapacityCompute:
+      type: object
+      required: [id, kind, name, connectionId, connectionName, parentName, hostCount, observedAt, stale, cpu, memory]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [host, cluster] }
+        name: { type: string }
+        connectionId: { type: string, format: uuid }
+        connectionName: { type: string, nullable: true }
+        parentName: { type: string, nullable: true, description: The cluster a host belongs to }
+        hostCount: { type: integer, nullable: true, description: How many hosts of a cluster are up and counted }
+        observedAt: { type: string, format: date-time, nullable: true }
+        stale: { type: boolean }
+        cpu: { $ref: '#/components/schemas/CapacityComputeMetric' }
+        memory: { $ref: '#/components/schemas/CapacityComputeMetric' }
+    CapacityComputeList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/CapacityCompute' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    CapacityComputeDetail:
+      allOf:
+        - { $ref: '#/components/schemas/CapacityCompute' }
+        - type: object
+          required: [metric, days, points, meta]
+          properties:
+            metric: { type: string, enum: [cpu, memory] }
+            days: { type: integer }
+            points:
+              type: array
+              items:
+                type: object
+                required: [at, usedBytes, capacityBytes]
+                properties: { at: { type: string, format: date-time }, usedBytes: { type: integer, description: 'Used, in MHz for processor or bytes for memory' }, capacityBytes: { type: integer } }
+            meta: { $ref: '#/components/schemas/ListMeta' }
     CapacityForecast:
       type: object
       required: [status, confidence, growthBytesPerDay, daysUntilFull, projectedFullAt, sampleCount, spanDays, fit, summary]

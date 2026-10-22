@@ -15,10 +15,14 @@ export const METRICS = Object.freeze({
   'host.memory_percent': { kind: 'host', label: 'Host memory use', unit: '%', max: 100 },
   'datastore.used_percent': { kind: 'datastore', label: 'Datastore space used', unit: '%', max: 100 },
   'datastore.free_gb': { kind: 'datastore', label: 'Datastore free space', unit: 'GB', max: 10_000_000 },
-  'datastore.days_until_full': { kind: 'datastore', label: 'Datastore days until full', unit: 'days', max: 3650 }
+  'datastore.days_until_full': { kind: 'datastore', label: 'Datastore days until full', unit: 'days', max: 3650 },
+  'host.cpu_days_until_full': { kind: 'host', label: 'Host CPU days until fully used', unit: 'days', max: 3650 },
+  'host.memory_days_until_full': { kind: 'host', label: 'Host memory days until fully used', unit: 'days', max: 3650 },
+  'cluster.cpu_days_until_full': { kind: 'cluster', label: 'Cluster CPU days until fully used', unit: 'days', max: 3650 },
+  'cluster.memory_days_until_full': { kind: 'cluster', label: 'Cluster memory days until fully used', unit: 'days', max: 3650 }
 });
 export const METRIC_KEYS = Object.freeze(Object.keys(METRICS));
-export const KIND_LABELS = Object.freeze({ vm: 'virtual machine', host: 'host', datastore: 'datastore' });
+export const KIND_LABELS = Object.freeze({ vm: 'virtual machine', host: 'host', datastore: 'datastore', cluster: 'cluster' });
 export const COMPARISONS = Object.freeze(['above', 'below']);
 export const SEVERITIES = Object.freeze(['warning', 'critical']);
 export const LIMITS = Object.freeze({ rules: 100, nameMax: 100, descriptionMax: 300, durationMax: 1440 });
@@ -77,13 +81,13 @@ export function describeRule(rule) {
 export const describeValue = (metric, value) => `${trimNumber(value)}${METRICS[metric]?.unit === '%' ? '%' : ` ${METRICS[metric]?.unit ?? ''}`.trimEnd()}`;
 
 // ---- measuring ---------------------------------------------------------------------------------------------------------------------------------------------------------
-// resources: virtual machines; metrics: the latest sample of each; infrastructure: hosts and datastores; connections for their state; forecasts: Map(datastore id -> forecast). Returns the targets to evaluate:
+// resources: virtual machines; metrics: the latest sample of each; infrastructure: hosts and datastores; connections for their state; forecasts: Map(datastore id -> forecast); computeForecasts: Map(host or cluster id -> { cpu, memory } forecasts). Returns the targets to evaluate:
 // { kind, id, name, connectionId, observedAt (ms), values: { 'vm.cpu_percent': 12.5, ... } } (a value that is not reported is absent).
 const number = value => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const percent = (used, total) => (number(used) !== null && number(total) !== null && total > 0 ? Math.max(0, used / total * 100) : null);
 const timeOf = value => { const at = new Date(value ?? '').getTime(); return Number.isFinite(at) ? at : null; };
 
-export function collectTargets({ resources = [], metrics = [], infrastructure = [], connections = [], forecasts = new Map() }) {
+export function collectTargets({ resources = [], metrics = [], infrastructure = [], connections = [], forecasts = new Map(), computeForecasts = new Map() }) {
   const live = new Set(connections.filter(connection => connection.status !== 'deleted').map(connection => connection.id));
   const sampleOf = new Map(metrics.map(sample => [sample.resourceId, sample]));
   const targets = [];
@@ -105,12 +109,19 @@ export function collectTargets({ resources = [], metrics = [], infrastructure = 
       const cpu = percent(a.cpuUsageMhz, a.cpuMhz), memory = percent(a.memoryUsageBytes, a.memoryBytes);
       if (cpu !== null) values['host.cpu_percent'] = Math.min(100, cpu);
       if (memory !== null) values['host.memory_percent'] = Math.min(100, memory);
+      const ahead = computeForecasts.get(object.id), cpuDays = daysUntilFullForAlert(ahead?.cpu), memoryDays = daysUntilFullForAlert(ahead?.memory);
+      if (cpuDays !== null) values['host.cpu_days_until_full'] = cpuDays;
+      if (memoryDays !== null) values['host.memory_days_until_full'] = memoryDays;
     } else if (object.kind === 'datastore') {
       const used = number(a.capacityBytes) !== null && number(a.freeBytes) !== null ? a.capacityBytes - a.freeBytes : null, usedPercent = percent(used, a.capacityBytes);
       if (usedPercent !== null) values['datastore.used_percent'] = Math.min(100, usedPercent);
       if (number(a.freeBytes) !== null) values['datastore.free_gb'] = a.freeBytes / 1024 ** 3;
       const days = daysUntilFullForAlert(forecasts.get(object.id));   // only a forecast worth trusting is reported (capacity-rules.js)
       if (days !== null) values['datastore.days_until_full'] = days;
+    } else if (object.kind === 'cluster') {
+      const ahead = computeForecasts.get(object.id), cpuDays = daysUntilFullForAlert(ahead?.cpu), memoryDays = daysUntilFullForAlert(ahead?.memory);
+      if (cpuDays !== null) values['cluster.cpu_days_until_full'] = cpuDays;
+      if (memoryDays !== null) values['cluster.memory_days_until_full'] = memoryDays;
     } else continue;
     targets.push({ kind: object.kind, id: object.id, name: object.name, connectionId: object.connectionId, observedAt, values });
   }

@@ -57,7 +57,7 @@ describe('threshold alerts over the API', { skip: dependenciesInstalled ? false 
 
   test('the metrics a rule can use are listed with what they measure and their units', async () => {
     const metrics = (await call('operator1', 'GET', '/api/v1/alert-metrics')).json.items;
-    assert.deepEqual(metrics.map(metric => metric.key).sort(), ['datastore.days_until_full', 'datastore.free_gb', 'datastore.used_percent', 'host.cpu_percent', 'host.memory_percent', 'vm.cpu_percent', 'vm.memory_percent']);
+    assert.deepEqual(metrics.map(metric => metric.key).sort(), ['cluster.cpu_days_until_full', 'cluster.memory_days_until_full', 'datastore.days_until_full', 'datastore.free_gb', 'datastore.used_percent', 'host.cpu_days_until_full', 'host.cpu_percent', 'host.memory_days_until_full', 'host.memory_percent', 'vm.cpu_percent', 'vm.memory_percent']);
     assert.deepEqual(metrics.find(metric => metric.key === 'datastore.free_gb'), { key: 'datastore.free_gb', kind: 'datastore', label: 'Datastore free space', unit: 'GB', max: 10000000 });
   });
 

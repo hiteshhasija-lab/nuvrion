@@ -69,3 +69,22 @@ test('an interval of zero keeps every distinct moment (used by tests to build a 
   const service = new CapacityService({ clock: () => NOW, intervalMs: 0 });
   assert.deepEqual(await service.record([reading(0), reading(1), reading(2)]), { recorded: 3, skipped: 0 });
 });
+
+test('processor and memory readings of a host are kept apart from its storage readings and from each other, and an unknown kind of reading is refused', async () => {
+  const service = new CapacityService({ clock: () => NOW });
+  const at = NOW;
+  const result = await service.record([
+    { objectId: DS, metric: 'cpu', capacityBytes: 50400, freeBytes: 40600, observedAt: at },       // MHz
+    { objectId: DS, metric: 'memory', capacityBytes: 256 * GB, freeBytes: 160 * GB, observedAt: at },
+    { objectId: DS, capacityBytes: 1000 * GB, freeBytes: 400 * GB, observedAt: at },                // storage by default
+    { objectId: DS, metric: 'network', capacityBytes: 1000, freeBytes: 10, observedAt: at }
+  ]);
+  assert.deepEqual(result, { recorded: 3, skipped: 1 });
+  const of = async metric => (await service.historyFor([DS], { metric })).get(DS);
+  assert.deepEqual((await of('cpu')).map(sample => [sample.capacityBytes, sample.usedBytes]), [[50400, 9800]]);
+  assert.deepEqual((await of('memory')).map(sample => sample.usedBytes), [96 * GB]);
+  assert.deepEqual((await of('storage')).map(sample => sample.usedBytes), [600 * GB]);
+  assert.equal((await service.historyFor([DS])).get(DS).length, 1, 'with no metric named, storage');
+  assert.deepEqual(await service.record([{ objectId: DS, metric: 'cpu', capacityBytes: 50400, freeBytes: 40000, observedAt: at + 5 * 60_000 }]), { recorded: 0, skipped: 1 }, 'the half-hour rule is per metric');
+  assert.deepEqual(await service.record([{ objectId: DS, metric: 'memory', capacityBytes: 256 * GB, freeBytes: 150 * GB, observedAt: at + 40 * 60_000 }]), { recorded: 1, skipped: 0 });
+});

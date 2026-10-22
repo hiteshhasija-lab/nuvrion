@@ -2,7 +2,9 @@
 // by capacity-rules.js.
 import { dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { DAY_MS, RETENTION_DAYS, SAMPLE_INTERVAL_MS, sanitizeReading, worthKeeping } from './capacity-rules.js';
+import { DAY_MS, METRICS, RETENTION_DAYS, SAMPLE_INTERVAL_MS, sanitizeReading, worthKeeping } from './capacity-rules.js';
+
+const keyOf = (objectId, metric) => (metric === 'storage' ? objectId : `${objectId}#${metric}`);   // storage keeps the key it always had, so an existing file is read as before
 
 export class CapacityService {
   #samples = new Map();   // objectId -> [{ at, capacityBytes, usedBytes, connectionId }] ascending
@@ -21,17 +23,17 @@ export class CapacityService {
     renameSync(temporary, this.#file);
   }
 
-  // points: [{ objectId, connectionId, capacityBytes, freeBytes, observedAt }]. Readings that cannot be trusted, or that are too close to one already kept, are skipped.
+  // points: [{ objectId, metric ('storage' by default, or 'cpu' or 'memory'), connectionId, capacityBytes, freeBytes, observedAt }]. Readings that cannot be trusted, or that are too close to one already kept, are skipped.
   async record(points) {
     let recorded = 0, skipped = 0;
     const cutoff = this.#clock() - this.#retentionMs;
     for (const point of points) {
-      const reading = sanitizeReading(point);
-      const list = this.#samples.get(point.objectId) ?? [];
-      if (!reading || !point.objectId || reading.at < cutoff || !worthKeeping(reading, list, this.#intervalMs)) { skipped++; continue; }
+      const reading = sanitizeReading(point), metric = point.metric ?? 'storage';
+      const list = this.#samples.get(keyOf(point.objectId, metric)) ?? [];
+      if (!METRICS.includes(metric) || !reading || !point.objectId || reading.at < cutoff || !worthKeeping(reading, list, this.#intervalMs)) { skipped++; continue; }
       list.push({ at: reading.at, capacityBytes: reading.capacityBytes, usedBytes: reading.usedBytes, connectionId: point.connectionId ?? null });
       list.sort((a, b) => a.at - b.at);
-      this.#samples.set(point.objectId, list);
+      this.#samples.set(keyOf(point.objectId, metric), list);
       recorded++;
     }
     for (const [id, list] of this.#samples) {
@@ -43,9 +45,9 @@ export class CapacityService {
   }
 
   // The samples of each object since `sinceMs`: Map(objectId -> [{ at, capacityBytes, usedBytes }]).
-  async historyFor(objectIds, { sinceMs = 0 } = {}) {
+  async historyFor(objectIds, { sinceMs = 0, metric = 'storage' } = {}) {
     const out = new Map();
-    for (const id of objectIds) out.set(id, (this.#samples.get(id) ?? []).filter(sample => sample.at >= sinceMs).map(({ at, capacityBytes, usedBytes }) => ({ at, capacityBytes, usedBytes })));
+    for (const id of objectIds) out.set(id, (this.#samples.get(keyOf(id, metric)) ?? []).filter(sample => sample.at >= sinceMs).map(({ at, capacityBytes, usedBytes }) => ({ at, capacityBytes, usedBytes })));
     return out;
   }
 }

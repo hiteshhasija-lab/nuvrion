@@ -56,7 +56,7 @@ import { postWebhook } from '../../../modules/notifications/src/webhook-sender.j
 import { EVENT_TYPES, FORMATS, WebhookError, collectEvents as collectWebhookEventList } from '../../../modules/notifications/src/webhook-rules.js';
 import { CapacityService } from '../../../modules/monitoring/src/capacity-service.js';
 import { PostgresCapacityService } from '../../../modules/monitoring/src/postgres-capacity-service.js';
-import { DAY_MS, RETENTION_DAYS, WINDOW_DAYS, SAMPLE_INTERVAL_MS, chartPoints, describeForecast, forecast as capacityForecast, trend as capacityTrend } from '../../../modules/monitoring/src/capacity-rules.js';
+import { COMPUTE_BUCKET_MS, DAY_MS, RETENTION_DAYS, WINDOW_DAYS, SAMPLE_INTERVAL_MS, chartPoints, describeForecast, forecast as capacityForecast, trend as capacityTrend } from '../../../modules/monitoring/src/capacity-rules.js';
 import { MfaError } from '../../../modules/identity/src/mfa.js';
 import { PERMISSIONS, PERMISSION_KEYS, RoleError, permissionsBeyond } from '../../../modules/identity/src/roles.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
@@ -209,18 +209,45 @@ const webhookTimer=setInterval(()=>webhookDispatcher.tick().catch(error=>console
 const webhookPruneTimer=setInterval(()=>webhooks.prune().catch(error=>console.error(JSON.stringify({level:'error',event:'webhooks.prune_failed',error:error.message}))),60*60_000);webhookPruneTimer.unref?.();
 // Capacity (docs/capacity.md): a reading of every datastore that was seen in the last ten minutes is kept (at most one every half hour), and a forecast is a line through the last 14 days.
 const CAPACITY_FRESH_MS=10*60_000;
+// Hosts and clusters: the processor (MHz) and memory (bytes) of each host that is up and was seen in the last ten minutes, and of each cluster the sum of its hosts that are (a cluster's capacity
+// follows its hosts: a host in maintenance lowers it, and a forecast then uses only the readings since the change).
+const numberOr=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
+function computeUsage(object,now){
+  const a=object.attributes??{},observedAt=new Date(object.observedAt??'').getTime();
+  if(object.kind!=='host'||object.lifecycleState!=='active'||!Number.isFinite(observedAt)||now-observedAt>CAPACITY_FRESH_MS)return null;
+  if((a.powerState&&a.powerState!=='poweredOn')||(a.connectionState&&a.connectionState!=='connected'))return null;
+  const cpuMhz=numberOr(a.cpuMhz),cpuUsageMhz=numberOr(a.cpuUsageMhz),memoryBytes=numberOr(a.memoryBytes),memoryUsageBytes=numberOr(a.memoryUsageBytes);
+  return {observedAt,cpu:cpuMhz>0&&cpuUsageMhz!==null?{capacity:cpuMhz,used:Math.min(cpuMhz,cpuUsageMhz)}:null,memory:memoryBytes>0&&memoryUsageBytes!==null?{capacity:memoryBytes,used:Math.min(memoryBytes,memoryUsageBytes)}:null};
+}
+function computeRows(objects,now){
+  const hosts=objects.filter(object=>object.kind==='host'&&object.lifecycleState==='active'),clusters=objects.filter(object=>object.kind==='cluster'&&object.lifecycleState==='active'),rows=[];
+  for(const host of hosts){const usage=computeUsage(host,now);rows.push({object:host,usage,hosts:usage?1:0});}
+  for(const cluster of clusters){
+    const members=hosts.filter(host=>host.connectionId===cluster.connectionId&&host.parentNativeId===cluster.nativeId),usages=members.map(host=>computeUsage(host,now)).filter(Boolean);
+    const sum=metric=>{const parts=usages.map(usage=>usage[metric]).filter(Boolean);return parts.length?{capacity:parts.reduce((total,part)=>total+part.capacity,0),used:parts.reduce((total,part)=>total+part.used,0)}:null;};
+    rows.push({object:cluster,usage:usages.length?{observedAt:Math.max(...usages.map(usage=>usage.observedAt)),cpu:sum('cpu'),memory:sum('memory')}:null,hosts:usages.length,memberCount:members.length});
+  }
+  return rows;
+}
 async function recordCapacity(){
-  const objects=await infrastructure.list({kind:'datastore',lifecycleState:'active'}),now=Date.now();
-  return capacity.record(objects.map(object=>({objectId:object.id,connectionId:object.connectionId,capacityBytes:object.attributes?.capacityBytes,freeBytes:object.attributes?.freeBytes,observedAt:new Date(object.observedAt??'').getTime()})).filter(point=>Number.isFinite(point.observedAt)&&now-point.observedAt<=CAPACITY_FRESH_MS));
+  const objects=await infrastructure.list({lifecycleState:'active'}),now=Date.now(),points=[];
+  for(const object of objects.filter(item=>item.kind==='datastore'))points.push({objectId:object.id,connectionId:object.connectionId,capacityBytes:object.attributes?.capacityBytes,freeBytes:object.attributes?.freeBytes,observedAt:new Date(object.observedAt??'').getTime()});
+  for(const {object,usage} of computeRows(objects,now))if(usage)for(const metric of ['cpu','memory'])if(usage[metric])points.push({objectId:object.id,metric,connectionId:object.connectionId,capacityBytes:usage[metric].capacity,freeBytes:usage[metric].capacity-usage[metric].used,observedAt:usage.observedAt});
+  return capacity.record(points.filter(point=>Number.isFinite(point.observedAt)&&now-point.observedAt<=CAPACITY_FRESH_MS));
 }
 async function datastoreForecasts(objects){
   const ids=objects.filter(object=>object.kind==='datastore'&&object.lifecycleState==='active').map(object=>object.id),now=Date.now(),history=await capacity.historyFor(ids,{sinceMs:now-(WINDOW_DAYS+1)*DAY_MS});
   return new Map(ids.map(id=>[id,capacityForecast(history.get(id)??[],{now})]));
 }
+async function computeForecasts(objects){
+  const ids=objects.filter(object=>['host','cluster'].includes(object.kind)&&object.lifecycleState==='active').map(object=>object.id),now=Date.now(),sinceMs=now-(WINDOW_DAYS+1)*DAY_MS;
+  const [cpu,memory]=await Promise.all(['cpu','memory'].map(metric=>capacity.historyFor(ids,{sinceMs,metric})));
+  return new Map(ids.map(id=>[id,{cpu:capacityForecast(cpu.get(id)??[],{now,bucketMs:COMPUTE_BUCKET_MS}),memory:capacityForecast(memory.get(id)??[],{now,bucketMs:COMPUTE_BUCKET_MS})}]));
+}
 const capacityTimer=setInterval(()=>recordCapacity().catch(error=>console.error(JSON.stringify({level:'error',event:'capacity.record_failed',error:error.message}))),Number(process.env.NUVRION_CAPACITY_INTERVAL_MS??60_000));capacityTimer.unref?.();
 async function evaluateAlerts(){
   if(alertEvaluation)return alertEvaluation;   // one at a time: a second caller gets the evaluation already running
-  alertEvaluation=(async()=>{try{const [resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects);return await alerts.evaluate(collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts}));}finally{alertEvaluation=null;}})();
+  alertEvaluation=(async()=>{try{const [resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects),computed=await computeForecasts(objects);return await alerts.evaluate(collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts,computeForecasts:computed}));}finally{alertEvaluation=null;}})();
   return alertEvaluation;
 }
 const alertTimer=setInterval(()=>evaluateAlerts().catch(error=>console.error(JSON.stringify({level:'error',event:'alerts.evaluation_failed',error:error.message}))),Number(process.env.NUVRION_ALERT_INTERVAL_MS??60000));alertTimer.unref?.();
@@ -397,6 +424,38 @@ export async function handler(req, res) {
       const {status,confidence,growthBytesPerDay,daysUntilFull,projectedFullAt,sampleCount,spanDays,fit}=f;
       return {id:object.id,name:object.name,connectionId:object.connectionId,connectionName:connectionNames.get(object.connectionId)??null,capacityBytes,freeBytes,usedBytes,usedPercent:capacityBytes?Math.round(usedBytes/capacityBytes*10000)/100:null,observedAt:object.observedAt??null,stale:!Number.isFinite(observedAt)||now-observedAt>CAPACITY_FRESH_MS,forecast:{status,confidence,growthBytesPerDay,daysUntilFull,projectedFullAt,sampleCount,spanDays,fit:fit??null,summary:describeForecast(f)}};
     };
+    // hosts and clusters: processor and memory, with the same kind of forecast
+    const capacityComputeMatch=url.pathname.match(/^\/api\/v1\/capacity\/compute\/([0-9a-f-]{36})$/i);
+    const computeItem=(row,forecasts,trends,connectionNames,parentNames,now)=>{
+      const {object,usage}=row,view=metric=>{const part=usage?.[metric]??null,f=forecasts[metric];return {capacity:part?.capacity??null,used:part?.used??null,free:part?part.capacity-part.used:null,usedPercent:part?Math.round(part.used/part.capacity*10000)/100:null,forecast:{...pickForecast(f),summary:describeForecast(f,metric)},trend:trends?.[metric]??[]};};
+      const observedAt=new Date(object.observedAt??'').getTime();
+      return {id:object.id,kind:object.kind,name:object.name,connectionId:object.connectionId,connectionName:connectionNames.get(object.connectionId)??null,parentName:object.kind==='host'?parentNames.get(`${object.connectionId}:${object.parentNativeId}`)??null:null,
+        hostCount:object.kind==='cluster'?row.hosts:null,observedAt:object.observedAt??null,stale:!Number.isFinite(observedAt)||now-observedAt>CAPACITY_FRESH_MS,cpu:view('cpu'),memory:view('memory')};
+    };
+    const pickForecast=f=>({status:f.status,confidence:f.confidence,growthBytesPerDay:f.growthBytesPerDay,daysUntilFull:f.daysUntilFull,projectedFullAt:f.projectedFullAt,sampleCount:f.sampleCount,spanDays:f.spanDays,fit:f.fit??null});
+    const computeContext=async(sinceMs,metrics)=>{
+      const now=Date.now(),objects=await infrastructure.list({lifecycleState:'active'}),rows=computeRows(objects,now),connectionNames=new Map((await connections.list()).map(connection=>[connection.id,connection.name])),parentNames=new Map(objects.filter(object=>object.kind==='cluster').map(object=>[`${object.connectionId}:${object.nativeId}`,object.name])),ids=rows.map(row=>row.object.id);
+      const history={};for(const metric of metrics)history[metric]=await capacity.historyFor(ids,{sinceMs,metric});
+      return {now,rows,connectionNames,parentNames,history};
+    };
+    if(req.method==='GET'&&url.pathname==='/api/v1/capacity/compute'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const context=await computeContext(Date.now()-WINDOW_DAYS*DAY_MS,['cpu','memory']),{now}=context;
+      const items=context.rows.map(row=>{const id=row.object.id,series=metric=>context.history[metric].get(id)??[],forecasts={cpu:capacityForecast(series('cpu'),{now,bucketMs:COMPUTE_BUCKET_MS}),memory:capacityForecast(series('memory'),{now,bucketMs:COMPUTE_BUCKET_MS})};return computeItem(row,forecasts,{cpu:capacityTrend(series('cpu')),memory:capacityTrend(series('memory'))},context.connectionNames,context.parentNames,now);});
+      const rank=item=>Math.min(...['cpu','memory'].map(metric=>item[metric].forecast.status==='full'?0:item[metric].forecast.daysUntilFull??Infinity));
+      items.sort((x,y)=>rank(x)-rank(y)||(x.kind===y.kind?0:x.kind==='cluster'?-1:1)||x.name.localeCompare(y.name));
+      return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='GET'&&capacityComputeMatch){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const requested=Number(url.searchParams.get('days')??30),metric=url.searchParams.get('metric')??'cpu';
+      if(!Number.isInteger(requested)||requested<1||requested>RETENTION_DAYS)return problem(res,422,'NUV_CAPACITY_RANGE_INVALID',`days must be a whole number from 1 to ${RETENTION_DAYS}.`,correlationId);
+      if(!['cpu','memory'].includes(metric))return problem(res,422,'NUV_CAPACITY_METRIC_INVALID','metric must be cpu or memory.',correlationId);
+      const context=await computeContext(Date.now()-Math.max(requested,WINDOW_DAYS)*DAY_MS,['cpu','memory']),{now}=context,row=context.rows.find(item=>item.object.id===capacityComputeMatch[1].toLowerCase());
+      if(!row)return problem(res,404,'NUV_CAPACITY_OBJECT_NOT_FOUND','The host or cluster was not found.',correlationId);
+      const id=row.object.id,series=name=>context.history[name].get(id)??[],forecasts={cpu:capacityForecast(series('cpu'),{now,bucketMs:COMPUTE_BUCKET_MS}),memory:capacityForecast(series('memory'),{now,bucketMs:COMPUTE_BUCKET_MS})};
+      return json(res,200,{...computeItem(row,forecasts,null,context.connectionNames,context.parentNames,now),metric,days:requested,points:chartPoints(series(metric).filter(sample=>sample.at>=now-requested*DAY_MS)),meta:{correlationId}},correlationId);
+    }
     if(req.method==='GET'&&url.pathname==='/api/v1/capacity/datastores'){
       const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
       const now=Date.now(),objects=(await infrastructure.list({kind:'datastore'})).filter(object=>object.lifecycleState==='active'),connectionNames=new Map((await connections.list()).map(connection=>[connection.id,connection.name])),history=await capacity.historyFor(objects.map(object=>object.id),{sinceMs:now-WINDOW_DAYS*DAY_MS});
@@ -495,8 +554,8 @@ export async function handler(req, res) {
     if(req.method==='POST'&&url.pathname==='/api/v1/alert-rules/preview'){
       const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
       try{
-        const rule=parseRule(await body(req)),[resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects);
-        return json(res,200,{summary:describeRule(rule),...previewRule(rule,collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts}),Date.now())},correlationId);
+        const rule=parseRule(await body(req)),[resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects),computed=await computeForecasts(objects);
+        return json(res,200,{summary:describeRule(rule),...previewRule(rule,collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts,computeForecasts:computed}),Date.now())},correlationId);
       }catch(error){return alertRefused(error);}
     }
     const alertRuleMatch=url.pathname.match(/^\/api\/v1\/alert-rules\/([0-9a-f-]{36})$/i);

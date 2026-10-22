@@ -1207,3 +1207,8 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .capacity-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 18px;margin:0}.capacity-facts>div{display:grid;gap:2px}.capacity-facts dt{font-size:12px;color:#4d5b60}.capacity-facts dd{margin:0;font-weight:600}
 .webhook-hint{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;word-break:break-all}
 .webhook-events{display:grid;gap:6px}
+.capacity-tabs{display:flex;gap:4px;margin:0 0 12px;padding:4px;border-radius:12px;width:max-content;max-width:100%}
+.capacity-tabs button{border:0;background:transparent;padding:8px 16px;border-radius:9px;font-weight:600;color:#2c3a40}
+.capacity-controls{display:flex;flex-wrap:wrap;gap:8px 18px}
+.capacity-line-item{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-bottom:4px;font-size:13px}.capacity-label{min-width:68px;color:#4d5b60;font-size:12px}
+td.capacity-trend .capacity-spark{margin-bottom:4px}

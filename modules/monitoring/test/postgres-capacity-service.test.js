@@ -55,3 +55,27 @@ test('PostgreSQL: readings older than 90 days are not recorded and are pruned as
   assert.equal((await service.historyFor([DS], { sinceMs: 0 })).get(DS).length, 0, 'the old reading was pruned');
   assert.equal((await service.historyFor([DS2])).get(DS2).length, 1);
 });
+
+test('PostgreSQL: processor and memory readings of a host are kept apart from its storage readings and from each other, and an unknown kind of reading is refused', database, async () => {
+  const at = time.now;
+  const result = await service.record([
+    { objectId: DS, metric: 'cpu', capacityBytes: 50400, freeBytes: 40600, observedAt: at },
+    { objectId: DS, metric: 'memory', capacityBytes: 256 * GB, freeBytes: 160 * GB, observedAt: at },
+    { objectId: DS, capacityBytes: 1000 * GB, freeBytes: 400 * GB, observedAt: at },
+    { objectId: DS, metric: 'network', capacityBytes: 1000, freeBytes: 10, observedAt: at }
+  ]);
+  assert.deepEqual(result, { recorded: 3, skipped: 1 });
+  const of = async metric => (await service.historyFor([DS], { metric })).get(DS);
+  assert.deepEqual((await of('cpu')).map(sample => [sample.capacityBytes, sample.usedBytes]), [[50400, 9800]]);
+  assert.deepEqual((await of('memory')).map(sample => sample.usedBytes), [96 * GB]);
+  assert.deepEqual((await of('storage')).map(sample => sample.usedBytes), [600 * GB]);
+  assert.deepEqual(await service.record([{ objectId: DS, metric: 'cpu', capacityBytes: 50400, freeBytes: 40000, observedAt: at + 5 * 60_000 }]), { recorded: 0, skipped: 1 });
+  await assert.rejects(db.pool.query("INSERT INTO monitoring.capacity_samples (object_id, metric, observed_at, capacity_bytes, free_bytes) VALUES ($1, 'network', now(), 10, 1)", [DS]), /check|violates/i);
+});
+
+test('PostgreSQL: an alert may be about a cluster', database, async () => {
+  const id = '44444444-4444-4444-8444-444444444444';
+  await db.pool.query(`INSERT INTO monitoring.alerts (rule_name, metric, comparison, threshold, severity, target_kind, target_id, target_name, value, first_seen_at, last_seen_at) VALUES ('r', 'cluster.cpu_days_until_full', 'below', 14, 'warning', 'cluster', $1, 'Cluster', 9, now(), now())`, [id]);
+  await assert.rejects(db.pool.query(`INSERT INTO monitoring.alerts (rule_name, metric, comparison, threshold, severity, target_kind, target_id, target_name, value, first_seen_at, last_seen_at) VALUES ('r', 'x', 'below', 14, 'warning', 'rack', $1, 'Rack', 9, now(), now())`, [id]), /check|violates/i);
+  await db.adminPool.query('DELETE FROM monitoring.alerts');
+});
