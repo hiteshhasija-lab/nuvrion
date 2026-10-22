@@ -41,7 +41,7 @@ describe('threshold alerts over the API', { skip: dependenciesInstalled ? false 
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-alerts-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_ALERT_INTERVAL_MS: '3600000' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_ALERT_INTERVAL_MS: '3600000' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -57,7 +57,7 @@ describe('threshold alerts over the API', { skip: dependenciesInstalled ? false 
 
   test('the metrics a rule can use are listed with what they measure and their units', async () => {
     const metrics = (await call('operator1', 'GET', '/api/v1/alert-metrics')).json.items;
-    assert.deepEqual(metrics.map(metric => metric.key).sort(), ['datastore.free_gb', 'datastore.used_percent', 'host.cpu_percent', 'host.memory_percent', 'vm.cpu_percent', 'vm.memory_percent']);
+    assert.deepEqual(metrics.map(metric => metric.key).sort(), ['datastore.days_until_full', 'datastore.free_gb', 'datastore.used_percent', 'host.cpu_percent', 'host.memory_percent', 'vm.cpu_percent', 'vm.memory_percent']);
     assert.deepEqual(metrics.find(metric => metric.key === 'datastore.free_gb'), { key: 'datastore.free_gb', kind: 'datastore', label: 'Datastore free space', unit: 'GB', max: 10000000 });
   });
 

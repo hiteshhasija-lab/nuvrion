@@ -59,6 +59,21 @@ test('targets are measured from the latest samples and the infrastructure: perce
   assert.equal(byId.d1.values['datastore.used_percent'], 75); assert.equal(byId.d1.values['datastore.free_gb'], 250);
 });
 
+test('the days until a datastore is full are measured from its forecast: only when the forecast is trusted, "no end in sight" when it is not filling, nothing when unknown', () => {
+  const datastore = id => ({ id, kind: 'datastore', name: id, connectionId: CONNECTION, lifecycleState: 'active', observedAt: new Date(NOW).toISOString(), attributes: { capacityBytes: 1000, freeBytes: 500 } });
+  const forecasts = new Map([
+    ['filling', { status: 'growing', confidence: 'high', daysUntilFull: 12.5 }], ['flat', { status: 'stable', confidence: 'medium' }], ['guess', { status: 'growing', confidence: 'low', daysUntilFull: 3 }],
+    ['new', { status: 'insufficient', confidence: null }], ['full', { status: 'full', confidence: 'high', daysUntilFull: 0 }]
+  ]);
+  const targets = collectTargets({ connections: [{ id: CONNECTION, status: 'active' }], infrastructure: ['filling', 'flat', 'guess', 'new', 'full', 'unknown'].map(datastore), forecasts });
+  const days = Object.fromEntries(targets.map(target => [target.id, target.values['datastore.days_until_full']]));
+  assert.deepEqual(days, { filling: 12.5, flat: 3650, guess: undefined, new: undefined, full: 0, unknown: undefined });
+  assert.equal(collectTargets({ connections: [{ id: CONNECTION, status: 'active' }], infrastructure: [datastore('x')] })[0].values['datastore.days_until_full'], undefined, 'no forecasts given: nothing is reported');
+  assert.doesNotThrow(() => parseRule({ name: 'Filling', metric: 'datastore.days_until_full', comparison: 'below', threshold: 14, severity: 'warning' }));
+  assert.throws(() => parseRule({ name: 'Too long', metric: 'datastore.days_until_full', comparison: 'below', threshold: 4000, severity: 'warning' }));
+  assert.equal(describeRule({ name: 'x', metric: 'datastore.days_until_full', comparison: 'below', threshold: 14, durationMinutes: 0 }), 'Datastore days until full below 14 days');
+});
+
 const rule = (over = {}) => ({ id: 'r1', name: 'Busy', metric: 'vm.cpu_percent', comparison: 'above', threshold: 90, durationMinutes: 0, severity: 'warning', connectionId: null, enabled: true, ...over });
 const target = (id, value, over = {}) => ({ kind: 'vm', id, name: id, connectionId: CONNECTION, observedAt: NOW, values: { 'vm.cpu_percent': value }, ...over });
 const alert = (over = {}) => ({ id: 'a1', ruleId: 'r1', targetId: 't1', status: 'active', ...over });

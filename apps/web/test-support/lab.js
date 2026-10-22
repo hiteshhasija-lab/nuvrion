@@ -8,11 +8,11 @@ export const ADMIN_PASSWORD = 'E2e-Test-Password-1!'; // secret-scan:allow (fake
 
 export async function startConsole() {
   const workDir = mkdtempSync(join(tmpdir(), 'nuvrion-e2e-'));
-  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_SCHEDULE_INTERVAL_MS: '3600000', NUVRION_ALERT_INTERVAL_MS: '3600000', NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
+  Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_SCHEDULE_INTERVAL_MS: '3600000', NUVRION_ALERT_INTERVAL_MS: '3600000', NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD });
   delete process.env.NUVRION_RUNTIME_PROFILE;
   const log = console.log;                                          // the server logs every request as a JSON line; keep the test output readable
   console.log = (...args) => { if (!(typeof args[0] === 'string' && args[0].startsWith('{"level":'))) log(...args); };
-  const { createServer } = await import('../../api/src/server.js');
+  const { createServer, capacityService } = await import('../../api/src/server.js');
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}`;
@@ -63,8 +63,18 @@ export async function startConsole() {
     return { agentId: enrolled.agentId, secret: enrolled.secret, connectionId: connection.json.id, report, discover, completeCommands };
   };
 
+  // Gives a datastore a past: ten days of readings, one every six hours, that end where the datastore is now and grow by `perDayBytes` a day (nothing in the product writes a
+  // history that did not happen, so the lab gives it directly to the capacity store).
+  const giveDatastoreHistory = async (name, perDayBytes) => {
+    const datastore = (await api('GET', '/api/v1/infrastructure?kind=datastore')).json.items.find(item => item.name === name);
+    if (!datastore) throw new Error(`no datastore called ${name}`);
+    const { capacityBytes, freeBytes } = datastore.attributes, now = Date.now(), points = [];
+    for (let hours = 240; hours >= 6; hours -= 6) points.push({ objectId: datastore.id, connectionId: datastore.connectionId, capacityBytes, freeBytes: freeBytes + perDayBytes * hours / 24, observedAt: now - hours * 3_600_000 });
+    return capacityService.record(points);
+  };
+
   return {
-    url, api, createUser, addWorkstationAgent,
+    url, api, createUser, addWorkstationAgent, giveDatastoreHistory,
     async close() { console.log = log; const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections?.(); await closed; rmSync(workDir, { recursive: true, force: true }); }
   };
 }

@@ -49,6 +49,9 @@ import { OPERATIONS as SCHEDULE_OPERATIONS, ScheduleError, describeSchedule, des
 import { AlertService } from '../../../modules/monitoring/src/alert-service.js';
 import { PostgresAlertService } from '../../../modules/monitoring/src/postgres-alert-service.js';
 import { AlertError, METRICS, collectTargets, describeRule, parseRule, previewRule } from '../../../modules/monitoring/src/alert-rules.js';
+import { CapacityService } from '../../../modules/monitoring/src/capacity-service.js';
+import { PostgresCapacityService } from '../../../modules/monitoring/src/postgres-capacity-service.js';
+import { DAY_MS, RETENTION_DAYS, WINDOW_DAYS, SAMPLE_INTERVAL_MS, chartPoints, describeForecast, forecast as capacityForecast, trend as capacityTrend } from '../../../modules/monitoring/src/capacity-rules.js';
 import { MfaError } from '../../../modules/identity/src/mfa.js';
 import { PERMISSIONS, PERMISSION_KEYS, RoleError, permissionsBeyond } from '../../../modules/identity/src/roles.js';
 import { LoginRateLimiter } from '../../../modules/identity/src/login-rate-limiter.js';
@@ -105,6 +108,7 @@ const mockProvider = new MockProvider();
 const identity = production?await PostgresIdentityService.create(store.pool,{idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs}):new IdentityService({idleTimeoutMs:sessionIdleMs,absoluteTimeoutMs:sessionAbsoluteMs});
 const connectionAlertAudit=event=>safeAudit({actorType:'system',actorId:null,actorName:'Nuvrion',action:`connection.alert_${event.type}`,targetType:'provider_connection',targetId:event.connection?.id??event.alert.connectionId,correlationId:randomUUID(),outcome:event.type==='recovered'?'succeeded':event.alert.severity==='critical'?'failed':'warning',detail:{alertId:event.alert.id,severity:event.alert.severity,errorCode:event.alert.errorCode,occurrenceCount:event.alert.occurrenceCount}});
 const connections = production?new PostgresConnectionService(store.pool,{onAlert:connectionAlertAudit}):new ConnectionService({onAlert:connectionAlertAudit});
+const capacity = production?new PostgresCapacityService(store.pool,{intervalMs:Number(process.env.NUVRION_CAPACITY_SAMPLE_MS??SAMPLE_INTERVAL_MS)}):new CapacityService({file:process.env.NUVRION_CAPACITY_FILE ?? '.nuvrion/capacity.json',intervalMs:Number(process.env.NUVRION_CAPACITY_SAMPLE_MS??SAMPLE_INTERVAL_MS)});
 const schedules = production?new PostgresScheduleService(store.pool):new ScheduleService({file:process.env.NUVRION_SCHEDULES_FILE ?? '.nuvrion/schedules.json'});
 const alerts = production?new PostgresAlertService(store.pool):new AlertService({file:process.env.NUVRION_ALERTS_FILE ?? '.nuvrion/alerts.json'});
 const inventory = production?new PostgresInventoryService(store.pool):new InventoryService({file:process.env.NUVRION_INVENTORY_FILE ?? '.nuvrion/inventory.json',connectionHealth:id=>connections.get(id)});
@@ -187,9 +191,20 @@ const scheduleRunner=createScheduleRunner({
 const scheduleTimer=setInterval(()=>scheduleRunner.runDue().catch(error=>console.error(JSON.stringify({level:'error',event:'schedules.check_failed',error:error.message}))),Number(process.env.NUVRION_SCHEDULE_INTERVAL_MS??30000));scheduleTimer.unref?.();
 // Threshold alerts: every minute (NUVRION_ALERT_INTERVAL_MS) the latest measurements are compared with the rules (docs/alerts.md). A failed evaluation is logged and tried again; it never stops discovery.
 let alertEvaluation=null;
+// Capacity (docs/capacity.md): a reading of every datastore that was seen in the last ten minutes is kept (at most one every half hour), and a forecast is a line through the last 14 days.
+const CAPACITY_FRESH_MS=10*60_000;
+async function recordCapacity(){
+  const objects=await infrastructure.list({kind:'datastore',lifecycleState:'active'}),now=Date.now();
+  return capacity.record(objects.map(object=>({objectId:object.id,connectionId:object.connectionId,capacityBytes:object.attributes?.capacityBytes,freeBytes:object.attributes?.freeBytes,observedAt:new Date(object.observedAt??'').getTime()})).filter(point=>Number.isFinite(point.observedAt)&&now-point.observedAt<=CAPACITY_FRESH_MS));
+}
+async function datastoreForecasts(objects){
+  const ids=objects.filter(object=>object.kind==='datastore'&&object.lifecycleState==='active').map(object=>object.id),now=Date.now(),history=await capacity.historyFor(ids,{sinceMs:now-(WINDOW_DAYS+1)*DAY_MS});
+  return new Map(ids.map(id=>[id,capacityForecast(history.get(id)??[],{now})]));
+}
+const capacityTimer=setInterval(()=>recordCapacity().catch(error=>console.error(JSON.stringify({level:'error',event:'capacity.record_failed',error:error.message}))),Number(process.env.NUVRION_CAPACITY_INTERVAL_MS??60_000));capacityTimer.unref?.();
 async function evaluateAlerts(){
   if(alertEvaluation)return alertEvaluation;   // one at a time: a second caller gets the evaluation already running
-  alertEvaluation=(async()=>{try{const [resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id));return await alerts.evaluate(collectTargets({resources,metrics,infrastructure:objects,connections:connectionList}));}finally{alertEvaluation=null;}})();
+  alertEvaluation=(async()=>{try{const [resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects);return await alerts.evaluate(collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts}));}finally{alertEvaluation=null;}})();
   return alertEvaluation;
 }
 const alertTimer=setInterval(()=>evaluateAlerts().catch(error=>console.error(JSON.stringify({level:'error',event:'alerts.evaluation_failed',error:error.message}))),Number(process.env.NUVRION_ALERT_INTERVAL_MS??60000));alertTimer.unref?.();
@@ -309,6 +324,31 @@ export async function handler(req, res) {
     };
     const scheduleView=item=>({...item,summary:describeSchedule(item),lastRun:item.lastRun?{...item.lastRun,summary:describeRun(item.lastRun)}:null});
     const unknownScheduleConnection=async input=>{const id=input&&typeof input==='object'?input.connectionId:null;if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return false;let found=null;try{found=await connections.get(id);}catch{found=null;}return !found||found.status==='deleted';};
+    // ---- capacity: how full each datastore is, how fast it is filling, and when it will be full (docs/capacity.md)
+    const capacityDatastoreMatch=url.pathname.match(/^\/api\/v1\/capacity\/datastores\/([0-9a-f-]{36})$/i);
+    const capacityItem=(object,samples,connectionNames,now)=>{
+      const a=object.attributes??{},num=value=>typeof value==='number'&&Number.isFinite(value)?value:null,f=capacityForecast(samples,{now}),observedAt=new Date(object.observedAt??'').getTime();
+      const capacityBytes=num(a.capacityBytes),freeBytes=num(a.freeBytes),usedBytes=capacityBytes!==null&&freeBytes!==null?capacityBytes-freeBytes:null;
+      const {status,confidence,growthBytesPerDay,daysUntilFull,projectedFullAt,sampleCount,spanDays,fit}=f;
+      return {id:object.id,name:object.name,connectionId:object.connectionId,connectionName:connectionNames.get(object.connectionId)??null,capacityBytes,freeBytes,usedBytes,usedPercent:capacityBytes?Math.round(usedBytes/capacityBytes*10000)/100:null,observedAt:object.observedAt??null,stale:!Number.isFinite(observedAt)||now-observedAt>CAPACITY_FRESH_MS,forecast:{status,confidence,growthBytesPerDay,daysUntilFull,projectedFullAt,sampleCount,spanDays,fit:fit??null,summary:describeForecast(f)}};
+    };
+    if(req.method==='GET'&&url.pathname==='/api/v1/capacity/datastores'){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const now=Date.now(),objects=(await infrastructure.list({kind:'datastore'})).filter(object=>object.lifecycleState==='active'),connectionNames=new Map((await connections.list()).map(connection=>[connection.id,connection.name])),history=await capacity.historyFor(objects.map(object=>object.id),{sinceMs:now-WINDOW_DAYS*DAY_MS});
+      const items=objects.map(object=>({...capacityItem(object,history.get(object.id)??[],connectionNames,now),trend:capacityTrend(history.get(object.id)??[])}));
+      const rank=item=>item.forecast.status==='full'?0:item.forecast.daysUntilFull??Infinity;
+      items.sort((x,y)=>rank(x)-rank(y)||(y.usedPercent??-1)-(x.usedPercent??-1)||x.name.localeCompare(y.name));
+      return json(res,200,{items,count:items.length,meta:{correlationId}},correlationId);
+    }
+    if(req.method==='GET'&&capacityDatastoreMatch){
+      const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
+      const requested=Number(url.searchParams.get('days')??30);
+      if(!Number.isInteger(requested)||requested<1||requested>RETENTION_DAYS)return problem(res,422,'NUV_CAPACITY_RANGE_INVALID',`days must be a whole number from 1 to ${RETENTION_DAYS}.`,correlationId);
+      const now=Date.now(),object=(await infrastructure.list({kind:'datastore'})).find(item=>item.id===capacityDatastoreMatch[1].toLowerCase()&&item.lifecycleState==='active');
+      if(!object)return problem(res,404,'NUV_CAPACITY_DATASTORE_NOT_FOUND','The datastore was not found.',correlationId);
+      const connectionNames=new Map((await connections.list()).map(connection=>[connection.id,connection.name])),history=(await capacity.historyFor([object.id],{sinceMs:now-Math.max(requested,WINDOW_DAYS)*DAY_MS})).get(object.id)??[];
+      return json(res,200,{...capacityItem(object,history,connectionNames,now),days:requested,points:chartPoints(history.filter(sample=>sample.at>=now-requested*DAY_MS)),meta:{correlationId}},correlationId);
+    }
     if(req.method==='GET'&&url.pathname==='/api/v1/schedules'){
       const p=await requireAuth(req,res,correlationId,'resource.view');if(!p)return;
       const items=(await schedules.listSchedules()).map(scheduleView);return json(res,200,{items,count:items.length,operations:SCHEDULE_OPERATIONS,meta:{correlationId}},correlationId);
@@ -390,8 +430,8 @@ export async function handler(req, res) {
     if(req.method==='POST'&&url.pathname==='/api/v1/alert-rules/preview'){
       const p=await requireAuth(req,res,correlationId,'alert.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
       try{
-        const rule=parseRule(await body(req)),[resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id));
-        return json(res,200,{summary:describeRule(rule),...previewRule(rule,collectTargets({resources,metrics,infrastructure:objects,connections:connectionList}),Date.now())},correlationId);
+        const rule=parseRule(await body(req)),[resources,connectionList,objects]=await Promise.all([inventory.list({resourceType:'virtual_machine'}),connections.list(),infrastructure.list()]),metrics=await performance.latestForResources(resources.map(resource=>resource.id)),forecasts=await datastoreForecasts(objects);
+        return json(res,200,{summary:describeRule(rule),...previewRule(rule,collectTargets({resources,metrics,infrastructure:objects,connections:connectionList,forecasts}),Date.now())},correlationId);
       }catch(error){return alertRefused(error);}
     }
     const alertRuleMatch=url.pathname.match(/^\/api\/v1\/alert-rules\/([0-9a-f-]{36})$/i);
@@ -685,6 +725,10 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'tags.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/capacity.js') {
+      const js = await readFile(resolve(webRoot, 'capacity.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
     if (req.method === 'GET' && url.pathname === '/schedules.js') {
       const js = await readFile(resolve(webRoot, 'schedules.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
@@ -758,6 +802,8 @@ export async function handler(req, res) {
 
 function rejectUpgrade(socket,status,message){socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`);socket.destroy();}
 function bridgeWorkstationConsole(session){if(session.bridged||!session.browser||!session.agent)return;session.bridged=true;const browser=session.browser,agent=session.agent;browser.on('message',(data,isBinary)=>agent.readyState===WebSocket.OPEN&&agent.send(data,{binary:isBinary}));agent.on('message',(data,isBinary)=>browser.readyState===WebSocket.OPEN&&browser.send(data,{binary:isBinary}));browser.once('close',()=>agent.close());agent.once('close',()=>browser.close());browser.once('error',()=>agent.close());agent.once('error',()=>browser.close());}
+// The capacity history is exposed so that tests can give a datastore a past (nothing in the product writes history that did not happen).
+export { capacity as capacityService };
 export function createServer() { const server=http.createServer(handler);server.on('upgrade',async(req,socket,head)=>{const pathname=new URL(req.url,'http://localhost').pathname,agentConsoleMatch=pathname.match(/^\/api\/v1\/agent-console-sessions\/([0-9a-f-]+)\/socket$/i),terminalMatch=pathname.match(/^\/api\/v1\/terminal-sessions\/([0-9a-f-]+)\/socket$/i);if(agentConsoleMatch){const session=consoleSessions.get(agentConsoleMatch[1]),agentId=String(req.headers['x-agent-id']??''),secret=req.headers['x-agent-secret'];if(!session||session.mode!=='workstation'||session.expiresAt<=Date.now()||agentId!==session.agentId||!await agents.authenticate(agentId,secret))return rejectUpgrade(socket,'401 Unauthorized','Agent console session is invalid or expired.');return consoleWebSockets.handleUpgrade(req,socket,head,client=>{session.agent=client;bridgeWorkstationConsole(session);});}if(terminalMatch){const session=terminalSessions.get(terminalMatch[1]),p=await principal(req);if(!session||session.expiresAt<=Date.now()||!p||p.mfa?.state!=='verified'||p.user.id!==session.userId||!identity.authorize(p,'platform.manage'))return rejectUpgrade(socket,'401 Unauthorized','Terminal session is invalid or expired.');terminalSessions.delete(terminalMatch[1]);return consoleWebSockets.handleUpgrade(req,socket,head,client=>{const ssh=new SshClient();let stream=null,lastActivity=Date.now(),closed=false;const send=payload=>{if(client.readyState===WebSocket.OPEN)client.send(JSON.stringify(payload))},finish=async outcome=>{if(closed)return;closed=true;clearInterval(idleTimer);stream?.end();ssh.end();await store.recordAudit?.({actorType:'user',actorId:session.userId,actorName:session.actorName,action:'host_terminal.close',targetType:'provider_connection',targetId:session.connectionId,correlationId:randomUUID(),outcome,detail:{}})};const idleTimer=setInterval(()=>{if(Date.now()-lastActivity>15*60_000){send({type:'status',state:'closed',message:'Terminal closed after 15 minutes of inactivity.'});client.close(1000,'Idle timeout');finish('succeeded')}},30_000);idleTimer.unref();client.on('message',data=>{lastActivity=Date.now();try{const message=JSON.parse(String(data));if(message.type==='input'&&typeof message.data==='string'&&message.data.length<=8192){console.log(JSON.stringify({level:'info',event:'host_terminal.input',bytes:message.data.length,streamReady:Boolean(stream)}));stream?.write(message.data)};if(message.type==='resize'&&Number.isInteger(message.cols)&&Number.isInteger(message.rows))stream?.setWindow(Math.min(message.rows,200),Math.min(message.cols,400),0,0);}catch{send({type:'error',message:'Invalid terminal message.'})}});client.once('close',()=>finish('succeeded'));client.once('error',()=>finish('failed'));ssh.on('keyboard-interactive',(_name,_instructions,_language,prompts,finishAuth)=>{console.log(JSON.stringify({level:'info',event:'host_terminal.keyboard_interactive',promptCount:prompts.length}));finishAuth(prompts.map(()=>session.password))}).on('ready',()=>{console.log(JSON.stringify({level:'info',event:'host_terminal.ssh_ready'}));ssh.shell({term:'xterm-256color',cols:120,rows:30},(error,shell)=>{if(error){console.error(JSON.stringify({level:'error',event:'host_terminal.shell_failed',error:error.message}));send({type:'error',message:'Unable to start the ESXi shell.'});client.close(1011);return finish('failed')}console.log(JSON.stringify({level:'info',event:'host_terminal.shell_ready'}));stream=shell;send({type:'status',state:'connected',message:'Connected'});shell.on('data',data=>{lastActivity=Date.now();console.log(JSON.stringify({level:'info',event:'host_terminal.output',bytes:data.length}));send({type:'output',data:data.toString('utf8')})});shell.stderr.on('data',data=>send({type:'output',data:data.toString('utf8')}));shell.once('close',()=>client.close(1000,'SSH shell closed'))})}).on('error',error=>{console.error(JSON.stringify({level:'error',event:'host_terminal.ssh_failed',error:error.message}));send({type:'error',message:'SSH authentication or connection failed.'});client.close(1011);finish('failed')}).connect({host:session.host,port:22,username:session.username,password:session.password,tryKeyboard:true,readyTimeout:10000,keepaliveInterval:30000,hostVerifier:key=>`SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/,'')}`===session.fingerprint});});}const match=pathname.match(/^\/api\/v1\/console-sessions\/([0-9a-f-]+)\/socket$/i);if(!match)return rejectUpgrade(socket,'404 Not Found','Console session not found.');const session=consoleSessions.get(match[1]),p=await principal(req);if(!session||session.expiresAt<=Date.now()||!p||p.user.id!==session.userId||!identity.authorize(p,'resource.operate'))return rejectUpgrade(socket,'401 Unauthorized','Console session is invalid or expired.');if(session.mode==='workstation')return consoleWebSockets.handleUpgrade(req,socket,head,client=>{session.browser=client;bridgeWorkstationConsole(session);});const upstreamOptions={handshakeTimeout:10000,...(session.upstreamServerName?{servername:session.upstreamServerName,headers:{host:session.upstreamServerName}}:{})},upstream=new WebSocket(session.upstreamUrl,['binary'],upstreamOptions);let settled=false;upstream.once('open',()=>{settled=true;consoleSessions.delete(match[1]);consoleWebSockets.handleUpgrade(req,socket,head,client=>{client.on('message',(data,isBinary)=>{if(upstream.readyState===WebSocket.OPEN)upstream.send(data,{binary:isBinary})});upstream.on('message',(data,isBinary)=>{if(client.readyState===WebSocket.OPEN)client.send(data,{binary:isBinary})});client.once('close',()=>upstream.close());upstream.once('close',(code,reason)=>client.close(code,reason));client.once('error',()=>upstream.close());upstream.once('error',()=>client.close(1011,'Upstream console connection failed.'));});});upstream.once('error',error=>{console.error(JSON.stringify({level:'error',event:'console.websocket.failed',error:error.message}));if(!settled)rejectUpgrade(socket,'502 Bad Gateway','Unable to connect to the ESXi console.');});});return server; }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const host = process.env.NUVRION_HOST ?? '127.0.0.1'; const port = Number(process.env.NUVRION_PORT ?? 4100);

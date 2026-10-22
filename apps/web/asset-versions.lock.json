@@ -12,8 +12,12 @@
     "sha256": "4d673957fa2e68d6349f4ae77f799e63fcb23999a205baa55185060c8eb1b19b"
   },
   "app.js": {
-    "version": "20261021-153",
-    "sha256": "b1613b2e6c5f8eeff258aec6ae931601d710ff9efde2edbee67fe8e25042944d"
+    "version": "20261022-154",
+    "sha256": "1c8148f2d107ac507eb6a514c7965e00b38dd2fa7fddb08b544a38ceea83c0cd"
+  },
+  "capacity.js": {
+    "version": "20261022-1",
+    "sha256": "540a7dda32f3c61fc16067b35c9cf7761dc1891e6d1c776134e0d0d5074d374c"
   },
   "connection-issue.js": {
     "version": "20261006-115",
@@ -44,8 +48,8 @@
     "sha256": "0d713a336bb057b96c803b4c4543e853184e035da59aff56bc110a717dbdb3ec"
   },
   "styles.css": {
-    "version": "20261021-136",
-    "sha256": "cf44424a0f5e4c189437c595f71e60dfaa32411cae164a58befd471702335e38"
+    "version": "20261022-137",
+    "sha256": "1204816be6b7289ee41290f0af9ea4cd8f257cc6df458257a40196ab00bf3df3"
   },
   "tags.js": {
     "version": "20261017-1",

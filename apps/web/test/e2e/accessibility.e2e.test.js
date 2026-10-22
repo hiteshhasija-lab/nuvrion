@@ -44,7 +44,7 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.clickText('Sign in →', '#login-form');
     await page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
     await expectNoViolations('overview');
-    for (const view of ['inventory', 'infrastructure', 'alert-rules', 'schedules', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
+    for (const view of ['inventory', 'infrastructure', 'alert-rules', 'schedules', 'capacity', 'connections', 'monitor', 'users', 'health']) { await openView(view); await expectNoViolations(view); }
     // a host selected: the tree with the selection marked and the detail with usage bars and the list of VMs
     await openView('infrastructure');
     await page.waitFor(() => document.querySelectorAll('#infrastructure-tree [data-infra-select]').length >= 9);
@@ -239,5 +239,16 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await page.click('#schedule-close');
     await page.waitFor(() => !document.getElementById('schedule-dialog').open);
     await page.click('[data-schedule-delete]'); await page.waitFor(() => /No schedules yet/.test(document.getElementById('schedule-table').innerText));
+  });
+
+  test('the Capacity page with a history, and the dialog with its chart', async () => {
+    await lab.giveDatastoreHistory('datastore2', 10 * 1024 ** 3); await lab.giveDatastoreHistory('datastore1', 2 * 1024 ** 3);
+    await openView('capacity');
+    await page.waitFor(() => /\d+ days/i.test(document.getElementById('capacity-table').innerText)); await settle(400);
+    await expectNoViolations('capacity page with forecasts');
+    await page.click('[data-capacity-details]'); await shown('#capacity-form svg.capacity-chart'); await settle(300);
+    await expectNoViolations('capacity dialog with a chart');
+    await page.click('#capacity-close');
+    await page.waitFor(() => !document.getElementById('capacity-dialog').open);
   });
 });

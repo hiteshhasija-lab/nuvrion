@@ -1192,3 +1192,16 @@ button.metric-card:focus-visible,.legend-row:focus-visible,.breakdown-row:focus-
 .schedule-machines label[hidden]{display:none}
 .schedule-days{display:flex;flex-wrap:wrap;gap:6px 16px}
 .empty-note{margin:0;font-size:13px;color:#4d5b60}
+.capacity-bar{display:block;height:8px;border-radius:4px;background:#dfe7e8;overflow:hidden;margin-bottom:4px;min-width:90px}
+.capacity-bar>span{display:block;height:100%;border-radius:4px}.capacity-bar>.good{background:#2e7d5b}.capacity-bar>.warn{background:#b7791f}.capacity-bar>.bad{background:#b3261e}
+.capacity-used{font-weight:600}
+.capacity-unknown{color:#4d5b60;font-size:13px}
+.capacity-trend{color:#147d77;width:110px}.capacity-spark{display:block}.capacity-nospark{color:#4d5b60}
+.capacity-dialog{width:min(720px,calc(100% - 30px));max-height:calc(100vh - 40px)}
+.capacity-dialog h2{text-transform:none}
+.capacity-dialog form{padding:20px 22px;display:grid;gap:14px}
+.capacity-summary{margin:0;font-size:14px;font-weight:600}
+.capacity-range{display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600}
+.capacity-figure{margin:0;color:#147d77}.capacity-figure figcaption{color:#4d5b60;font-size:12px;margin-top:4px}
+.capacity-chart{display:block;height:auto;max-height:260px}.capacity-chart .capacity-grid{stroke:#d7dfe2;stroke-width:1}.capacity-chart .capacity-axis{fill:#4d5b60;font-size:11px}.capacity-chart .capacity-line{color:#147d77}.capacity-chart .capacity-projection{color:#b7791f}
+.capacity-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 18px;margin:0}.capacity-facts>div{display:grid;gap:2px}.capacity-facts dt{font-size:12px;color:#4d5b60}.capacity-facts dd{margin:0;font-weight:600}

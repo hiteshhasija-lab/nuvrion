@@ -6,13 +6,16 @@
 // longer does. A target whose measurements are older than ten minutes is left alone (neither fired nor cleared on stale data: the connection's own alert says it is unreachable),
 // and a measurement that is not reported is not zero.
 
+import { daysUntilFullForAlert } from './capacity-rules.js';
+
 export const METRICS = Object.freeze({
   'vm.cpu_percent': { kind: 'vm', label: 'Virtual machine CPU use', unit: '%', max: 100 },
   'vm.memory_percent': { kind: 'vm', label: 'Virtual machine memory use', unit: '%', max: 100 },
   'host.cpu_percent': { kind: 'host', label: 'Host CPU use', unit: '%', max: 100 },
   'host.memory_percent': { kind: 'host', label: 'Host memory use', unit: '%', max: 100 },
   'datastore.used_percent': { kind: 'datastore', label: 'Datastore space used', unit: '%', max: 100 },
-  'datastore.free_gb': { kind: 'datastore', label: 'Datastore free space', unit: 'GB', max: 10_000_000 }
+  'datastore.free_gb': { kind: 'datastore', label: 'Datastore free space', unit: 'GB', max: 10_000_000 },
+  'datastore.days_until_full': { kind: 'datastore', label: 'Datastore days until full', unit: 'days', max: 3650 }
 });
 export const METRIC_KEYS = Object.freeze(Object.keys(METRICS));
 export const KIND_LABELS = Object.freeze({ vm: 'virtual machine', host: 'host', datastore: 'datastore' });
@@ -74,13 +77,13 @@ export function describeRule(rule) {
 export const describeValue = (metric, value) => `${trimNumber(value)}${METRICS[metric]?.unit === '%' ? '%' : ` ${METRICS[metric]?.unit ?? ''}`.trimEnd()}`;
 
 // ---- measuring ---------------------------------------------------------------------------------------------------------------------------------------------------------
-// resources: virtual machines; metrics: the latest sample of each; infrastructure: hosts and datastores; connections for their state. Returns the targets to evaluate:
+// resources: virtual machines; metrics: the latest sample of each; infrastructure: hosts and datastores; connections for their state; forecasts: Map(datastore id -> forecast). Returns the targets to evaluate:
 // { kind, id, name, connectionId, observedAt (ms), values: { 'vm.cpu_percent': 12.5, ... } } (a value that is not reported is absent).
 const number = value => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const percent = (used, total) => (number(used) !== null && number(total) !== null && total > 0 ? Math.max(0, used / total * 100) : null);
 const timeOf = value => { const at = new Date(value ?? '').getTime(); return Number.isFinite(at) ? at : null; };
 
-export function collectTargets({ resources = [], metrics = [], infrastructure = [], connections = [] }) {
+export function collectTargets({ resources = [], metrics = [], infrastructure = [], connections = [], forecasts = new Map() }) {
   const live = new Set(connections.filter(connection => connection.status !== 'deleted').map(connection => connection.id));
   const sampleOf = new Map(metrics.map(sample => [sample.resourceId, sample]));
   const targets = [];
@@ -106,6 +109,8 @@ export function collectTargets({ resources = [], metrics = [], infrastructure = 
       const used = number(a.capacityBytes) !== null && number(a.freeBytes) !== null ? a.capacityBytes - a.freeBytes : null, usedPercent = percent(used, a.capacityBytes);
       if (usedPercent !== null) values['datastore.used_percent'] = Math.min(100, usedPercent);
       if (number(a.freeBytes) !== null) values['datastore.free_gb'] = a.freeBytes / 1024 ** 3;
+      const days = daysUntilFullForAlert(forecasts.get(object.id));   // only a forecast worth trusting is reported (capacity-rules.js)
+      if (days !== null) values['datastore.days_until_full'] = days;
     } else continue;
     targets.push({ kind: object.kind, id: object.id, name: object.name, connectionId: object.connectionId, observedAt, values });
   }

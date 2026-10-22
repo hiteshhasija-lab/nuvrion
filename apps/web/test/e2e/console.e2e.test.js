@@ -1118,4 +1118,44 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual(unexpected(operator.problems()), []);
     await auditor.close(); await operator.close();
   });
+
+  // ---- capacity and the Capacity page (apps/web/capacity.js) -----------------------------------------------------------------------------------------------------------
+  test('the Capacity page lists the datastores, says when one will be full once it has a history, and opens a chart of it', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await openView(page, 'capacity');
+    await page.waitFor(() => document.querySelectorAll('#capacity-table [data-capacity-row]').length === 2);
+    assert.match(await page.text('#capacity-table'), /datastore2[\s\S]*90%[\s\S]*Not enough history yet/, 'a datastore with no history says how full it is, and that it cannot say more yet');
+    await lab.giveDatastoreHistory('datastore2', 10 * 1024 ** 3); await lab.giveDatastoreHistory('datastore1', 0);
+    await page.waitFor(() => /Not filling/i.test(document.getElementById('capacity-table').innerText) && /\d+ days/i.test(document.getElementById('capacity-table').innerText));
+    const rows = await page.evaluate(() => [...document.querySelectorAll('#capacity-table [data-capacity-row]')].map(row => row.querySelector('strong').textContent));
+    assert.deepEqual(rows, ['datastore2', 'datastore1'], 'the datastore that fills first is on top');
+    assert.match(await page.text('#capacity-table tr'), /\+10 GB a day[\s\S]*(9|10|11) days[\s\S]*about [\s\S]*high confidence/i);
+    assert.match(await page.text('#capacity-summary-badge'), /1 full within 14 days/i, 'the page says how many need attention');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#capacity-table svg.capacity-spark').length), 2, 'each datastore has its small trend');
+    await page.click('[data-capacity-details]');
+    await page.waitFor(() => document.getElementById('capacity-dialog').open && document.querySelector('#capacity-title')?.textContent === 'datastore2' && document.querySelector('#capacity-form svg.capacity-chart'));
+    assert.match(await page.text('#capacity-form .capacity-summary'), /^Growing by about 10 GB a day: full in about (9|10|11)(\.\d)? days$/);
+    assert.match(await page.evaluate(() => document.querySelector('svg.capacity-chart').getAttribute('aria-label')), /^Used space of the datastore from \d+(\.\d)?% to (89\.\d|90)% over \d+ days, expected to be full in about/);
+    const dashed = await page.evaluate(() => Boolean(document.querySelector('svg.capacity-chart .capacity-projection')));
+    assert.equal(dashed, true, 'the chart carries the forecast on');
+    await page.evaluate(() => { const range = document.getElementById('capacity-range'); range.value = '7'; range.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitFor(() => document.getElementById('capacity-range')?.value === '7' && /over [5-7] days/.test(document.querySelector('svg.capacity-chart')?.getAttribute('aria-label') ?? ''));
+    await page.click('#capacity-close');
+    await page.waitFor(() => !document.getElementById('capacity-dialog').open);
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('an auditor can read capacity too', async () => {
+    await lab.createUser({ username: 'ada.capacity', displayName: 'Ada Capacity', role: 'auditor' });
+    const auditor = await newPage();
+    await signIn(auditor, 'ada.capacity', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await signedIn(auditor);
+    await openView(auditor, 'capacity');
+    await auditor.waitFor(() => /datastore2/.test(document.getElementById('capacity-table').innerText));
+    await auditor.click('[data-capacity-details]');
+    await auditor.waitFor(() => document.getElementById('capacity-dialog').open && document.querySelector('#capacity-title'));
+    await auditor.close();
+  });
 });

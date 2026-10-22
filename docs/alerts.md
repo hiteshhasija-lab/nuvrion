@@ -14,6 +14,7 @@ A rule says: *this measurement of this kind of thing, above (or below) this limi
 | Host CPU use, memory use | each ESXi or vCenter host | % |
 | Datastore space used | each datastore | % |
 | Datastore free space | each datastore | GB |
+| Datastore days until full | each datastore | days (see [capacity](capacity.md)) |
 
 - **Limit**: a number from 0 to 100 for a percentage (any number for free space in GB). **Above** means strictly above; **below** strictly below.
 - **For at least (minutes)**: how long the condition must hold before the alert is raised, 0 to 1440. With 10, a spike that lasts three minutes raises nothing; the clock starts when it first holds, and
@@ -71,4 +72,4 @@ Rules, alerts and each person's last-read time are in `monitoring.alert_rules`, 
 and target, so two evaluations at the same moment cannot raise the same alert twice). Evaluation reads the same data the rest of the console shows: the latest sample of each virtual machine, the hosts and
 datastores of the [infrastructure](infrastructure.md), and the connections. `NUVRION_ALERT_INTERVAL_MS` (default 60000) sets how often it runs.
 
-**Not yet**: sending alerts out of the console (e-mail, a webhook), trends and "days until full" (capacity), and alerts on the Overview page's counts; the bell and the Alert rules page are where alerts appear today.
+**Not yet**: sending alerts out of the console (e-mail, a webhook), and alerts on the Overview page's counts; the bell and the Alert rules page are where alerts appear today.

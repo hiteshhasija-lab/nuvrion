@@ -29,6 +29,7 @@ tags:
   - { name: Audit, description: The audit log }
   - { name: Alerts, description: Threshold alert rules, the alerts they raise and the notification feed }
   - { name: Schedules, description: Scheduled operations on machines, and what each run did }
+  - { name: Capacity, description: How full each datastore is, how fast it is filling and when it will be full }
   - { name: Agents, description: Workstation agents, enrollment and signed commands }
   - { name: Mock, description: The built-in mock provider }
 
@@ -727,6 +728,32 @@ paths:
         '200': { description: The runs, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRunList' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /capacity/datastores:
+    get:
+      tags: [Capacity]
+      operationId: listCapacityDatastores
+      summary: Every datastore with how full it is and when it will be full
+      description: Soonest to be full first. The forecast is a straight line through the readings of the last 14 days (about one every half hour) and says how far to trust it.
+      x-required-permission: resource.view
+      responses:
+        '200': { description: The datastores, content: { application/json: { schema: { $ref: '#/components/schemas/CapacityDatastoreList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /capacity/datastores/{datastoreId}:
+    get:
+      tags: [Capacity]
+      operationId: getCapacityDatastore
+      summary: One datastore with its history for a chart
+      x-required-permission: resource.view
+      parameters:
+        - { name: datastoreId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 90 } }
+      responses:
+        '200': { description: The datastore, content: { application/json: { schema: { $ref: '#/components/schemas/CapacityDatastoreDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
   /alert-metrics:
     get:
       tags: [Alerts]
@@ -1977,6 +2004,53 @@ components:
         detailsTruncated: { type: boolean }
         error: { type: [string, 'null'] }
         summary: { type: string, description: 'For example 2 requested, 1 skipped' }
+    CapacityForecast:
+      type: object
+      required: [status, confidence, growthBytesPerDay, daysUntilFull, projectedFullAt, sampleCount, spanDays, fit, summary]
+      properties:
+        status: { type: string, enum: [insufficient, full, stable, growing, shrinking] }
+        confidence: { type: string, nullable: true, enum: [low, medium, high, null] }
+        growthBytesPerDay: { type: integer, nullable: true }
+        daysUntilFull: { type: number, nullable: true }
+        projectedFullAt: { type: string, format: date-time, nullable: true }
+        sampleCount: { type: integer }
+        spanDays: { type: number }
+        fit: { type: number, nullable: true, description: How closely the readings follow the line, 0 to 1 }
+        summary: { type: string }
+    CapacityDatastore:
+      type: object
+      required: [id, name, connectionId, connectionName, capacityBytes, freeBytes, usedBytes, usedPercent, observedAt, stale, forecast]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        connectionId: { type: string, format: uuid }
+        connectionName: { type: string, nullable: true }
+        capacityBytes: { type: integer, nullable: true }
+        freeBytes: { type: integer, nullable: true }
+        usedBytes: { type: integer, nullable: true }
+        usedPercent: { type: number, nullable: true }
+        observedAt: { type: string, format: date-time, nullable: true }
+        stale: { type: boolean, description: True when the datastore was last seen more than ten minutes ago }
+        forecast: { $ref: '#/components/schemas/CapacityForecast' }
+        trend: { type: array, items: { type: number }, description: Used share of the size (0 to 100) over the last 14 days, at most 28 values }
+    CapacityDatastoreList:
+      type: object
+      required: [items, count, meta]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/CapacityDatastore' } }, count: { type: integer }, meta: { $ref: '#/components/schemas/ListMeta' } }
+    CapacityDatastoreDetail:
+      allOf:
+        - { $ref: '#/components/schemas/CapacityDatastore' }
+        - type: object
+          required: [days, points, meta]
+          properties:
+            days: { type: integer }
+            points:
+              type: array
+              items:
+                type: object
+                required: [at, usedBytes, capacityBytes]
+                properties: { at: { type: string, format: date-time }, usedBytes: { type: integer }, capacityBytes: { type: integer } }
+            meta: { $ref: '#/components/schemas/ListMeta' }
     ScheduleRunList:
       type: object
       required: [items, count, meta]

@@ -207,7 +207,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
 
   before(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'nuvrion-contract-'));
-    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
+    Object.assign(process.env, { NUVRION_STATE_FILE: join(workDir, 'state.json'), NUVRION_INVENTORY_FILE: join(workDir, 'inventory.json'), NUVRION_TAGS_FILE: join(workDir, 'tags.json'), NUVRION_INFRASTRUCTURE_FILE: join(workDir, 'infrastructure.json'), NUVRION_ALERTS_FILE: join(workDir, 'alerts.json'), NUVRION_SCHEDULES_FILE: join(workDir, 'schedules.json'), NUVRION_CAPACITY_FILE: join(workDir, 'capacity.json'), NUVRION_UPGRADE_SHARED_DIR: join(workDir, 'upgrades'), NUVRION_BOOTSTRAP_PASSWORD: PASSWORD, NUVRION_AGENT_AUTO_UPGRADE_INTERVAL_MS: '150' });
     delete process.env.NUVRION_RUNTIME_PROFILE;
     const { createServer } = await import('../src/server.js');
     server = createServer();
@@ -519,6 +519,17 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('deleteAlertRule', { params: { ruleId: ABSENT }, expect: 404 });
     await call('deleteAlertRule', { as: 'operator', params: { ruleId: created.json.id }, expect: 403, invalid: true });
     assert.equal((await call('deleteAlertRule', { params: { ruleId: created.json.id }, expect: 200 })).json.deleted, 1);
+  });
+
+  test('capacity: listCapacityDatastores, getCapacityDatastore', async () => {
+    const list = await call('listCapacityDatastores', { as: 'auditor', expect: 200 });
+    assert.ok(list.json.items.length >= 1 && list.json.items.every(item => item.forecast && typeof item.forecast.summary === 'string'));
+    const first = list.json.items[0];
+    const detail = await call('getCapacityDatastore', { as: 'operator', params: { datastoreId: first.id }, expect: 200 });
+    assert.equal(detail.json.id, first.id); assert.equal(detail.json.days, 30); assert.ok(Array.isArray(detail.json.points));
+    await call('getCapacityDatastore', { params: { datastoreId: first.id }, query: { days: '7' }, expect: 200 });
+    await call('getCapacityDatastore', { params: { datastoreId: first.id }, query: { days: '120' }, expect: 422, invalid: true });
+    await call('getCapacityDatastore', { params: { datastoreId: ABSENT }, expect: 404, invalid: true });
   });
 
   test('scheduled operations: listSchedules, createSchedule, previewSchedule, updateSchedule, runSchedule, listScheduleRuns, deleteSchedule', async () => {
