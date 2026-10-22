@@ -17,7 +17,7 @@ export async function browserSkipReason() {
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const KEYS = { Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, ' ': { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' }, ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 } };
+const KEYS = { Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }, Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, ' ': { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' }, ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 }, ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 } };
 
 export async function launchBrowser({ width = 1366, height = 900 } = {}) {
   const { default: WebSocket } = await import('ws');

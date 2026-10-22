@@ -299,4 +299,14 @@ describe('accessibility (axe-core, WCAG 2.1 A and AA)', { skip: skip ?? false },
     await expectNoViolations('views menu with a view in use');
     await page.click('[data-view-delete]'); await page.waitFor(() => document.getElementById('views-button').textContent === 'Views');
   });
+
+  test('the command launcher, empty and with results', async () => {
+    await page.click('#launcher-button'); await page.waitFor(() => document.getElementById('launcher-dialog').open && document.querySelector('#launcher-list [role=option]')); await settle(300);
+    await expectNoViolations('command launcher, empty');
+    await page.fill('#launcher-input', 'nuvrion'); await page.waitFor(() => document.querySelectorAll('#launcher-list [role=option]').length >= 2); await settle(300);
+    await expectNoViolations('command launcher with results');
+    await page.fill('#launcher-input', 'zzzqqq'); await page.waitFor(() => /Nothing matches/.test(document.getElementById('launcher-list').innerText)); await settle(300);
+    await expectNoViolations('command launcher with no results');
+    await page.press('Escape'); await page.waitFor(() => !document.getElementById('launcher-dialog').open);
+  });
 });

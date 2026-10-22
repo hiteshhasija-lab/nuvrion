@@ -5,13 +5,14 @@ import {schedulesHtml,runsHtml,scheduleDialogHtml,previewHtml as schedulePreview
 import {capacityRowsHtml,summaryOf as capacitySummaryOf,detailDialogHtml as capacityDetailHtml,computeRowsHtml,computeSummaryOf,computeDetailDialogHtml} from '/capacity.js?v=20261023-2';
 import {webhooksHtml,webhookDialogHtml,webhookRequestBody,webhookProblem,historyDialogHtml,testResultText} from '/webhooks.js?v=20261022-2';
 import {currentView,applyView,describeView as describeSavedView,viewsMenuHtml,viewsButtonLabel,saveViewDialogHtml,viewProblem,toCsv,exportRow,exportFileName,EXPORT_COLUMNS} from '/views.js?v=20261023-1';
+import {buildCommands,rankCommands,rememberCommand,moveActive,shellHtml,resultsHtml,statusText} from '/launcher.js?v=20261023-2';
 import {generatePassword,newUserHtml,credentialsHtml,setPasswordHtml,changePasswordHtml,changePasswordProblem,newUserBody,copyText} from '/accounts.js?v=20261017-1';
 import {verifyHtml,setupHtml,codesHtml,statusHtml,resetResultText} from '/mfa.js?v=20261017-2';
 import {roleTableHtml,roleDialogHtml,roleRequestBody,permissionsAfterToggle,userRoleOptionsHtml} from '/roles.js?v=20261017-2';
 import {hostFactHtml,buildIndex as buildInfrastructureIndex,treeHtml as infrastructureTreeHtml,detailHtml as infrastructureDetailHtml,placementRowsHtml,placementSearchText,placementRows} from '/infrastructure.js?v=20261017-5';
 import {summarizeEstate,recentAlerts,matchesDrill,drillIsEmpty,estateHealthHtml,providerOverviewHtml,recentAlertsHtml,drillChipsHtml} from '/dashboard.js?v=20261017-4';
 const $=id=>document.getElementById(id);const esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-document.head.insertAdjacentHTML('beforeend','<link rel="stylesheet" href="/styles.css?v=20261023-140"><link rel="stylesheet" href="/vm-workspace.css?v=20261006-115">');
+document.head.insertAdjacentHTML('beforeend','<link rel="stylesheet" href="/styles.css?v=20261023-141"><link rel="stylesheet" href="/vm-workspace.css?v=20261006-115">');
 function separateVmFilterCard(){const head=document.querySelector('#view-inventory .vm-workspace-head'),filter=head?.querySelector('.vm-filter-toolbar');if(!head||!filter||filter.closest('.vm-filter-card'))return;const input=filter.querySelector('#inventory-search');if(input){input.placeholder='Search VM inventory';input.setAttribute('aria-label','Search all virtual machine fields')}const card=document.createElement('div');card.className='vm-filter-card';card.setAttribute('aria-label','Virtual machine search and filters');head.before(card);card.append(filter)}
 separateVmFilterCard();
 const state={csrf:'',user:null,health:null,resources:[],infrastructure:[],infrastructureSelected:null,infrastructureQuery:'',roles:[],permissionCatalogue:[],roleDialog:null,mfa:null,mfaGating:false,account:null,alertRules:[],alertMetrics:[],alertsOpen:[],alertsResolved:[],notifications:{items:[],unreadCount:0,lastReadAt:null},alertRuleDialog:null,schedules:[],scheduleRuns:[],scheduleOperations:{},scheduleDialog:null,capacity:[],capacityCompute:[],capacityTab:'datastores',capacityDialog:null,webhooks:[],webhookCatalogue:{events:{},formats:{}},webhookDialog:null,views:[],activeViewId:null,viewDialog:null,visibleResources:[],performanceLatest:{},connections:[],alerts:[],tasks:[],audit:[],auditTotal:0,auditOffset:0,auditLimit:100,auditQuery:'',auditLoading:false,auditSearchTimer:null,monitorLimit:100,monitorOffsets:{performance:0,alerts:0,tasks:0},users:[],selectedResourceId:null,selectedResourceSource:null,bulkSelection:new Set(),monitorTab:'performance',pending:null,mediaResourceId:null,media:null,mediaBrowse:null,mediaBusy:false,mediaOverrides:new Map(),refreshing:false,loading:false,vmStateLoading:false,vmSort:null,sessionPolicy:{idleTimeoutMs:30*60_000,absoluteTimeoutMs:8*60*60_000},lastActivityAt:Date.now(),sessionWarningShown:false};const titles={overview:'Platform Overview',inventory:'Virtual Machines',infrastructure:'Infrastructure','alert-rules':'Alert Rules',schedules:'Schedules',capacity:'Capacity',connections:'Provider Connections',monitor:'Monitor',alerts:'Connection Alerts',tasks:'Task Activity',audit:'Audit History',users:'User Administration',health:'Platform Health'};
@@ -1313,4 +1314,88 @@ $('view-form').addEventListener('submit', async event => {
     notice(`View ${saved.name} ${dialog.mode === 'rename' ? 'renamed' : 'saved'}.`);
     await load();
   } catch (error) { show(error.message); } finally { button.disabled = false; }
+});
+
+// ---- The command launcher: Ctrl or Cmd + K (logic and HTML in launcher.js, which has its own tests) ------------------------------------------------------------------------------
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform ?? '');
+$('launcher-key').textContent = isMac ? '⌘ K' : 'Ctrl K';
+const LAUNCHER_RECENT_KEY = 'nuvrion.launcher.recent';
+const recentCommands = () => { try { const saved = JSON.parse(localStorage.getItem(LAUNCHER_RECENT_KEY) ?? '[]'); return Array.isArray(saved) ? saved.filter(id => typeof id === 'string').slice(0, 5) : []; } catch { return []; } };
+const saveRecentCommands = ids => { try { localStorage.setItem(LAUNCHER_RECENT_KEY, JSON.stringify(ids)); } catch { /* storage may be blocked: the launcher works without it */ } };
+const launcher = { commands: [], results: [], active: 0 };
+const clickNav = view => $('navigation').querySelector(`[data-view="${view}"]`)?.click();
+function launcherCommands() {
+  const machines = state.resources.filter(resource => resource.lifecycleState === 'active').map(resource => ({ id: resource.id, name: resource.name, detail: `${platformLabel(vmPlatformKey(resource))} · ${vmDisplayPower(resource)}` }));
+  const objects = state.infrastructure.filter(object => object.lifecycleState === 'active').map(object => ({ id: object.id, name: object.name, kind: object.kind, detail: `${{ datacenter: 'Datacenter', cluster: 'Cluster', host: 'Host', datastore: 'Datastore', network: 'Network' }[object.kind] ?? object.kind} · ${state.connections.find(connection => connection.id === object.connectionId)?.name ?? ''}`.replace(/ · $/, '') }));
+  const views = state.views.map(view => ({ id: view.id, name: view.name, detail: describeSavedView(view.view, { platformLabel }) }));
+  return buildCommands({ permissions: state.user?.permissions ?? [], machines, objects, views });
+}
+function renderLauncher() {
+  const query = $('launcher-input').value;
+  launcher.results = rankCommands(launcher.commands, query, { recent: recentCommands() });
+  launcher.active = launcher.results.length ? Math.min(launcher.active, launcher.results.length - 1) : -1;
+  // eslint-disable-next-line no-unsanitized/property -- launcher.js escapes every value it interpolates (apps/web/test/launcher.test.js)
+  $('launcher-list').innerHTML = resultsHtml(launcher.results, launcher.active, { esc });
+  $('launcher-input').setAttribute('aria-activedescendant', launcher.active >= 0 ? `launcher-option-${launcher.active}` : '');
+  $('launcher-status').textContent = statusText(launcher.results, query);
+  $('launcher-list').querySelector('.is-active')?.scrollIntoView?.({ block: 'nearest' });
+}
+function openLauncher() {
+  if ($('application').hidden || $('launcher-dialog').open) return;
+  document.querySelectorAll('details[open]').forEach(menu => menu.removeAttribute('open'));
+  launcher.commands = launcherCommands(); launcher.active = 0;
+  // eslint-disable-next-line no-unsanitized/property -- the shell is a constant in launcher.js
+  $('launcher-form').innerHTML = shellHtml({ hint: `${isMac ? '⌘ K' : 'Ctrl K'} opens this box from anywhere · ↑ ↓ choose · Enter go · Esc close` });
+  $('launcher-dialog').showModal();
+  renderLauncher();
+  $('launcher-input').focus();
+}
+function runLauncherCommand(command) {
+  saveRecentCommands(rememberCommand(recentCommands(), command.id));
+  $('launcher-dialog').close();
+  const run = command.run;
+  setTimeout(async () => {
+    if (run.type === 'view') clickNav(run.view);
+    else if (run.type === 'monitor') { clickNav('monitor'); $('view-monitor').querySelector(`[data-monitor-tab="${run.tab}"]`)?.click(); }
+    else if (run.type === 'machine') {
+      state.drill = null; $('inventory-search').value = ''; $('inventory-state').value = '';
+      clickNav('inventory'); renderInventory();
+      [...$('vm-sidebar-list').querySelectorAll('[data-select-resource]')].find(button => button.dataset.selectResource === run.id)?.click();
+    }
+    else if (run.type === 'infrastructure') { state.infrastructureSelected = run.id; switchView('infrastructure'); renderInfrastructure(); }
+    else if (run.type === 'view-apply') { const saved = state.views.find(item => item.id === run.id); if (saved) { switchView('inventory'); showView(saved); } }
+    else if (run.type === 'action') {
+      const actions = {
+        'new-connection': () => { clickNav('connections'); $('show-connection-form')?.click(); },
+        'new-alert-rule': () => { clickNav('alert-rules'); openAlertRuleDialog(null); },
+        'new-webhook': () => { clickNav('alert-rules'); openWebhookDialog(null); },
+        'new-schedule': () => { clickNav('schedules'); openScheduleDialog(null); },
+        'save-view': () => { clickNav('inventory'); openViewDialog('new'); },
+        export: async () => { clickNav('inventory'); renderInventory(); await exportInventory(); },
+        refresh: () => $('refresh').click(),
+        sessions: () => $('my-sessions')?.click(),
+        'sign-out': () => $('logout')?.click()
+      };
+      await actions[run.action]?.();
+    }
+  }, 0);
+}
+document.addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') { event.preventDefault(); openLauncher(); }
+});
+$('launcher-button').addEventListener('click', openLauncher);
+$('launcher-form').addEventListener('input', event => { if (event.target.id === 'launcher-input') { launcher.active = 0; renderLauncher(); } });
+$('launcher-form').addEventListener('keydown', event => {
+  if (event.target.id !== 'launcher-input') return;
+  if (['ArrowDown', 'ArrowUp'].includes(event.key) || (['Home', 'End'].includes(event.key) && event.ctrlKey)) { event.preventDefault(); launcher.active = moveActive(launcher.active, launcher.results.length, event.key); renderLauncher(); }
+  else if (event.key === 'Enter') { event.preventDefault(); const command = launcher.results[launcher.active]; if (command) runLauncherCommand(command); }
+});
+$('launcher-form').addEventListener('click', event => {
+  if (event.target.closest('#launcher-close')) { $('launcher-dialog').close(); return; }
+  const option = event.target.closest('[data-launcher-index]');
+  if (option) { const command = launcher.results[Number(option.dataset.launcherIndex)]; if (command) runLauncherCommand(command); }
+});
+$('launcher-form').addEventListener('mousemove', event => {
+  const option = event.target.closest('[data-launcher-index]');
+  if (option && Number(option.dataset.launcherIndex) !== launcher.active) { launcher.active = Number(option.dataset.launcherIndex); renderLauncher(); }
 });

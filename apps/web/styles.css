@@ -1218,3 +1218,11 @@ td.capacity-trend .capacity-spark{margin-bottom:4px}
 .views-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}.views-list{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:4px}
 .views-item{width:100%;display:grid;gap:2px;text-align:left;border:1px solid transparent;border-radius:8px;background:transparent;padding:8px 10px}.views-item:hover,.views-item:focus-visible{background:#eef4f5}.views-item.is-active{border-color:#147d77;background:#eef6f5}.views-item small{display:block}
 .views-empty{margin:4px 0 8px;font-size:13px}.views-foot{display:grid;gap:2px;border-top:1px solid var(--line);padding-top:8px}.views-foot .text-button{text-align:left;padding:6px 4px}.views-foot .text-button:disabled{opacity:.55;cursor:default}
+.launcher-button{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:7px 10px;color:#172126;font-weight:600}.launcher-button kbd{font:600 11px ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:#4d5b60;background:#f3f5f6}
+.launcher-dialog{width:min(640px,calc(100% - 30px));border:0;border-radius:16px;padding:0;top:12vh;margin:0 auto;max-height:76vh}.launcher-dialog::backdrop{background:rgba(6,20,38,.45)}
+.launcher-dialog form{padding:18px 20px;display:grid;gap:12px}.launcher-dialog header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.launcher-dialog h2{margin:0;text-transform:none}
+.launcher-box input{width:100%;font-size:16px;padding:12px 14px;border:1px solid var(--line);border-radius:10px}
+.launcher-list{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:46vh;overflow:auto}
+.launcher-option{display:grid;grid-template-columns:1fr auto;grid-template-areas:"title group" "detail group";gap:0 12px;padding:9px 12px;border-radius:9px;cursor:pointer;color:#172126}.launcher-option.is-active{background:#e4f1f0;box-shadow:inset 3px 0 #147d77}
+.launcher-title{grid-area:title;font-weight:600}.launcher-detail{grid-area:detail;color:#4d5b60}.launcher-group{grid-area:group;align-self:center;font-size:12px;color:#4d5b60;text-transform:uppercase;letter-spacing:.04em}
+.launcher-empty{padding:14px 12px;color:#4d5b60;font-size:14px}.launcher-hint{margin:0;font-size:12px;color:#4d5b60}

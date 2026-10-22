@@ -1361,4 +1361,85 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.deepEqual((await lab.api('GET', '/api/v1/saved-views')).json.items, [], 'the administrator’s own list is empty: nobody sees another person’s views');
     await auditor.close();
   });
+
+  // ---- the command launcher (apps/web/launcher.js) ---------------------------------------------------------------------------------------------------------------------------------
+  const openLauncher = page => page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true })));
+  const launcherOptions = page => page.evaluate(() => [...document.querySelectorAll('#launcher-list [data-launcher-index]')].map(option => option.querySelector('.launcher-title').textContent));
+
+  test('Ctrl K opens the launcher from any page; a few letters find a page, a machine or a dialog, Enter goes there, the arrow keys move, and what was used lately comes first next time', async () => {
+    const page = await newPage();
+    await signIn(page); await signedIn(page);
+    await page.evaluate(() => { try { localStorage.removeItem('nuvrion.launcher.recent'); } catch { /* none */ } });
+    await openLauncher(page);
+    await page.waitFor(() => document.getElementById('launcher-dialog').open && document.activeElement?.id === 'launcher-input');
+    assert.equal(await page.evaluate(() => document.getElementById('launcher-input').getAttribute('role')), 'combobox');
+    assert.equal((await launcherOptions(page))[0], 'Overview', 'with nothing typed, the pages');
+    assert.equal(await page.evaluate(() => document.querySelector('#launcher-list [role=option]').getAttribute('aria-selected')), 'true');
+    // a page
+    await page.fill('#launcher-input', 'capac');
+    await page.waitFor(() => /^Capacity$/.test(document.querySelector('#launcher-list .launcher-title')?.textContent ?? ''));
+    assert.match(await page.text('#launcher-status'), /result/);
+    await page.press('Enter');
+    await page.waitFor(() => !document.getElementById('launcher-dialog').open && document.getElementById('view-capacity').classList.contains('active'));
+    assert.equal(await page.text('#page-title'), 'Capacity');
+    // what was used lately comes first
+    await openLauncher(page);
+    await page.waitFor(() => document.getElementById('launcher-dialog').open && document.querySelector('#launcher-list .launcher-title')?.textContent === 'Capacity');
+    assert.match(await page.text('#launcher-list .launcher-group'), /^recent$/i);
+    // a machine: its detail opens
+    await page.fill('#launcher-input', 'app-01');
+    await page.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'nuvrion-app-01');
+    assert.match(await page.text('#launcher-list .launcher-detail'), /running/);
+    await page.press('Enter');
+    await page.waitFor(() => document.getElementById('view-inventory').classList.contains('active') && /nuvrion-app-01/.test(document.getElementById('vm-detail').innerText));
+    // arrow keys move the choice
+    await openLauncher(page);
+    await page.waitFor(() => document.getElementById('launcher-dialog').open);
+    await page.fill('#launcher-input', 'new');
+    await page.waitFor(() => document.querySelectorAll('#launcher-list [role=option]').length >= 3);
+    await page.press('ArrowDown');
+    await page.waitFor(() => document.querySelectorAll('#launcher-list [role=option]')[1]?.getAttribute('aria-selected') === 'true');
+    assert.equal(await page.evaluate(() => document.getElementById('launcher-input').getAttribute('aria-activedescendant')), 'launcher-option-1');
+    await page.press('ArrowUp');
+    await page.waitFor(() => document.querySelectorAll('#launcher-list [role=option]')[0]?.getAttribute('aria-selected') === 'true');
+    // a dialog to create something
+    await page.fill('#launcher-input', 'new sched');
+    await page.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'New schedule');
+    await page.press('Enter');
+    await page.waitFor(() => document.getElementById('schedule-dialog').open && document.getElementById('schedule-name'));
+    await page.click('#schedule-close'); await page.waitFor(() => !document.getElementById('schedule-dialog').open);
+    // the mouse works too, and Escape closes the box without going anywhere
+    await openLauncher(page); await page.waitFor(() => document.getElementById('launcher-dialog').open);
+    await page.fill('#launcher-input', 'infra');
+    await page.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'Infrastructure');
+    await page.click('#launcher-list [role=option]');
+    await page.waitFor(() => !document.getElementById('launcher-dialog').open && document.getElementById('view-infrastructure').classList.contains('active'));
+    await page.click('#launcher-button'); await page.waitFor(() => document.getElementById('launcher-dialog').open);
+    await page.fill('#launcher-input', 'zzzqqq');
+    await page.waitFor(() => /Nothing matches/.test(document.getElementById('launcher-list').innerText));
+    await page.press('Escape');
+    await page.waitFor(() => !document.getElementById('launcher-dialog').open);
+    assert.equal(await page.text('#page-title'), 'Infrastructure');
+    assert.deepEqual(unexpected(page.problems()), []);
+    await page.close();
+  });
+
+  test('the launcher offers an auditor no way to create alert rules, schedules or users, and offers a saved view', async () => {
+    await lab.createUser({ username: 'ada.launcher', displayName: 'Ada Launcher', role: 'auditor' });
+    const auditor = await newPage();
+    await signIn(auditor, 'ada.launcher', 'Another-Test-Password-2!');   // secret-scan:allow (fake test credential)
+    await auditor.waitFor(() => !document.getElementById('application').hidden);
+    await openLauncher(auditor); await auditor.waitFor(() => document.getElementById('launcher-dialog').open);
+    for (const query of ['new alert', 'new sched', 'new webhook', 'add a conn']) {
+      await auditor.fill('#launcher-input', query);
+      await auditor.waitFor(() => /Nothing matches/.test(document.getElementById('launcher-list').innerText));
+    }
+    await auditor.fill('#launcher-input', 'users');
+    await auditor.waitFor(() => document.getElementById('launcher-input').value === 'users' && !/^Users$/.test(document.querySelector('#launcher-list .launcher-title')?.textContent ?? ''));
+    assert.equal((await launcherOptions(auditor)).includes('Users'), false);
+    await auditor.fill('#launcher-input', 'audit');
+    await auditor.waitFor(() => document.querySelector('#launcher-list .launcher-title')?.textContent === 'Audit history');
+    await auditor.press('Escape');
+    await auditor.close();
+  });
 });
