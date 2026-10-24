@@ -140,3 +140,16 @@ test('the licence review runs in the supply-chain job, covers every lockfile, an
   assert.equal(policy.format, 'nuvrion-license-policy/1');
   assert.ok(!policy.allowed.some(id => /GPL|SSPL|BUSL|NC/i.test(id)), 'no copyleft or non-commercial licence is on the allow list');
 });
+
+// A test that hangs used to hold the whole job until its 15-minute limit cancelled it, and a cancelled job prints no summary, so the failure said nothing. With a limit per test, a stuck test fails
+// by itself (reported as "test timed out"), the run goes on and the summary is printed. The slowest legitimate test in CI takes about 26 seconds; the limit is several times that, and well below the job's.
+test('the test command gives every test a time limit, which CI inherits by running npm test', () => {
+  const script = JSON.parse(read('package.json')).scripts.test;
+  const limit = Number(/--test-timeout=(\d+)/.exec(script)?.[1]);
+  assert.ok(Number.isFinite(limit), `npm test has no --test-timeout: ${script}`);
+  assert.ok(limit >= 60_000, 'a slow shared runner must not trip it (the slowest test takes about 26 s)');
+  assert.ok(limit <= 300_000, 'a stuck test must fail long before the job is cancelled');
+  const jobLimitMinutes = Number(/checks:\n(?:.*\n)*?\s+timeout-minutes: (\d+)/.exec(workflow)?.[1]);
+  assert.ok(limit < jobLimitMinutes * 60_000 / 3, 'the limit leaves room for several stuck tests before the job limit');
+  assert.match(workflow, /run: npm test\n/, 'CI runs the tests through npm test, so it gets the limit');
+});
