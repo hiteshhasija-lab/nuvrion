@@ -27,10 +27,21 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
   after(async () => { await browser?.close(); await lab?.close(); exitWhenIdle(); });
 
   const newPage = async () => { const page = await browser.newPage(); await page.goto(lab.url); return page; };
+  // Something has happened after a click on "Sign in →" when the console is open, the sign-in page is gone, an error is shown, or a dialog has opened (a code to type, a new password to choose).
+  const signInHappened = () => document.getElementById('application')?.hidden === false || document.getElementById('login')?.hidden === true || Boolean(document.getElementById('login-error')?.innerText.trim()) || document.querySelector('dialog[open]') !== null;
+  // On a slow CI runner the click was sometimes lost: the page stayed on the sign-in screen with no error, and the test failed 15 seconds later (seen in 6 CI runs between 23 and 27 October, in different tests, never locally).
+  // So the credentials are typed and the button pressed again when, after a few seconds, nothing at all has happened. Each retry is logged, so a lost click is visible in the run and cannot hide a real fault: a wrong
+  // password, a refused sign-in or a code prompt all count as "something happened" and are not retried.
   const signIn = async (page, username = 'admin', password = ADMIN_PASSWORD) => {
-    await page.fill('#login-form [name=username]', username);
-    await page.fill('#login-form [name=password]', password);
-    await page.clickText('Sign in →', '#login-form');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await page.fill('#login-form [name=username]', username);
+      await page.fill('#login-form [name=password]', password);
+      await page.clickText('Sign in →', '#login-form');
+      try { await page.waitFor(signInHappened, { timeout: 5000 }); return; } catch (error) {
+        if (!/timed out waiting/.test(error.message)) throw error;
+        console.error(`e2e: the click on "Sign in" for ${username} had no effect after 5 s (attempt ${attempt} of 3)${attempt < 3 ? '; typing the credentials and pressing it again' : ''}`);
+      }
+    }
   };
   const signedIn = page => page.waitFor(() => [...document.querySelectorAll('h1')].some(h => h.offsetParent && h.textContent.includes('Platform Overview')));
   // The machine list in the sidebar fills in a moment after sign-in and moves the buttons below it, so a click aimed where the button was can land on its neighbour: look at the page that opened, and click again if it is not the one asked for.
