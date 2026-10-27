@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
+import { exitWhenIdle } from '../../test-support/exit-guard.js';
 import { totpCode } from '../../../../modules/identity/src/totp.js';
 import { midStep } from '../../../../modules/identity/test-support/totp-step.js';
 
@@ -24,7 +25,7 @@ describe(`accessibility (axe-core, WCAG 2.1 A and AA), ${theme} theme`, { skip: 
     await page.goto(lab.url);
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
   });
-  after(async () => { await page?.close(); await browser?.close(); await lab?.close(); });
+  after(async () => { await page?.close(); await browser?.close(); await lab?.close(); exitWhenIdle(); });
 
   const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function expectNoViolations(name) {

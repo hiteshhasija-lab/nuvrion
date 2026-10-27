@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { browserSkipReason, launchBrowser } from '../../test-support/browser.js';
 import { startConsole, ADMIN_PASSWORD } from '../../test-support/lab.js';
+import { exitWhenIdle } from '../../test-support/exit-guard.js';
 import { totpCode } from '../../../../modules/identity/src/totp.js';
 import { midStep } from '../../../../modules/identity/test-support/totp-step.js';
 
@@ -23,7 +24,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     operator = await lab.createUser({ username: 'olivia.operator', displayName: 'Olivia Operator', role: 'operator' });
     browser = await launchBrowser();
   });
-  after(async () => { await browser?.close(); await lab?.close(); });
+  after(async () => { await browser?.close(); await lab?.close(); exitWhenIdle(); });
 
   const newPage = async () => { const page = await browser.newPage(); await page.goto(lab.url); return page; };
   const signIn = async (page, username = 'admin', password = ADMIN_PASSWORD) => {

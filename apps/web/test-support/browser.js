@@ -160,6 +160,8 @@ export async function launchBrowser({ width = 1366, height = 900 } = {}) {
     async close() {
       await Promise.race([send('Browser.close').catch(() => {}), sleep(1500)]);        // Chrome closes the connection instead of answering
       socket.close(); chrome.kill();
+      // Chrome's helper processes inherit its stderr pipe, so the pipe stays open until the last of them has died, and an open pipe keeps this process alive: on a slow CI runner that was for ever. Let go of it.
+      chrome.stderr?.destroy(); chrome.unref();
       await sleep(100); rmSync(profile, { recursive: true, force: true });
     }
   };
