@@ -153,3 +153,15 @@ test('the test command gives every test a time limit, which CI inherits by runni
   assert.ok(limit < jobLimitMinutes * 60_000 / 3, 'the limit leaves room for several stuck tests before the job limit');
   assert.match(workflow, /run: npm test\n/, 'CI runs the tests through npm test, so it gets the limit');
 });
+
+// GHSA-xcx6-jx8p-x3h5 (HIGH, 27 October 2026): @azure/msal-node before 7.1.0 may disclose authorization-code parameters to an attacker-controlled endpoint. @azure/identity (4.13.3 and 4.14.0) still asks for
+// msal-node ^6, so the fix is an npm override. Nuvrion's Azure adapter signs in with a client secret (not the authorization-code flow), but the audit and the image scan block on the finding regardless.
+// Remove the override when @azure/identity depends on a fixed msal-node (docs/security-analysis.md).
+test('@azure/msal-node is held at a version that has the authorization-code fix, through an npm override', () => {
+  const at = (version) => version.split('.').map(Number);
+  const atLeast = (version, wanted) => { const [a, b] = [at(version), at(wanted)]; for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]; return true; };
+  assert.equal(JSON.parse(read('package.json')).overrides?.['@azure/msal-node'], '^7.1.1', 'the override that carries the fix');
+  const lock = JSON.parse(read('package-lock.json')).packages;
+  assert.ok(atLeast(lock['node_modules/@azure/msal-node'].version, '7.1.0'), `locked msal-node ${lock['node_modules/@azure/msal-node'].version} lacks the fix`);
+});
+

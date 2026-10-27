@@ -153,3 +153,17 @@ more packages have no `license` field in the registry and are accepted by a dete
 - It covers what npm installs. The **operating-system packages** in the base image and the container image's own
   licences are not covered.
 - It does not bundle the licence texts into the release. If a customer needs a notice file, that is a separate step.
+
+## Dependency override: @azure/msal-node (27 October 2026)
+
+`npm audit` and the image scan both reported GHSA-xcx6-jx8p-x3h5 (HIGH): before 7.1.0, `@azure/msal-node` may disclose authorization-code parameters to an attacker-controlled endpoint. It reaches the product only through
+`@azure/identity`, which the Azure adapter uses. The adapter signs in with a client secret (`ClientSecretCredential`, the client-credentials flow), not the authorization-code flow, so the product was probably not exposed,
+but both gates block on the finding and the release was held.
+
+`@azure/identity` 4.13.3 and 4.14.0 declare `@azure/msal-node` `^6.0.0`, so `npm update` cannot reach the fix. `package.json` therefore carries `"overrides": { "@azure/msal-node": "^7.1.1" }`, which locks 7.1.1 (with its own
+`@azure/msal-common` 16.14.3). What this does **not** prove: the pairing is not one `@azure/identity` declares support for, and the Azure adapter has never run against a real subscription (its tests use a fake client, so
+they do not touch msal-node). A test pins the override and the locked version.
+
+**Remove the override** when a release of `@azure/identity` depends on a fixed msal-node; then run `npm install`, the audit and the tests, and delete the guard test. Until the Azure adapter is validated live, treat a first
+real Azure sign-in as the proof that the pairing works.
+

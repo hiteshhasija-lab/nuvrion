@@ -27,6 +27,9 @@
     "static-analysis": "node tools/static-analysis/node_modules/eslint/bin/eslint.js --config tools/static-analysis/eslint.config.js --suppressions-location tools/static-analysis/eslint-suppressions.json --no-error-on-unmatched-pattern apps modules providers tools database contracts",
     "licenses": "node tools/evaluate-licenses.js"
   },
+  "overrides": {
+    "@azure/msal-node": "^7.1.1"
+  },
   "devDependencies": {
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
