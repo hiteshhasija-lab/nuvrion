@@ -1014,7 +1014,8 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.waitFor(() => /1 raised/.test(document.getElementById('notice').innerText));
     await page.waitFor(() => document.querySelector('#alert-open-table [data-alert-row]'));
     assert.match(await page.text('#alert-open-table'), /nuvrion-app-01[\s\S]*CPU above 10[\s\S]*18\.5%/);
-    await page.waitFor(expected => Number(document.getElementById('notify-count').textContent) === expected && !document.getElementById('notify-count').hidden, before + 1);
+    // at least one more than before: a connection problem from an earlier test's unreachable connection can arrive at any moment too, so the count is not exactly before + 1 (this exact match failed in CI, 27 October)
+    await page.waitFor(expected => !document.getElementById('notify-count').hidden && Number(document.getElementById('notify-count').textContent) >= expected, before + 1);
     assert.match(await page.text('#alert-rules-summary'), /1 open/i);
     // the bell
     await page.click('#notify-menu summary');
@@ -1022,7 +1023,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     assert.match(await page.text('#notify-panel'), /CPU above 10: 18\.5%/);
     await page.click('[data-notifications-read]');
     await page.waitFor(() => document.getElementById('notify-count').hidden);
-    assert.equal(await page.evaluate(() => document.getElementById('notify-label').textContent), 'Notifications, none new');
+    await page.waitFor(() => document.getElementById('notify-label').textContent === 'Notifications, none new');   // and not asserted at one instant: a late connection problem may light the bell again
     await page.click('#notify-menu summary');
     // acknowledge
     await page.click('[data-alert-acknowledge]');
@@ -1036,7 +1037,7 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await page.waitFor(() => /1 resolved/.test(document.getElementById('notice').innerText));
     await page.waitFor(() => /No open alerts/.test(document.getElementById('alert-open-table').innerText));
     assert.match(await page.text('#alert-resolved-table'), /nuvrion-app-01[\s\S]*Back within the limit/);
-    await page.waitFor(() => Number(document.getElementById('notify-count').textContent) === 1 && !document.getElementById('notify-count').hidden);
+    await page.waitFor(() => !document.getElementById('notify-count').hidden && Number(document.getElementById('notify-count').textContent) >= 1);   // the recovery is new since everything was marked read (a late connection problem may add to it)
     // a rule that is turned off, then deleted
     await page.click('[data-alert-rule-toggle]');
     await page.waitFor(() => /turned off/i.test(document.getElementById('alert-rule-table').innerText));
