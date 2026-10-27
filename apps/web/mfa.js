@@ -54,3 +54,9 @@ export function statusHtml(status, { esc, when }) {
 export function resetResultText(username, result) {
   return result.reset ? `Two-step verification reset for ${username}. They sign in with their password again.` : `${username} had no two-step verification to reset.`;
 }
+
+// What the notice says after an administrator turned two-step verification off for a person.
+export function turnOffResultText(username, result) {
+  if (result.turnedOff) return `Two-step verification turned off for ${username}${result.wasRequired ? ', and it is no longer required for them' : ''}. They sign in with their password alone.`;
+  return result.wasRequired ? `Two-step verification is no longer required for ${username}.` : `${username} had no two-step verification to turn off.`;
+}

@@ -455,6 +455,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /users/{userId}/mfa/disable:
+    post:
+      tags: [Users]
+      operationId: turnOffUserMfa
+      summary: Turn two-factor sign-in off for a user (remove the enrolment and the requirement)
+      description: Removes the person's enrolment and clears the requirement, so nothing asks them to set it up again. Unlike a reset, their sessions are kept. Works for any person, enrolled or not.
+      x-required-permission: identity.manage
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Turned off (turnedOff is false when the user had nothing set up; wasRequired says whether the requirement was cleared), content: { application/json: { schema: { type: object, required: [turnedOff, wasRequired], properties: { turnedOff: { type: boolean }, wasRequired: { type: boolean } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /users/{userId}/revoke-sessions:
     post:
       tags: [Users]

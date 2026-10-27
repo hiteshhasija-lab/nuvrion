@@ -324,7 +324,7 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('listRoles', { as: 'operator', expect: 403 });
   });
 
-  test('two-factor sign-in: getMfaStatus, startMfaEnrollment, confirmMfaEnrollment, verifyMfa, regenerateMfaBackupCodes, disableMfa, getMfaPolicy, setMfaPolicy, resetUserMfa', async () => {
+  test('two-factor sign-in: getMfaStatus, startMfaEnrollment, confirmMfaEnrollment, verifyMfa, regenerateMfaBackupCodes, disableMfa, getMfaPolicy, setMfaPolicy, resetUserMfa, turnOffUserMfa', async () => {
     const { totpCode } = await import('../../../modules/identity/src/totp.js');
     await (await import('../../../modules/identity/test-support/totp-step.js')).midStep();   // begin the short sequence of one-time-password uses early in a step
     const at = (secret, steps) => totpCode(secret, Date.now() + steps * 30_000);
@@ -355,6 +355,8 @@ describe('the API behaves as the description says', { skip: SKIP }, () => {
     await call('updateUser', { params: { userId: listed.id }, body: { status: 'active', roles: ['operator'], mfaRequired: false }, headers: { 'if-match': `"${required.json.rowVersion}"` }, expect: 200 });
     await call('resetUserMfa', { params: { userId: signup.json.user.id }, expect: 200 });
     await call('resetUserMfa', { params: { userId: ABSENT }, expect: 404 });
+    await call('turnOffUserMfa', { params: { userId: signup.json.user.id }, expect: 200 });
+    await call('turnOffUserMfa', { params: { userId: ABSENT }, expect: 404 });
   });
 
   test('createUser, setUserPassword, changePassword', async () => {

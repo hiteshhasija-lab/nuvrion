@@ -844,6 +844,44 @@ describe('the console in a browser', { skip: skip ?? false }, () => {
     await person.close(); await admin.close();
   });
 
+  test('an administrator turns two-step verification off for someone who has it set up and is required to: the enrolment and the requirement go together, their session stays, and they sign in with the password alone', async () => {
+    await midStep();   // a code works once and lasts one step: begin the short sequence of uses early in a step
+    const user = await lab.createUser({ username: 'quinn.quiet', displayName: 'Quinn Quiet', role: 'operator' });
+    const person = await newPage();
+    await signIn(person, user.username, user.password); await signedIn(person);
+    const admin = await newPage();
+    await signIn(admin); await signedIn(admin);
+    await openView(admin, 'users');
+    await admin.waitFor(() => [...document.querySelectorAll('#user-table tr')].some(row => /quinn\.quiet/.test(row.innerText)));
+    const rowOf = () => admin.evaluate(() => { const row = [...document.querySelectorAll('#user-table tr')].find(r => /quinn\.quiet/.test(r.innerText)); return { select: row.querySelector('[data-user-mfa]').value, state: row.querySelector('[data-user-mfa]').closest('td').querySelector('small').innerText, off: Boolean(row.querySelector('[data-user-mfa-off]')) }; });
+    assert.deepEqual(await rowOf(), { select: 'false', state: 'Not set up', off: false }, 'nothing to turn off for someone who has nothing set up');
+    // required, then set up by the person
+    await admin.evaluate(() => { const row = [...document.querySelectorAll('#user-table tr')].find(r => /quinn\.quiet/.test(r.innerText)), select = row.querySelector('[data-user-mfa]'); select.value = 'true'; select.dispatchEvent(new Event('change', { bubbles: true })); row.querySelector('[data-user-save]').click(); });
+    await admin.waitFor(() => /quinn\.quiet updated/.test(document.getElementById('notice').innerText));
+    await person.waitFor(() => document.getElementById('mfa-dialog').open && /Set up two-step verification/.test(document.getElementById('mfa-form').innerText), undefined, { timeout: 20000 });
+    const secret = (await person.text('#mfa-secret')).replace(/\s/g, '');
+    await person.fill('#mfa-code', codeAt(secret, -1)); await person.click('#mfa-submit');
+    await person.waitFor(() => document.querySelectorAll('#mfa-form .mfa-codes li').length === 10);
+    await person.click('#mfa-done');
+    await person.waitFor(() => !document.getElementById('application').hidden);
+    // the administrator turns it off: the two controls are both offered, and the one that turns it off clears the requirement too
+    await admin.evaluate(() => document.querySelector('#navigation button[data-view=overview]').click()); await openView(admin, 'users');
+    await admin.waitFor(() => /quinn\.quiet · 2-step on/.test(document.getElementById('user-table').innerText), undefined, { timeout: 20000 });
+    assert.deepEqual(await rowOf(), { select: 'true', state: 'Set up', off: true });
+    await admin.evaluate(() => [...document.querySelectorAll('[data-user-mfa-off]')].find(button => /Quinn Quiet/.test(button.innerText)).click());
+    await admin.waitFor(() => /Two-step verification turned off for quinn\.quiet, and it is no longer required for them/.test(document.getElementById('notice').innerText));
+    await admin.waitFor(() => [...document.querySelectorAll('#user-table tr')].some(r => /quinn\.quiet/.test(r.innerText) && r.querySelector('[data-user-mfa]').value === 'false'));
+    assert.deepEqual(await rowOf(), { select: 'false', state: 'Not set up', off: false });
+    // her session was not ended, and nothing asks her to set it up again
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    assert.equal(await person.evaluate(() => document.getElementById('application').hidden), false, 'her session stays open');
+    assert.equal(await person.evaluate(() => document.getElementById('mfa-dialog').open), false);
+    const again = await newPage();
+    await signIn(again, user.username, user.password); await signedIn(again);
+    assert.equal(await again.evaluate(() => document.getElementById('mfa-dialog').open), false, 'the next sign-in is the password alone');
+    await again.close(); await person.close(); await admin.close();
+  });
+
   // ---- creating accounts and passwords (apps/web/accounts.js) --------------------------------------------------------------------------------------------------------------
   const openUsers = async page => { await openView(page, 'users'); await page.waitFor(() => document.querySelectorAll('#user-table tr').length >= 2); };
   const accountDialog = (page, pattern) => page.waitFor(source => document.getElementById('account-dialog').open && new RegExp(source).test(document.getElementById('account-form').innerText), pattern);

@@ -352,6 +352,40 @@ test('turning it off, new backup codes and an administrator’s reset', () => {
   assert.ok(again.secret);
 });
 
+test('an administrator turns two-step verification off for a person: the enrolment and the requirement both go, nothing asks for it again, their sessions stay, and a person with nothing set up is just reported', () => {
+  const lab = clocked(), { identity } = lab;
+  const enrolledOnly = signedIn(identity, 'off.enrolled', ['operator']), requiredAndEnrolled = signedIn(identity, 'off.both', ['operator']), requiredOnly = signedIn(identity, 'off.required', ['operator']), untouched = signedIn(identity, 'off.untouched', ['operator']);
+  const user = who => identity.listUsers().find(item => item.id === who.userId);
+  enrolled(lab, enrolledOnly); enrolled(lab, untouched);
+  // enrolled, not required
+  assert.deepEqual(identity.mfaTurnOff(enrolledOnly.userId), { turnedOff: true, wasRequired: false });
+  assert.equal(identity.mfaStatus(enrolledOnly.userId).enrolled, false);
+  assert.equal(identity.session(enrolledOnly.token).mfa.state, 'verified', 'their open session stays open and needs nothing more');
+  assert.equal(identity.authenticate('off.enrolled', PASSWORD).mfa.state, 'verified', 'the next sign-in is the password alone');
+  // enrolled and required: the requirement goes too, so nothing sends them back to set it up
+  identity.updateUser(requiredAndEnrolled.userId, { status: 'active', roles: ['operator'], mfaRequired: true }, user(requiredAndEnrolled).rowVersion);
+  enrolled(lab, requiredAndEnrolled);
+  const before = user(requiredAndEnrolled).rowVersion;
+  assert.deepEqual(identity.mfaTurnOff(requiredAndEnrolled.userId), { turnedOff: true, wasRequired: true });
+  assert.equal(user(requiredAndEnrolled).mfaRequired, false);
+  assert.equal(user(requiredAndEnrolled).mfaEnrolled, false);
+  assert.equal(user(requiredAndEnrolled).rowVersion, before + 1, 'a changed requirement is a changed record');
+  assert.equal(identity.session(requiredAndEnrolled.token).mfa.state, 'verified');
+  assert.equal(identity.authenticate('off.both', PASSWORD).mfa.state, 'verified');
+  // required, never enrolled: held at enrolment until the requirement is lifted
+  identity.updateUser(requiredOnly.userId, { status: 'active', roles: ['operator'], mfaRequired: true }, user(requiredOnly).rowVersion);
+  assert.equal(identity.session(requiredOnly.token).mfa.state, 'enrollment_required');
+  assert.deepEqual(identity.mfaTurnOff(requiredOnly.userId), { turnedOff: false, wasRequired: true });
+  assert.equal(identity.session(requiredOnly.token).mfa.state, 'verified', 'a person held at the setup prompt is released');
+  // nothing set up and nothing required: reported, and the record is left alone
+  const quiet = user(requiredOnly).rowVersion;
+  assert.deepEqual(identity.mfaTurnOff(requiredOnly.userId), { turnedOff: false, wasRequired: false });
+  assert.equal(user(requiredOnly).rowVersion, quiet);
+  // nobody else is affected, and an unknown person is not found
+  assert.equal(identity.mfaStatus(untouched.userId).enrolled, true);
+  assert.equal(identity.mfaTurnOff('00000000-0000-4000-8000-000000000000'), null);
+});
+
 test('a pending secret is not an enrolment, and the secret is not kept in the clear', () => {
   const lab = clocked(), { identity } = lab, who = signedIn(identity), started = identity.mfaStartEnrollment(who.userId, {});
   assert.throws(() => identity.mfaVerify(who.userId, who.sessionId, { code: '123456' }), code_('NUV_MFA_NOT_ENROLLED'));

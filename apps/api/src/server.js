@@ -702,6 +702,14 @@ export async function handler(req, res) {
       await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.mfa_reset',targetType:'user',targetId:userMfaMatch[1],correlationId,outcome:'succeeded',detail:{hadEnrolment:result.reset}});
       return json(res,200,result,correlationId);
     }
+    const userMfaOffMatch=url.pathname.match(/^\/api\/v1\/users\/([0-9a-f-]+)\/mfa\/disable$/i);
+    if (req.method === 'POST' && userMfaOffMatch) {
+      const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;if(!await requireCsrf(req,res,correlationId,p))return;
+      const result=await identity.mfaTurnOff(userMfaOffMatch[1]);
+      if(!result)return problem(res,404,'NUV_USER_NOT_FOUND','User was not found.',correlationId);
+      await safeAudit({actorType:'user',actorId:p.user.id,actorName:p.user.username,action:'identity.mfa_turned_off',targetType:'user',targetId:userMfaOffMatch[1],correlationId,outcome:'succeeded',detail:{hadEnrolment:result.turnedOff,wasRequired:result.wasRequired}});
+      return json(res,200,result,correlationId);
+    }
     if (req.method === 'GET' && url.pathname === '/api/v1/permissions') {
       const p=await requireAuth(req,res,correlationId,'identity.manage');if(!p)return;
       return json(res,200,{items:PERMISSIONS,count:PERMISSIONS.length,meta:{correlationId}},correlationId);

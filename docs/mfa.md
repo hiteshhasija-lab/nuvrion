@@ -4,6 +4,9 @@ Two-step verification (two-factor sign-in) means a password is not enough on its
 standard time-based one-time password (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30-second steps), so any authenticator app works: Google Authenticator, Microsoft Authenticator,
 1Password, Authy and others.
 
+Two-step verification is **optional**. It is off for everyone unless a person sets it up for themselves or an administrator requires it for them; no account is required to use it by default, and an
+administrator can turn it off again for anyone (below).
+
 ## For a person
 
 1. **Set it up.** Account menu (top right) → **Two-step verification** → **Set up**. Scan the QR code with the app, or type the key under it. Enter the six-digit code the app now shows and
@@ -25,7 +28,10 @@ Two-step verification is chosen **per person**. On **Users**, the **Two-step** c
 - Someone for whom it is required **cannot turn it off** (the button says why). Not required: they may use it or not, as they choose.
 - **Reset two-step** (in the person's row, shown when they have it set up) removes their enrolment (a lost phone with no backup codes left) and ends their sessions. They sign in with their password and,
   if it is required for them, set it up again: the reset does not change the requirement.
-- Requiring it, resetting, and each person's own setup are in the audit history (`identity.mfa_requirement_changed`, `identity.mfa_reset`, `identity.mfa_enrolled`, `identity.mfa_disabled`,
+- **Turn off two-step** (also in the row of anyone who has it set up) is for taking it away altogether: it removes the enrolment **and** the requirement in one step, so nothing asks the person to set it up again.
+  Their sessions are **not** ended, and from the next sign-in the password alone is enough. It works whether or not the person is required to use it. For someone who is required but has not set it up,
+  change **Two-step** to **Not required** and choose **Save**: the requirement is all there is to remove.
+- Requiring it, resetting, and each person's own setup are in the audit history (`identity.mfa_requirement_changed`, `identity.mfa_reset`, `identity.mfa_turned_off` (who, whom, whether there was an enrolment and whether it was required), `identity.mfa_enrolled`, `identity.mfa_disabled`,
   `identity.mfa_backup_codes_regenerated`, and every code check as `identity.mfa_verified`, with failures). Neither a secret nor a code is ever written to the audit history or the log.
 
 Before 0.1.192 two-step verification was required per role. Anyone who held a role that was required then was carried over as "Required" when 0.1.192 was applied, once; changing a person's setting afterwards
@@ -70,6 +76,7 @@ POST   /api/v1/auth/mfa/backup-codes           { "code": "123456" } → ten new 
 POST   /api/v1/auth/mfa/disable                { "code": "123456" }        refused while a role requires it
 PATCH  /api/v1/users/{id}                      { "status": "active", "roles": [...], "mfaRequired": true }   require it for one person   identity.manage
 DELETE /api/v1/users/{id}/mfa                  reset a user's enrolment, end their sessions     identity.manage
+POST   /api/v1/users/{id}/mfa/disable          turn it off for a user: remove the enrolment and the requirement, keep their sessions   identity.manage   → { turnedOff, wasRequired }
 ```
 
 Errors: `NUV_MFA_REQUIRED` (403: not verified yet), `NUV_MFA_CODE_INVALID` and `NUV_MFA_REQUEST_INVALID` (422), `NUV_MFA_SESSION_REVOKED` (401: too many wrong codes), `NUV_MFA_THROTTLED` (429),

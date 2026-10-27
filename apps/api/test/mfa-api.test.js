@@ -205,10 +205,33 @@ describe('two-factor sign-in over the API', { skip: dependenciesInstalled ? fals
     }
   });
 
+  test('an administrator turns two-step verification off for a person: the enrolment and the requirement go in one step, her session stays, the next sign-in is the password alone, only identity.manage may do it, and it is audited', async () => {
+    await midStep();
+    const { user } = await enrolledUser('gina'); await addUser('hank'); await login('hank');
+    assert.equal((await requireFor('gina', true)).json.mfaRequired, true);
+    assert.equal((await call('hank', 'POST', `/api/v1/users/${user.id}/mfa/disable`)).status, 403, 'an operator may not');
+    assert.equal((await call('gina', 'POST', `/api/v1/users/${user.id}/mfa/disable`)).status, 403, 'nor may she, for herself, this way');
+    assert.deepEqual([(await userOf('gina')).mfaRequired, (await userOf('gina')).mfaEnrolled], [true, true], 'refused calls changed nothing');
+    const off = await call('admin', 'POST', `/api/v1/users/${user.id}/mfa/disable`);
+    assert.deepEqual([off.status, off.json], [200, { turnedOff: true, wasRequired: true }]);
+    const after = await userOf('gina');
+    assert.deepEqual([after.mfaRequired, after.mfaEnrolled], [false, false]);
+    assert.equal((await call('gina', 'GET', '/api/v1/resources')).status, 200, 'her open session stays open');
+    assert.equal((await login('gina2', 'gina')).json.mfa.state, 'verified', 'she signs in with her password alone');
+    const again = await call('admin', 'POST', `/api/v1/users/${user.id}/mfa/disable`);
+    assert.deepEqual([again.status, again.json], [200, { turnedOff: false, wasRequired: false }]);
+    assert.equal((await call('admin', 'POST', '/api/v1/users/00000000-0000-4000-8000-000000000000/mfa/disable')).status, 404);
+    const audit = (await call('admin', 'GET', '/api/v1/audit-events?limit=500&search=identity.mfa_turned_off')).json.items ?? [];
+    const events = audit.filter(item => item.action === 'identity.mfa_turned_off' && item.targetId === user.id);
+    assert.equal(events.length, 2, 'both calls are in the audit history, the first that changed something and the second that did not');
+    assert.ok(events.some(item => item.detail.hadEnrolment === true && item.detail.wasRequired === true), 'what the first call changed');
+    assert.ok(events.some(item => item.detail.hadEnrolment === false && item.detail.wasRequired === false), 'what the second call did not');
+  });
+
   test('every step is in the audit history, and no secret or code is in it', async () => {
     const audit = await call('admin', 'GET', '/api/v1/audit-events?limit=500&search=identity.mfa');
     const events = audit.json.items ?? [], actions = new Set(events.map(event => event.action));
-    for (const action of ['identity.mfa_enrolled', 'identity.mfa_verified', 'identity.mfa_disabled', 'identity.mfa_backup_codes_regenerated', 'identity.mfa_requirement_changed', 'identity.mfa_reset']) assert.ok(actions.has(action), action);
+    for (const action of ['identity.mfa_enrolled', 'identity.mfa_verified', 'identity.mfa_disabled', 'identity.mfa_backup_codes_regenerated', 'identity.mfa_requirement_changed', 'identity.mfa_reset', 'identity.mfa_turned_off']) assert.ok(actions.has(action), action);
     assert.ok(events.some(event => event.action === 'identity.mfa_verified' && event.outcome === 'failed'), 'wrong codes are recorded as failures');
     const text = JSON.stringify(events);
     assert.doesNotMatch(text, /[A-Z2-7]{32}/, 'no secret'); assert.doesNotMatch(text, /\b[a-z2-9]{5}-[a-z2-9]{5}\b/, 'no backup code');

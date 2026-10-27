@@ -36,6 +36,7 @@ const PROTECTED = [
   ['PATCH', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
   ['DELETE', '/api/v1/roles/some_role', 'identity.manage', 'roleMatch'],
   ['DELETE', `/api/v1/users/${ID}/mfa`, 'identity.manage', 'userMfaMatch'],
+  ['POST', `/api/v1/users/${ID}/mfa/disable`, 'identity.manage', 'userMfaOffMatch'],
   ['PATCH', `/api/v1/users/${ID}`, 'identity.manage', 'userMatch'],
   ['POST', `/api/v1/users/${ID}/revoke-sessions`, 'identity.manage', 'userSessionsMatch'],
   ['POST', `/api/v1/users/${ID}/recovery-code`, 'identity.manage', 'userRecoveryMatch'],

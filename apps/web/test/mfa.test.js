@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSecret, verifyHtml, setupHtml, codesHtml, statusHtml, resetResultText } from '../mfa.js';
+import { groupSecret, verifyHtml, setupHtml, codesHtml, statusHtml, resetResultText, turnOffResultText} from '../mfa.js';
 
 // The two-step verification dialog: what each state offers, that nothing a server sent is put in the page unescaped, and that a person is never
 // offered something the server will refuse (turning off what their role requires).
@@ -71,4 +71,11 @@ test('whatever a server sends is escaped: account names, secrets, codes and role
     setupHtml({ secret: evil, uri: evil, account: evil }, ctx), codesHtml([evil], ctx), verifyHtml({ error: evil, intro: evil }, ctx),
     statusHtml({ enrolled: true, enrolledAt: evil, backupCodesRemaining: 3, required: false }, ctx)
   ]) { assert.doesNotMatch(html, /<img/); assert.match(html, /&lt;img/); }
+});
+
+test('the notice after an administrator turns two-step off says what changed: the enrolment, the requirement, both or neither', () => {
+  assert.equal(turnOffResultText('ada', { turnedOff: true, wasRequired: false }), 'Two-step verification turned off for ada. They sign in with their password alone.');
+  assert.equal(turnOffResultText('ada', { turnedOff: true, wasRequired: true }), 'Two-step verification turned off for ada, and it is no longer required for them. They sign in with their password alone.');
+  assert.equal(turnOffResultText('ada', { turnedOff: false, wasRequired: true }), 'Two-step verification is no longer required for ada.');
+  assert.equal(turnOffResultText('ada', { turnedOff: false, wasRequired: false }), 'ada had no two-step verification to turn off.');
 });

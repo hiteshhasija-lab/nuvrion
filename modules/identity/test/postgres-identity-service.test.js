@@ -422,6 +422,36 @@ test('PostgreSQL: migration 0036 carries the earlier role policy over once, and 
   assert.equal(await required(user.id), false, 'applying the migration again at the next deploy does not undo that');
 });
 
+test('PostgreSQL: an administrator turns two-step verification off: the enrolment and the requirement both go in one step, sessions stay, and the row version moves only when the requirement changed', database, async () => {
+  const required = async id => (await db.pool.query('SELECT mfa_required, row_version FROM identity.users WHERE user_id=$1', [id])).rows[0];
+  const setRequired = id => db.pool.query('UPDATE identity.users SET mfa_required=true, row_version=row_version+1 WHERE user_id=$1', [id]);
+  // enrolled, not required
+  const plain = await mfaUser(), enrolledPlain = await mfaEnrolled(plain);
+  const plainBefore = await required(plain.id);
+  assert.deepEqual(await mfa.mfaTurnOff(plain.id), { turnedOff: true, wasRequired: false });
+  assert.equal((await mfa.mfaStatus(plain.id)).enrolled, false);
+  assert.ok(await mfa.session(enrolledPlain.who.token), 'the open session stays');
+  assert.equal((await required(plain.id)).row_version, plainBefore.row_version, 'nothing about the account changed but the enrolment');
+  assert.equal((await mfaLogin(plain)).state, 'verified', 'the next sign-in is the password alone');
+  // enrolled and required
+  const both = await mfaUser(); await setRequired(both.id); const enrolledBoth = await mfaEnrolled(both);
+  const bothBefore = await required(both.id);
+  assert.deepEqual(await mfa.mfaTurnOff(both.id), { turnedOff: true, wasRequired: true });
+  const bothAfter = await required(both.id);
+  assert.equal(bothAfter.mfa_required, false);
+  assert.equal(Number(bothAfter.row_version), Number(bothBefore.row_version) + 1);
+  assert.equal((await mfa.mfaStatus(both.id)).enrolled, false);
+  assert.ok(await mfa.session(enrolledBoth.who.token));
+  assert.equal((await mfaLogin(both)).state, 'verified');
+  // required, never enrolled
+  const only = await mfaUser(); await setRequired(only.id);
+  assert.deepEqual(await mfa.mfaTurnOff(only.id), { turnedOff: false, wasRequired: true });
+  assert.equal((await required(only.id)).mfa_required, false);
+  // nothing to do, and nobody else is touched; an unknown person is not found
+  assert.deepEqual(await mfa.mfaTurnOff(only.id), { turnedOff: false, wasRequired: false });
+  assert.equal(await mfa.mfaTurnOff(randomUUID()), null);
+});
+
 test('PostgreSQL: new backup codes replace the old, turning it off needs a code, and a reset removes the enrolment and ends every session', database, async () => {
   const user = await mfaUser(), { who, secret, backupCodes } = await mfaEnrolled(user);
   time.now += 30_000;
