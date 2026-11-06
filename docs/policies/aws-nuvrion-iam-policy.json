@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "NuvrionReadInstances",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeInstances",
+      "Resource": "*"
+    },
+    {
+      "Sid": "NuvrionPowerOperations",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances"
+      ],
+      "Resource": "arn:aws:ec2:*:*:instance/*"
+    }
+  ]
+}

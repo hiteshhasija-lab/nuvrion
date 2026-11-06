@@ -78,6 +78,9 @@ port 8697 over HTTPS), then add a connection of type *Workstation REST API* with
 
 ## Amazon Web Services
 
+The full guide, with the least-privilege IAM policy, how to check it before connecting, and the error table, is
+[aws-setup.md](aws-setup.md).
+
 1. Create an IAM user or role for Nuvrion with permission to describe and start/stop/reboot EC2 instances in the
    regions you will use.
 2. Provider: *Amazon Web Services*; connection type: *Cloud API*; endpoint `https://ec2.<region>.amazonaws.com`;
@@ -96,6 +99,9 @@ port 8697 over HTTPS), then add a connection of type *Workstation REST API* with
 
 ## Microsoft Azure
 
+The full guide, with the least-privilege role, how to check it before connecting, and the error table, is
+[azure-setup.md](azure-setup.md).
+
 1. Create an app registration (service principal) and give it a role that can read and operate VMs in the subscription.
 2. Provider: *Microsoft Azure*; connection type: *Cloud API*; fill **Azure tenant ID**, **Azure subscription ID**,
    client id in the user field and the client secret in the password field.
@@ -107,6 +113,8 @@ port 8697 over HTTPS), then add a connection of type *Workstation REST API* with
 | `NUV_AZURE_AUTH_FAILED` | The secret is wrong or expired |
 | `NUV_AZURE_PERMISSION_DENIED` | The principal lacks a role on the subscription |
 | `NUV_AZURE_THROTTLED` | Azure is rate limiting; retried with backoff |
+
+The other codes are in [azure-setup.md](azure-setup.md).
 
 ## Rotating or removing a connection
 
