@@ -19,10 +19,10 @@ test('the image that ships is the slim one, without a package manager or a compi
   assert.match(runtime, /rm -rf [^\n]*node_modules\/npm\b/);
   assert.match(runtime, /COPY --from=build /);
   assert.doesNotMatch(runtime, /npm (ci|install)/);
-  // the only package change allowed in the runtime stage: the fixed version of one package, nothing else upgraded
+  // the only package change allowed in the runtime stage: the fixed versions of the named packages, nothing else upgraded
   const aptCommands = runtime.match(/apt-get [^\n]*/g) ?? [];
   assert.deepEqual(aptCommands.length, 1);
-  assert.match(aptCommands[0], /^apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base && rm -rf \/var\/lib\/apt\/lists\/\*$/);
+  assert.match(aptCommands[0], /^apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base apt libapt-pkg6.0 && rm -rf \/var\/lib\/apt\/lists\/\*$/);
   assert.doesNotMatch(runtime, /apt-get (upgrade|dist-upgrade)/);
 });
 

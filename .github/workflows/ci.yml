@@ -144,7 +144,7 @@ jobs:
           docker save localhost/nuvrion:ci-image -o "image/Nuvrion-Image-${GITHUB_SHA}.tar"
           docker image inspect localhost/nuvrion:ci-image --format '{{.Id}}' | sed 's/^sha256://' > evidence/image-id.txt
           cp "image/Nuvrion-Image-${GITHUB_SHA}.tar" "$RUNNER_TEMP/nuvrion-app.tar"
-          docker run --rm localhost/nuvrion:ci-image sh -c 'node --version; cat /opt/nuvrion/RELEASE_VERSION; test ! -e /usr/local/lib/node_modules/npm && echo "npm is not in the image"; echo "perl-base: $(dpkg-query -W -f="\${Version}" perl-base)"'
+          docker run --rm localhost/nuvrion:ci-image sh -c 'node --version; cat /opt/nuvrion/RELEASE_VERSION; test ! -e /usr/local/lib/node_modules/npm && echo "npm is not in the image"; echo "perl-base: $(dpkg-query -W -f="\${Version}" perl-base)"; echo "apt: $(dpkg-query -W -f="\${Version}" apt)"'
       - name: Scan the image (Trivy, operating-system packages and Node packages)
         env:
           TRIVY_IMAGE: docker.io/aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa

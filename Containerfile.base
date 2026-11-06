@@ -34,9 +34,10 @@ WORKDIR /opt/nuvrion
 COPY --from=build --chown=node:node /opt/nuvrion /opt/nuvrion
 
 # The pinned image is built from Debian some days before a security fix may be published, and Docker rebuilds it on its own schedule. Take the fixed version of the
-# one package that has a fix the image lacks (perl-base, which dpkg depends on; nothing here runs perl). Nothing else is upgraded. It does nothing when the pinned image
-# already has the fix: then delete this line, and the image-scan job names any acceptance that is no longer needed.
-RUN apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base && rm -rf /var/lib/apt/lists/*
+# packages that have a fix the image lacks: perl-base (dpkg depends on it; nothing here runs perl), and apt with its library libapt-pkg6.0 (CVE-2026-109518, fixed in 2.6.2;
+# the two are versioned together). Nothing else is upgraded. It does nothing for a package the pinned image already has fixed: then take that name out of the line, and
+# delete the line when none is left; the image-scan job names any acceptance that is no longer needed.
+RUN apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base apt libapt-pkg6.0 && rm -rf /var/lib/apt/lists/*
 
 # The application does not run a package manager. Removing it also removes the packages bundled inside it from the image.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
