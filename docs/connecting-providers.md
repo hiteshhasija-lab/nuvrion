@@ -42,6 +42,9 @@ Be clear about this before you rely on a provider:
 
 ## VMware ESXi and vCenter
 
+The full guide, with the vSphere privileges the account needs, how to check them before connecting, certificate pinning,
+what each power action does and the error table, is [vmware-setup.md](vmware-setup.md).
+
 1. Create a user on the host (or a vCenter user) for Nuvrion.
 2. Provider: *VMware vSphere / ESXi*; connection type: *Standalone ESXi* or *vCenter Server*; endpoint is the host
    or vCenter URL with no path.
@@ -60,6 +63,8 @@ Common outcomes (the code is in the error, and it is what the alert and task res
 | `NUV_ESXI_RESOURCE_NOT_FOUND` | The VM is no longer on the host | Run discovery; the VM is shown as missing |
 
 ## VMware Workstation
+
+See also [vmware-setup.md](vmware-setup.md) for how the two ways compare.
 
 Two ways, and the **agent is the supported one**: the Workstation REST API (`vmrest`) cannot report everything the
 agent can.

@@ -1,0 +1,42 @@
+{
+  "note": "vSphere privileges for the account Nuvrion signs in with, by feature. Every feature is optional: grant only the groups for what Nuvrion should do. vSphere adds System.Anonymous, System.View and System.Read to every role by itself.",
+  "groups": {
+    "read": [
+      "System.Anonymous",
+      "System.View",
+      "System.Read"
+    ],
+    "power": [
+      "VirtualMachine.Interact.PowerOn",
+      "VirtualMachine.Interact.PowerOff",
+      "VirtualMachine.Interact.Reset",
+      "VirtualMachine.Interact.Suspend"
+    ],
+    "console": [
+      "VirtualMachine.Interact.ConsoleInteract"
+    ],
+    "media": [
+      "VirtualMachine.Interact.SetCDMedia",
+      "VirtualMachine.Interact.DeviceConnection",
+      "Datastore.Browse"
+    ],
+    "snapshots": [
+      "VirtualMachine.State.CreateSnapshot",
+      "VirtualMachine.State.RevertToSnapshot",
+      "VirtualMachine.State.RemoveSnapshot"
+    ],
+    "settings": [
+      "VirtualMachine.Config.CPUCount",
+      "VirtualMachine.Config.Memory",
+      "VirtualMachine.Config.Resource",
+      "VirtualMachine.Config.Settings",
+      "VirtualMachine.Config.AdvancedConfig",
+      "VirtualMachine.Config.AddRemoveDevice",
+      "VirtualMachine.Config.EditDevice",
+      "VirtualMachine.Config.Rename",
+      "VirtualMachine.Config.Annotation",
+      "Datastore.AllocateSpace",
+      "Network.Assign"
+    ]
+  }
+}
