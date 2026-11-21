@@ -1,6 +1,6 @@
 # The reference-scale test: 10,000 virtual machines
 
-The product plan asks for the inventory, dashboard and task scenarios to be run at 10,000 VMs. `tools/run-scale-test.js` does that on a laptop or a build machine, against a throwaway database, and
+The product plan asks for the inventory, dashboard and task scenarios to be run at 10,000 VMs. `tools/run-reference-scale.js` does that on a laptop or a build machine, against a throwaway database, and
 writes an evidence file. This page says what it does, how to run it, what it found the first time (21 November 2026), and what it cannot tell you.
 
 ## What it does
@@ -17,7 +17,7 @@ writes an evidence file. This page says what it does, how to run it, what it fou
 6. Drives **Chrome** (the same headless driver the browser tests use) to sign in, open the inventory and watch the page.
 
 ```bash
-NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:5432/postgres node tools/run-scale-test.js scale-evidence.json
+NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:5432/postgres node tools/run-reference-scale.js scale-evidence.json
 ```
 
 The database user must be allowed to create databases (the same server the database tests use). Optional: `NUVRION_SCALE_VMS` (default 10000), `NUVRION_SCALE_TASKS` (1000),

@@ -3,7 +3,7 @@
 // loads every five seconds, searches and filters, a console refresh as one person sees it and as several people see it, detail pages, alert evaluation, tag operations, discovery
 // cycles, and tasks submitted through the API and run to completion. Optionally it drives Chrome to measure what the browser does with the list.
 //
-//   NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=<postgres url of a server on this machine> node tools/run-scale-test.js <evidence.json>
+//   NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=<postgres url of a server on this machine> node tools/run-reference-scale.js <evidence.json>
 //
 // It refuses any database that is not on this machine, creates its own database and drops it at the end, and writes nothing anywhere else. It never talks to a provider, a
 // production host or the network. Environment: NUVRION_SCALE_VMS (10000), NUVRION_SCALE_TASKS (1000), NUVRION_SCALE_BROWSER=0 to skip Chrome.
@@ -67,7 +67,7 @@ async function main() {
   const [outputPath] = process.argv.slice(2);
   const adminUrl = process.env.NUVRION_TEST_DATABASE_URL;
   if (!outputPath || process.env.NUVRION_QUALIFICATION_ACK !== 'synthetic-only' || !adminUrl) {
-    throw new Error('Usage: NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=postgres://...@127.0.0.1/postgres node tools/run-scale-test.js <evidence.json>');
+    throw new Error('Usage: NUVRION_QUALIFICATION_ACK=synthetic-only NUVRION_TEST_DATABASE_URL=postgres://...@127.0.0.1/postgres node tools/run-reference-scale.js <evidence.json>');
   }
   const host = new URL(adminUrl).hostname;
   if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) throw new Error(`Refusing to run against ${host}: the scale test only runs against a PostgreSQL on this machine.`);

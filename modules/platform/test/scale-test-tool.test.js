@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // The scale test builds a large synthetic estate and drops a database, so its refusals are what keep it away from anything real. These tests run the tool as an operator would
 // and check that it stops before doing any work, without a PostgreSQL.
 const run = promisify(execFile);
-const tool = fileURLToPath(new URL('../../../tools/run-scale-test.js', import.meta.url));
+const tool = fileURLToPath(new URL('../../../tools/run-reference-scale.js', import.meta.url));
 const attempt = async (env, args) => {
   const directory = await mkdtemp(join(tmpdir(), 'nuvrion-scale-test-'));
   try {
