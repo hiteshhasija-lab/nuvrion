@@ -22,7 +22,7 @@ test('the image that ships is the slim one, without a package manager or a compi
   // the only package change allowed in the runtime stage: the fixed versions of the named packages, nothing else upgraded
   const aptCommands = runtime.match(/apt-get [^\n]*/g) ?? [];
   assert.deepEqual(aptCommands.length, 1);
-  assert.match(aptCommands[0], /^apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base apt libapt-pkg6.0 && rm -rf \/var\/lib\/apt\/lists\/\*$/);
+  assert.match(aptCommands[0], /^apt-get update -qq && apt-get install -y --no-install-recommends --only-upgrade perl-base apt libapt-pkg6.0 libpam0g libpam-runtime libpam-modules libpam-modules-bin libzstd1 && rm -rf \/var\/lib\/apt\/lists\/\*$/);
   assert.doesNotMatch(runtime, /apt-get (upgrade|dist-upgrade)/);
 });
 
