@@ -233,12 +233,39 @@ async function main() {
     await load('console_refresh_1_user', refresh, { requests: 20, concurrency: 1 });
     await load('console_refresh_5_users', refresh, { requests: 50, concurrency: 5 });
     await load('console_refresh_20_users', refresh, { requests: 100, concurrency: 20 });
-    // sustained: 10 people each refreshing every 5 seconds for 60 seconds (the console's own timer)
-    { const people = 10, seconds = 60, latencies = [], t0 = performance.now(), cpu0 = await cpuSeconds(server.pid); let bytes = 0, errors = 0;
-      await Promise.all(Array.from({ length: people }, async (_, person) => { await sleep(person * 500); while (performance.now() - t0 < seconds * 1000) { const s = performance.now(); try { const r = await refresh(); bytes += r.bytes; if (r.status >= 400) errors++; } catch { errors++; } latencies.push(performance.now() - s); await sleep(Math.max(0, 5000 - (performance.now() - s))); } }));
-      const sorted = latencies.sort((a, b) => a - b), cpu1 = await cpuSeconds(server.pid);
-      evidence.scenarios.console_refresh_sustained_10_users_60s = { people, seconds, refreshes: sorted.length, errors, p50Ms: round(percentile(sorted, 50)), p95Ms: round(percentile(sorted, 95)), maxMs: round(sorted.at(-1)), averageResponseKB: round(bytes / sorted.length / 1024, 1), serverCpuSeconds: round((cpu1 ?? 0) - (cpu0 ?? 0), 2), serverRssMB: round(await rssMb(server.pid)), megabytesPerSecondOut: round(bytes / 2 ** 20 / seconds, 2) };
-      console.log(JSON.stringify({ scenario: 'console_refresh_sustained_10_users_60s', ...evidence.scenarios.console_refresh_sustained_10_users_60s })); }
+    // Steady use: 10 signed-in people for 60 seconds, each doing what the console's timers do. Two patterns, so that a change to the console can be compared:
+    //   until 0.1.202: every request every five seconds, AND the whole machine list again every second (a second timer; a fetch still running is not doubled up);
+    //   after it (apps/web/refresh-policy.js): the machine list and the performance numbers every half minute, everything else every five seconds. Nothing changes during the run.
+    const heavyPaths = ['/resources?resourceType=virtual_machine', '/performance/latest'], lightPaths = refreshPaths.filter(path => !heavyPaths.includes(path));
+    const fetchAll = async paths => { const results = await Promise.all(paths.map(path => call(path))); return { bytes: results.reduce((sum, r) => sum + r.bytes, 0), failed: results.some(r => r.status >= 400) }; };
+    async function steady(name, { heavyEverySeconds, listEveryMs = null }) {
+      const people = 10, seconds = 60, latencies = [], cpu0 = await cpuSeconds(server.pid), t0 = performance.now(), running = () => performance.now() - t0 < seconds * 1000;
+      let bytes = 0, errors = 0, listFetches = 0, peakRss = 0;
+      const poll = setInterval(async () => { peakRss = Math.max(peakRss, (await rssMb(server.pid)) ?? 0); }, 400);
+      await Promise.all(Array.from({ length: people }, async (_, person) => {
+        await sleep(person * 500);
+        let heavyAt = null;
+        const refreshes = (async () => { while (running()) {
+          const s0 = performance.now(), heavy = heavyAt === null || s0 - heavyAt >= heavyEverySeconds * 1000;
+          if (heavy) { heavyAt = s0; listFetches++; }
+          try { const r = await fetchAll(heavy ? refreshPaths : lightPaths); bytes += r.bytes; if (r.failed) errors++; } catch { errors++; }
+          latencies.push(performance.now() - s0); await sleep(Math.max(0, 5000 - (performance.now() - s0)));
+        } })();
+        const listPoll = listEveryMs === null ? null : (async () => { while (running()) {
+          const s0 = performance.now(); listFetches++;
+          try { const r = await fetchAll(heavyPaths.slice(0, 1)); bytes += r.bytes; if (r.failed) errors++; } catch { errors++; }
+          await sleep(Math.max(0, listEveryMs - (performance.now() - s0)));
+        } })();
+        await Promise.all([refreshes, listPoll]);
+      }));
+      clearInterval(poll);
+      const sorted = latencies.sort((a, b) => a - b), cpu1 = await cpuSeconds(server.pid), wall = (performance.now() - t0) / 1000;
+      evidence.scenarios[name] = { people, seconds, refreshes: sorted.length, listFetches, errors, p50Ms: round(percentile(sorted, 50)), p95Ms: round(percentile(sorted, 95)), maxMs: round(sorted.at(-1)), totalMB: round(bytes / 2 ** 20), megabytesPerSecondOut: round(bytes / 2 ** 20 / wall, 2), serverCpuSeconds: round((cpu1 ?? 0) - (cpu0 ?? 0), 2), serverPeakRssMB: round(peakRss) };
+      console.log(JSON.stringify({ scenario: name, ...evidence.scenarios[name] }));
+    }
+    await steady('steady_10_users_console_until_0_1_202', { heavyEverySeconds: 5, listEveryMs: 1000 });
+    await sleep(5000);
+    await steady('steady_10_users_console_with_refresh_policy', { heavyEverySeconds: 30 });
 
     // alert rules over the whole estate
     evidence.alertRules = [];
@@ -287,8 +314,8 @@ async function main() {
   }
 }
 
-// What Chrome does with the list: sign in, wait for the Overview and the inventory to render, then read the page's own measurements. The page's timer is watched for 20 seconds,
-// which includes at least three of the console's own five-second refreshes, to see how long the page is unresponsive while it receives and rebuilds the list.
+// What Chrome does with the list: sign in, wait for the Overview and the inventory to render, then read the page's own measurements. The page's timer is watched for 45 seconds,
+// starting after the first drawing, to see how long the page is unresponsive while the console refreshes as it does in use.
 async function measureBrowser({ base, password }) {
   const { launchBrowser, findChrome } = await import('../apps/web/test-support/browser.js');
   if (!findChrome()) return { skipped: 'Chrome was not found' };
@@ -307,19 +334,21 @@ async function measureBrowser({ base, password }) {
     await page.waitFor(() => { const section = document.getElementById('view-inventory'); return section && section.getClientRects().length > 0 && document.querySelectorAll('#view-inventory tbody tr').length > 0; }, { timeout: 180000 });
     const inventoryMs = Date.now() - t1;
     const measured = await page.evaluate(async () => {
+      await new Promise(resolve => setTimeout(resolve, 8000));              // let the first drawing finish: the watch is of the page as it is used
+      performance.setResourceTimingBufferSize(3000); performance.clearResourceTimings();
       const gaps = []; let last = performance.now(); const timer = setInterval(() => { const now = performance.now(); gaps.push(now - last - 50); last = now; }, 50);
-      await new Promise(resolve => setTimeout(resolve, 20000)); clearInterval(timer);
+      await new Promise(resolve => setTimeout(resolve, 45000)); clearInterval(timer);
       const resources = performance.getEntriesByType('resource').filter(entry => /\/api\/v1\/resources\?/.test(entry.name));
       return {
         rowsRendered: document.querySelectorAll('#view-inventory tbody tr').length, domNodes: document.getElementsByTagName('*').length,
         jsHeapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 2 ** 20) : null,
         longestPageStallMs: Math.round(Math.max(0, ...gaps)), stallsOver100ms: gaps.filter(gap => gap > 100).length, stallsOver500ms: gaps.filter(gap => gap > 500).length,
-        resourceRequests: resources.length, resourceRequestMsP50: resources.length ? Math.round(resources.map(entry => entry.duration).sort((a, b) => a - b)[Math.floor(resources.length / 2)]) : null,
+        watchedSeconds: 45, resourceRequests: resources.length, resourceRequestMsP50: resources.length ? Math.round(resources.map(entry => entry.duration).sort((a, b) => a - b)[Math.floor(resources.length / 2)]) : null,
         resourceTransferMB: resources.length ? Math.round(resources[0].decodedBodySize / 2 ** 20 * 10) / 10 : null
       };
     });
     return { timeToOverviewMs: overviewMs, timeToInventoryRowsMs: inventoryMs, ...measured };
-  } finally { await browser.close(); }
+  } finally { await browser.close().catch(() => {}); }      // a profile folder Chrome is still writing to cannot always be removed at once; that must not lose the measurement
 }
 
 if (!serverMode) await main();

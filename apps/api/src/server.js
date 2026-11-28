@@ -915,6 +915,10 @@ export async function handler(req, res) {
       const js = await readFile(resolve(webRoot, 'launcher.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
     }
+    if (req.method === 'GET' && url.pathname === '/refresh-policy.js') {
+      const js = await readFile(resolve(webRoot, 'refresh-policy.js'));
+      res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);
+    }
     if (req.method === 'GET' && url.pathname === '/views.js') {
       const js = await readFile(resolve(webRoot, 'views.js'));
       res.writeHead(200, securityHeaders('text/javascript; charset=utf-8','public, max-age=300')); return res.end(js);

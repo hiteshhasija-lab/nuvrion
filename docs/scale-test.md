@@ -12,7 +12,7 @@ writes an evidence file. This page says what it does, how to run it, what it fou
 3. Creates five connections through the API (vCenter 40%, AWS 25%, Azure 20%, a second vSphere fleet 10%, Workstation 5%) on the **mock adapter**: nothing is sent to any provider, and the credentials are fakes.
 4. Brings the synthetic estate in through the **real discovery path** (`DiscoveryScheduler.discover`: inventory synchronisation, metric recording, infrastructure objects), so the write path is measured too.
    VMs have realistic names, power states (70% running), sizes, placement on hosts, datastores and networks, and metrics.
-5. Tags 3,000 VMs through the API, creates two alert rules, then runs the scenarios below as an administrator signed in over HTTP, and reports p50, p95, p99, maximum, throughput, error rate, response size, and the
+5. Tags 3,000 VMs through the API, creates two alert rules, then runs the scenarios below as an administrator signed in over HTTP (since 28 November also two steady-use patterns, the console's timers until 0.1.202 and with the refresh rule), and reports p50, p95, p99, maximum, throughput, error rate, response size, and the
    server's CPU time and peak memory.
 6. Drives **Chrome** (the same headless driver the browser tests use) to sign in, open the inventory and watch the page.
 
@@ -55,7 +55,7 @@ Machine: Apple M5, 10 cores, 16 GB, macOS, Node v24.19.0. The load generator, th
 | Alert evaluation over 10,000 VMs | 1 | 152.9 | 211.9 | 211.9 | 0.00 | within |
 | Task list after 1,000 tasks | 5 | 9.6 | 16.4 | 19.9 | 0.21 | within |
 
-Sustained use: **10 people each refreshing the console every 5 seconds for 60 s** (120 refreshes, 0 errors): p50 247.1 ms, p95 307.9 ms, maximum 496.2 ms; 35.16 MB/s sent;
+Sustained use (this run did **not** include the console's one-second list timer, see below): **10 people each refreshing the console every 5 seconds for 60 s** (120 refreshes, 0 errors): p50 247.1 ms, p95 307.9 ms, maximum 496.2 ms; 35.16 MB/s sent;
 30.56 s of server CPU in the minute; 246.7 MB of memory.
 
 ### Tasks, through the API to completion
@@ -93,11 +93,48 @@ The page does not crash, but it is unresponsive for seconds at a time while it r
 ## What it means
 
 - **Nothing failed.** No errors, no lost task (every one accepted completed), memory stayed small (168.5 MB at the end), and every request that is about one VM, a summary or a page of records answered in milliseconds.
-- **One thing does not scale: the whole inventory.** `GET /api/v1/resources` has no paging and returns every VM (about 15 MB at 10,000), the console loads it with 20 other requests at every refresh, and filtering, sorting and
+- *(Written after the first run; see the correction in the second measurement.)* **One thing does not scale: the whole inventory.** `GET /api/v1/resources` has no paging and returns every VM (about 15 MB at 10,000), the console loads it with 20 other requests at every refresh, and filtering, sorting and
   drawing happen in the browser. One person is comfortable (a refresh answered in about 250 ms). Five people refreshing at once are not (p95 1.4 s), and twenty are far past the gate (p95 4.3 s). The same list also makes the
   page freeze for seconds.
 - **The live performance numbers** (`/api/v1/performance/latest`, 2.5 MB) are the second request that grows with the estate and also missed the gate with five concurrent callers.
 - **Where to look first:** paging and server-side filtering for the inventory, a much longer or change-based refresh, drawing only the visible rows, and limiting the performance numbers to the VMs on screen.
+
+## Second measurement: the console's refresh (28 November 2026)
+
+**A correction first.** The first result below, and what was said about it, described the console as loading the list at its five-second refresh. It did worse than that: a second timer fetched the
+**whole list again every second**. The first run did not model that timer, so its "sustained use" line understated what the console of the time asked of the server. An idle console in a real browser
+asked for the list 30 times in 30 seconds.
+
+The console now follows [apps/web/refresh-policy.js](../apps/web/refresh-policy.js). The whole list and the live performance numbers are fetched every **30 seconds**, and at once when there is a reason:
+after anything a person does, when a task appears or changes state, when a connection changes health, when a page is opened (if what it shows is more than 5 s old) and when the browser tab is looked at
+again. The list is redrawn only when it has been fetched. The one-second timer is gone; an operation a person starts is still followed every 0.9 s until it ends. Everything else is refreshed every 5 s
+as before. Idle, in a real browser: **2** list requests in 60 seconds. A change made outside Nuvrion that no task or health change announces now takes up to about half a minute to appear (it took
+about a second), well inside the two minutes after which the console calls a reading stale. A reload asked for while another was running used to be dropped; it now runs after it.
+
+The test measures both patterns, **10 signed-in people for 60 seconds with nothing changing**. Ranges are over three runs on the same machine (one of them against the old console's files, which only
+changes the browser part):
+
+| 10 people, 60 seconds | Until 0.1.202 | With the refresh rule |
+|---|---|---|
+| Downloads of the whole list | 313 to 409 | 20 |
+| Data sent | 4.8 to 6.2 GB | 373 MB |
+| Server CPU time in the minute | 76 to 77 s | 6 to 8 s |
+| Server peak memory | 1,078 to 1,160 MB | 592 to 638 MB |
+| One refresh, p95 (gate 500 ms) | 2.9 to 4.2 s | 256 to 359 ms |
+
+In Chrome, watched for 45 seconds after the first drawing:
+
+| One person's page at 10,000 VMs | Until 0.1.202 | With the refresh rule |
+|---|---|---|
+| Downloads of the whole list while watched | 7 (each about 1.9 s while the page was busy) | 1 |
+| Longest freeze | 7.3 s | 4.3 s |
+| Freezes over 500 ms | 7 | 3 |
+| Freezes over 100 ms | 10 | 12 |
+
+**What did not change.** One load of everything is as heavy as before, so people loading at the same moment are still over the gate (console load with 5 at once: p95 1.5 to 3.8 s; with 20: 4.3 to 6.6 s;
+the server did not change, and the spread between runs shows how much this laptop varies). The page still freezes for seconds each time it redraws 10,000 rows; it now happens about every half minute
+instead of continually. The shorter freezes remain, probably because the five-second refresh still works through the whole list for the summaries (not measured separately). Paging and drawing only the rows on screen are what would
+change these, and they are not done.
 
 ## What the test cannot tell you
 

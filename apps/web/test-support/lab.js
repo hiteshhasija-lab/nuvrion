@@ -21,8 +21,8 @@ export async function startConsole() {
   // Seed through the API, as an administrator, exactly as a person would.
   const login = await fetch(`${url}/api/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: ADMIN_PASSWORD }) });
   const cookie = login.headers.get('set-cookie').split(';')[0], { csrfToken } = await login.json();
-  const api = async (method, path, body) => {
-    const response = await fetch(`${url}${path}`, { method, headers: { cookie, 'x-csrf-token': csrfToken, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const api = async (method, path, body, headers = {}) => {
+    const response = await fetch(`${url}${path}`, { method, headers: { cookie, 'x-csrf-token': csrfToken, ...(body ? { 'content-type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined });
     return { status: response.status, json: await response.json().catch(() => null) };
   };
   const created = await api('POST', '/api/v1/connections', { name: 'E2E lab', providerType: 'vmware_vsphere', connectionType: 'vcenter', endpointUri: 'https://127.0.0.1:1/sdk', credential: { username: 'user', password: 'pass' }, configuration: { adapter: 'mock' } }); // secret-scan:allow (fake test credential)
