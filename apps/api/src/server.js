@@ -256,7 +256,7 @@ async function evaluateAlerts(){
 }
 const alertTimer=setInterval(()=>evaluateAlerts().catch(error=>console.error(JSON.stringify({level:'error',event:'alerts.evaluation_failed',error:error.message}))),Number(process.env.NUVRION_ALERT_INTERVAL_MS??60000));alertTimer.unref?.();
 discoveryScheduler.start();
-// History tables prune themselves by age (discovery runs 30d, health events 90d by default; see retention-service.js).
+// History and sample tables are pruned by age on a timer (discovery runs 30d, health events 90d, metric samples 7d, capacity samples 90d by default; see retention-service.js).
 const retention=production?new RetentionService({pool:store.pool,policies:retentionPoliciesFromEnv(process.env),intervalMs:Number(process.env.NUVRION_RETENTION_INTERVAL_MS??6*60*60_000),onPruned:(table,rows)=>console.log(JSON.stringify({level:'info',event:'retention.pruned',table,rows})),onError:(error,policy)=>console.error(JSON.stringify({level:'error',event:'retention.failed',table:policy.name,error:error.message}))}):null;retention?.start();
 
 function securityHeaders(contentType,cacheControl='no-store'){return {'content-type':contentType,'cache-control':cacheControl,'x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer','permissions-policy':'camera=(), microphone=(), geolocation=()','content-security-policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'",...(production?{'strict-transport-security':'max-age=31536000; includeSubDomains'}:{})};}

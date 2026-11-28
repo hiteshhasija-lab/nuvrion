@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RetentionService, retentionPoliciesFromEnv, RETENTION_TABLES } from '../src/retention-service.js';
+import { RetentionService, retentionPoliciesFromEnv, RETENTION_TABLES, SAMPLE_TABLES } from '../src/retention-service.js';
 
 const NOW = Date.parse('2026-10-06T00:00:00Z');
 const day = 86_400_000;
@@ -12,16 +12,34 @@ function fakePool(counts) {
 }
 const policy = overrides => ({ ...RETENTION_TABLES[0], days: 30, ...overrides });
 
-test('environment defaults are 30 days for discovery runs and 90 for health events', () => {
+test('environment defaults are 30 days for discovery runs, 90 for health events, 7 for metric samples and 90 for capacity samples', () => {
   const policies = retentionPoliciesFromEnv({});
-  assert.deepEqual(policies.map(p => [p.name, p.days]), [['discovery_runs', 30], ['health_events', 90]]);
+  assert.deepEqual(policies.map(p => [p.name, p.days]), [['discovery_runs', 30], ['health_events', 90], ['metric_samples', 7], ['capacity_samples', 90]]);
 });
 
 test('environment overrides apply, 0 disables, and junk falls back to the default', () => {
   const policies = retentionPoliciesFromEnv({ NUVRION_RETENTION_DISCOVERY_DAYS: '7', NUVRION_RETENTION_HEALTH_EVENTS_DAYS: 'abc' });
-  assert.deepEqual(policies.map(p => p.days), [7, 90]);
+  assert.deepEqual(policies.slice(0, 2).map(p => p.days), [7, 90]);
   assert.equal(retentionPoliciesFromEnv({ NUVRION_RETENTION_DISCOVERY_DAYS: '0' })[0].days, 0);
   assert.equal(retentionPoliciesFromEnv({ NUVRION_RETENTION_DISCOVERY_DAYS: '-5' })[0].days, 30);
+});
+
+test('the metric-sample age is the one the performance service uses, and junk falls back to 7 days', () => {
+  const age = value => retentionPoliciesFromEnv({ NUVRION_METRIC_RETENTION_MS: value }).find(p => p.name === 'metric_samples').days;
+  assert.equal(age(String(2 * day)), 2);
+  assert.equal(age(String(day / 2)), 0.5);
+  for (const junk of ['abc', '0', '-5']) assert.equal(age(junk), 7, junk);
+});
+
+test('a sample table keeps nothing past its age: the delete is by age alone, in batches', async () => {
+  const pool = fakePool([5000, 7]);
+  const service = new RetentionService({ pool, policies: [{ ...SAMPLE_TABLES[0], days: 7 }], now: () => NOW, keepRecent: 100, batchSize: 5000 });
+  assert.deepEqual(await service.run(), { metric_samples: 5007 });
+  const [{ sql, params }] = pool.calls;
+  assert.equal(params[0].toISOString(), new Date(NOW - 7 * day).toISOString());
+  assert.deepEqual(params.slice(1), [5000]);
+  assert.match(sql, /DELETE FROM monitoring\.vm_metric_samples WHERE sample_id IN \(SELECT sample_id FROM monitoring\.vm_metric_samples WHERE observed_at < \$1 LIMIT \$2\)/);
+  assert.doesNotMatch(sql, /row_number/, 'the keep-the-newest rule of the history tables must not apply to samples');
 });
 
 test('the cutoff is now minus the policy age, and the newest rows per connection are protected', async () => {

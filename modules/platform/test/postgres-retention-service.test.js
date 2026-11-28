@@ -1,7 +1,7 @@
 import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { RETENTION_TABLES, RetentionService, retentionPoliciesFromEnv } from '../src/retention-service.js';
+import { RETENTION_TABLES, SAMPLE_TABLES, RetentionService, retentionPoliciesFromEnv } from '../src/retention-service.js';
 import { createTestDatabase, skipDatabaseTests } from '../../../database/test-support/test-database.js';
 
 // The pruning job against a real PostgreSQL: what it deletes, what it must never delete, in batches, with the real window-function query.
@@ -138,5 +138,40 @@ test('the policies built from the environment work against the real tables', dat
   await runs(c, 120, { startDay: 8 });              // 8 to 127 days old
   const policies = retentionPoliciesFromEnv({ NUVRION_RETENTION_DISCOVERY_DAYS: '7', NUVRION_RETENTION_HEALTH_EVENTS_DAYS: '0' });
   const job = new RetentionService({ pool: db.pool, policies, now: () => NOW });
-  assert.deepEqual(await job.run(), { discovery_runs: 20 });
+  assert.deepEqual(await job.run(), { discovery_runs: 20, metric_samples: 0, capacity_samples: 0 });
+});
+
+// ---- the sample tables ----------------------------------------------------------------------------------------------------------------------------------------
+// The services that record samples delete old ones only while they are recording. With every connection down nothing is recorded, so this job has to do it.
+const seedMachine = async connection => {
+  const id = randomUUID();
+  await db.pool.query("INSERT INTO inventory.resources(resource_id, connection_id, resource_type, native_id, name, health_state, lifecycle_state, first_seen_at, last_seen_at, observed_at) VALUES($1, $2, 'virtual_machine', $3, 'vm', 'healthy', 'active', now(), now(), now())", [id, connection, `vm-${id}`]);
+  return id;
+};
+const metricSamples = (machine, agesInDays) => db.pool.query("INSERT INTO monitoring.vm_metric_samples(sample_id, resource_id, observed_at, source) SELECT gen_random_uuid(), $1, $2::timestamptz - (age * interval '1 day'), 'test' FROM unnest($3::numeric[]) age", [machine, new Date(NOW).toISOString(), agesInDays]);
+const capacitySamples = (object, metric, agesInDays) => db.pool.query("INSERT INTO monitoring.capacity_samples(object_id, metric, observed_at, capacity_bytes, free_bytes) SELECT $1, $2, $3::timestamptz - (age * interval '1 day'), 100, 50 FROM unnest($4::numeric[]) age", [object, metric, new Date(NOW).toISOString(), agesInDays]);
+const ages = async table => (await db.pool.query(`SELECT round(extract(epoch FROM ($1::timestamptz - observed_at)) / 86400)::int AS age FROM ${table} ORDER BY age`, [new Date(NOW).toISOString()])).rows.map(row => row.age);
+const sampleService = (over = {}) => new RetentionService({ pool: db.pool, policies: retentionPoliciesFromEnv({}).filter(p => SAMPLE_TABLES.some(t => t.name === p.name)), now: () => NOW, ...over });
+const clearSamples = () => db.adminPool.query('TRUNCATE monitoring.vm_metric_samples, monitoring.capacity_samples');
+
+test('with nothing being recorded, the retention job deletes old samples of both kinds, all of a machine\'s or an object\'s if they are all old', database, async () => {
+  await clearSamples();
+  const connection = await seedConnection(), quiet = await seedMachine(connection), busy = await seedMachine(connection);
+  await metricSamples(quiet, [8, 9, 40]);
+  await metricSamples(busy, [1, 6, 8]);
+  const object = randomUUID();
+  await capacitySamples(object, 'storage', [1, 89, 91, 200]);
+  await capacitySamples(object, 'cpu', [120, 121]);       // an object nobody has read for months: nothing of it is kept
+  assert.deepEqual(await sampleService().run(), { metric_samples: 4, capacity_samples: 4 });
+  assert.deepEqual(await ages('monitoring.vm_metric_samples'), [1, 6]);
+  assert.deepEqual(await ages('monitoring.capacity_samples'), [1, 89]);
+});
+
+test('a large backlog of samples is deleted in batches', database, async () => {
+  await clearSamples();
+  const connection = await seedConnection(), machine = await seedMachine(connection);
+  await metricSamples(machine, Array.from({ length: 25 }, (_, i) => 10 + i));
+  await metricSamples(machine, [0.5]);
+  assert.deepEqual(await sampleService({ batchSize: 10 }).run(), { metric_samples: 25, capacity_samples: 0 });
+  assert.deepEqual(await ages('monitoring.vm_metric_samples'), [1]);
 });
